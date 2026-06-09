@@ -160,5 +160,59 @@
       "coordinates": [[-73.93350, 40.75835], [-73.93050, 40.75980]]
     },
     "note": "primary with OSM-TAGGED lanes=4 and maxspeed=80, BOTH differing from the primary defaults (lanes=2, maxspeed=60) — catches a defaulting-vs-tagged exporter bug. capacity=4*1800*0.8=5760; freeflow=300/(80/3.6)=13.5."
+  },
+  {
+    "segment_id": "5051000:0:F",
+    "edge_id": 9,
+    "source_node": 70,
+    "target_node": 71,
+    "osm_way_id": 5051000,
+    "highway_class": "tertiary",
+    "lanes_effective": 1,
+    "length_m": 150.0,
+    "maxspeed_kmh": 40.0,
+    "freeflow_time_s": 13.5,
+    "capacity_vph": 1080.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.93050, 40.75980], [-73.92960, 40.76030]]
+    },
+    "note": "tertiary, all defaults: lanes=1, maxspeed=40. exercises the previously-untested class_factor 0.6: capacity=1*1800*0.6=1080; freeflow=150/(40/3.6)=13.5. completes coverage of all 7 highway classes."
+  },
+  {
+    "segment_id": "8123456:0:F",
+    "edge_id": 10,
+    "source_node": 80,
+    "target_node": 81,
+    "osm_way_id": 8123456,
+    "highway_class": "secondary",
+    "lanes_effective": 3,
+    "length_m": 200.0,
+    "maxspeed_kmh": 50.0,
+    "freeflow_time_s": 14.4,
+    "capacity_vph": 3780.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.92960, 40.76030], [-73.92700, 40.76150]]
+    },
+    "note": "two-way secondary tagged with a BARE OSM lanes=6 (both-directions total) and no lanes:forward/backward. The split rule applies: lanes_effective = floor(6/2) = 3 per direction (NOT 6 applied whole, NOT the secondary default 2). capacity=3*1800*0.7=3780; freeflow=200/(50/3.6)=14.4. forward half of the F/R pair."
+  },
+  {
+    "segment_id": "8123456:0:R",
+    "edge_id": 11,
+    "source_node": 81,
+    "target_node": 80,
+    "osm_way_id": 8123456,
+    "highway_class": "secondary",
+    "lanes_effective": 3,
+    "length_m": 200.0,
+    "maxspeed_kmh": 50.0,
+    "freeflow_time_s": 14.4,
+    "capacity_vph": 3780.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.92700, 40.76150], [-73.92960, 40.76030]]
+    },
+    "note": "reverse half of the bare-lanes=6 two-way pair (same way+seq, dir=R, source/target swapped, geometry reversed). same split-derived lanes_effective=3 and derived values."
   }
 ]
