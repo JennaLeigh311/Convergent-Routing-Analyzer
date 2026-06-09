@@ -106,5 +106,59 @@
       "coordinates": [[-73.95001, 40.75002], [-73.94920, 40.75050]]
     },
     "note": "one-way residential, all defaults: lanes=1, maxspeed=30. capacity=1*1800*0.5=900; freeflow=90/(30/3.6)=10.8. lowest-class non-service example."
+  },
+  {
+    "segment_id": "33112200:0:F",
+    "edge_id": 6,
+    "source_node": 40,
+    "target_node": 41,
+    "osm_way_id": 33112200,
+    "highway_class": "trunk",
+    "lanes_effective": 2,
+    "length_m": 400.0,
+    "maxspeed_kmh": 80.0,
+    "freeflow_time_s": 18.0,
+    "capacity_vph": 3240.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.94000, 40.75500], [-73.93720, 40.75640], [-73.93410, 40.75810]]
+    },
+    "note": "trunk, defaults: lanes=2, maxspeed=80. exercises class_factor 0.9: capacity=2*1800*0.9=3240; freeflow=400/(80/3.6)=18.0. THREE-vertex LineString: the middle coordinate is a geometry shape point, NOT a graph node (only first/last map to source_node/target_node)."
+  },
+  {
+    "segment_id": "71200:0:F",
+    "edge_id": 7,
+    "source_node": 50,
+    "target_node": 51,
+    "osm_way_id": 71200,
+    "highway_class": "service",
+    "lanes_effective": 1,
+    "length_m": 60.0,
+    "maxspeed_kmh": 20.0,
+    "freeflow_time_s": 10.8,
+    "capacity_vph": 720.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.93410, 40.75810], [-73.93350, 40.75835]]
+    },
+    "note": "service road, all defaults: lanes=1, maxspeed=20. exercises lowest class_factor 0.4: capacity=1*1800*0.4=720; freeflow=60/(20/3.6)=10.8."
+  },
+  {
+    "segment_id": "60500777:0:F",
+    "edge_id": 8,
+    "source_node": 60,
+    "target_node": 61,
+    "osm_way_id": 60500777,
+    "highway_class": "primary",
+    "lanes_effective": 4,
+    "length_m": 300.0,
+    "maxspeed_kmh": 80.0,
+    "freeflow_time_s": 13.5,
+    "capacity_vph": 5760.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.93350, 40.75835], [-73.93050, 40.75980]]
+    },
+    "note": "primary with OSM-TAGGED lanes=4 and maxspeed=80, BOTH differing from the primary defaults (lanes=2, maxspeed=60) — catches a defaulting-vs-tagged exporter bug. capacity=4*1800*0.8=5760; freeflow=300/(80/3.6)=13.5."
   }
 ]

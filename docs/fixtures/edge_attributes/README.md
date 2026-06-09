@@ -47,10 +47,13 @@ An array of directed-edge rows, each as an object with all 12 contract columns:
 - `length_m` — geodesic edge length in meters.
 - `maxspeed_kmh` — free-flow speed limit, km/h.
 - `freeflow_time_s` — `length_m / (maxspeed_kmh × 1000 / 3600)`, seconds.
-- `capacity_vph` — `lanes_effective × 1800 × class_factor`, vehicles/hour
-  (at `capacity_scale = 1.0`).
+- `capacity_vph` — `lanes_effective × 1800 × class_factor × capacity_scale`,
+  vehicles/hour. These rows are generated at `capacity_scale = 1.0`, so the
+  stored value equals `lanes_effective × 1800 × class_factor`.
 - `geometry` — GeoJSON `LineString`, coordinates in **`[lon, lat]`** order, drawn
-  in the edge's travel direction (source → target).
+  in the edge's travel direction (source → target). A LineString may have more
+  than two coordinates; interior coordinates are **shape points only**, not graph
+  nodes — only the first/last coordinate map to `source_node`/`target_node`.
 - `note` — human description of what the row exercises (ignore in tests).
 
 `capacity_vph` and `freeflow_time_s` are **computed from the §2 rules** for each
@@ -60,8 +63,16 @@ exporter must reproduce these values exactly, so the fixture is self-checking.
 Coverage: a one-way street (single row), both halves of a two-way (`…:F` and
 `…:R` sharing way+seq, with source/target and geometry reversed), a
 multi-segment way split at an intersection (two `seq` values on the same way),
-and a spread of highway classes (`primary`, `secondary`, `motorway`,
-`residential`) exercising both defaulted and OSM-tagged lanes/maxspeed.
+a spread of highway classes (`primary`, `secondary`, `motorway`, `residential`,
+`trunk`, `service`) that exercises every `class_factor` value, a three-vertex
+LineString (the `trunk` row, whose middle coordinate is a shape point, not a
+node), and a row whose OSM-tagged `lanes`/`maxspeed` deliberately differ from the
+class defaults (the second `primary` row) so a defaulting-vs-tagged exporter bug
+is caught.
+
+These are the **logical row** vectors. The envelope-level `schema_version` (§2
+"Envelope `schema_version`") is a property of the serialized Parquet/GeoJSON
+artifacts, not of an individual row, so it is not represented here.
 
 ## Consumers
 

@@ -118,8 +118,8 @@ the change.
 
 **Contract owner:** Database / Geospatial Engineer.
 **Contract version: 1.**
-**Consumers / depended-on-by:** the Go routing engine's graph loader (#9, `engine/internal/graph`) and the
-frontend `/graph` endpoint (later).
+**Consumers / depended-on-by:** the Go routing engine's graph loader (future, `engine/internal/graph`) and
+the frontend `/graph` endpoint (later).
 **Conformance status:** schema + derivation rules frozen here; Go loader and frontend consumers pending.
 
 `edge_attributes` is the immutable road-network snapshot the engine runs on. It is **one row per directed
@@ -143,13 +143,13 @@ One row per directed edge, with exactly these 12 columns:
 | `source_node`     | int32, `>= 0`         | The §1 `NodeID` of this directed edge's tail (the `From` vertex). |
 | `target_node`     | int32, `>= 0`         | The §1 `NodeID` of this directed edge's head (the `To` vertex). |
 | `osm_way_id`      | int64, positive       | The OpenStreetMap way id this edge came from. MUST equal the `osm_way_id` embedded in `segment_id` (self-consistency rule below). |
-| `highway_class`   | string (enum)         | OSM `highway` tag, one of: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `residential`, `service`. Drives the default and `class_factor` tables below. |
+| `highway_class`   | string (enum)         | OSM `highway` tag, one of exactly: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `residential`, `service`. Drives the default and `class_factor` tables below. The exporter MUST map every edge into one of these seven (collapsing OSM `*_link`/variant tags into their base class); a value outside the enum has no derivation rule, so a loader MAY reject it. |
 | `lanes_effective` | int, `>= 1`           | Lanes available **in this direction** (see derivation). |
 | `length_m`        | float64, meters, `> 0`| Geodesic length of the edge geometry, in meters. |
 | `maxspeed_kmh`    | float64, km/h, `> 0`  | Free-flow speed limit in km/h (see derivation). |
 | `freeflow_time_s` | float64, seconds, `> 0`| Free-flow traversal time in seconds: `length_m / (maxspeed_kmh → m/s)` (see derivation). |
 | `capacity_vph`    | float64, veh/hour, `> 0`| BPR capacity `c` in **vehicles per hour** (see derivation and the unit contract). |
-| `geometry`        | LineString            | The directed edge geometry. Coordinate order is **`[lon, lat]`** (GeoJSON / x,y), drawn in the edge's travel direction (`source_node` first, `target_node` last). |
+| `geometry`        | LineString            | The directed edge geometry. Coordinate order is **`[lon, lat]`** (GeoJSON / x,y), drawn in the edge's travel direction (`source_node` first, `target_node` last). A LineString MAY have more than two coordinates: **intermediate coordinates are geometry shape points only — they are not graph nodes.** Only the **first** and **last** coordinates correspond to `source_node` / `target_node`; a loader must not treat interior vertices as routable nodes. |
 
 These map onto the engine's in-memory `graph.Edge` (`engine/internal/graph/graph.go`) as:
 `edge_id`→`ID`, `segment_id`→`Segment`, `source_node`→`From`, `target_node`→`To`, `length_m`→`LengthM`,
@@ -166,6 +166,12 @@ the same snapshot share one integer per edge and the frontend `/graph` join line
 The engine MAY reassign `EdgeID`s when it loads (it owns its in-memory layout), but the export's `edge_id` is
 the load-time assignment the engine adopts for *this* snapshot. As in §1, `edge_id` is an in-memory/in-artifact
 index, never a cross-system identity: `segment_id` remains the only key on the `segment-congestion` wire (§3).
+
+**`edge_id` is not a join key.** Within one snapshot the Parquet and the GeoJSON carry the *identical*
+`edge_id` per edge, so a tool reading both files together MAY pair rows by it. But the durable join key — the
+frontend `/graph` ↔ live-congestion join, and any join that must survive a re-export or the engine renumbering
+its in-memory slices — is **`segment_id`**. A consumer MUST NOT use `edge_id` as a cross-serialization or
+cross-snapshot join key unless it is pairing the two files of one specific export.
 
 ### Derivation rules
 
@@ -234,7 +240,10 @@ quotient is seconds. (e.g. `60 km/h = 16.6667 m/s`; a `240 m` edge → `240 / 16
 
 BPR cost is `t = freeflow_time_s × (1 + α·(v/c)^β)`. Both `v` (assigned flow) and `c` (= `capacity_vph`) **MUST
 be in vehicles per hour.** This is a *written* contract because a mismatch does not crash — it silently
-corrupts the headline number, and with `β = 4` the error is raised to the fourth power.
+corrupts the headline number, and with `β = 4` the error is raised to the fourth power. (The coefficients `α`
+and `β` themselves are *not* part of this export contract — they are pinned by the engine's BPR
+`CostFunction`, default `α = 0.15`, `β = 4`; this section only fixes the **units** of `v` and `c` that flow
+into it.)
 
 Spark emits `vehicle_count` per **5-minute** window (§3). The congestion adapter **annualizes that count to an
 hourly rate before BPR**: `v_vph = vehicle_count × 12` (twelve 5-minute windows per hour). `capacity_vph` in
@@ -247,7 +256,8 @@ stated here because it is the other half of the unit contract that makes `capaci
 The same logical rows are emitted in two formats, and they MUST carry identical values per `segment_id`:
 
 1. **Parquet** (`edge_attributes.parquet`) — for the engine. One record per directed edge, columns as in the
-   table above. `geometry` is stored as a serialized LineString (WKB/GeoJSON-string per the writer); all other
+   table above. `geometry` is stored as **WKB** (well-known binary) `LineString` — a single fixed encoding so a
+   Go loader decodes it without out-of-band knowledge (do **not** emit a GeoJSON string or WKT here); all other
    columns are the scalar types listed.
 2. **GeoJSON `FeatureCollection`** (`edge_attributes.geojson`) — for the frontend `/graph` endpoint. One
    `Feature` per directed edge:
@@ -258,12 +268,25 @@ The same logical rows are emitted in two formats, and they MUST carry identical 
      into `Feature.properties` under the same key. The frontend colors a road by joining its live congestion
      to `properties.segment_id` — a pure §1 join, no geometry recomputation.
 
+#### Envelope `schema_version`
+
+Both artifacts carry an **envelope-level `schema_version`** equal to this section's contract version (currently
+`1`). It is **not** a 13th per-row column — it is one value attached to the whole artifact, so a consumer can
+detect a schema change at load time before trusting the rows:
+
+- **Parquet:** a file-level key/value metadata entry `schema_version = "1"` (Parquet footer KV-metadata).
+- **GeoJSON:** a top-level member `"schema_version": 1` on the `FeatureCollection` object (alongside `"type"`
+  and `"features"`).
+
+This is what makes the version-carrier rule below mechanical rather than a documentation promise.
+
 ### Reference / fixtures
 
 - **Golden fixture (language-neutral, shared):** `docs/fixtures/edge_attributes/example_export.json` — a small
   array of directed-edge rows with all 12 columns, where every `segment_id` is valid under §1 and
   `capacity_vph` / `freeflow_time_s` are computed from the rules above (so a conformant exporter must
-  reproduce them). See that directory's `README.md`.
+  reproduce them). Each fixture row also carries a non-contract `note` field describing what it exercises; it
+  is documentation only and is not part of the schema. See that directory's `README.md`.
 - The `segment_id` rules and their own fixtures live in §1 / `docs/fixtures/segment_id/`; this section never
   redefines them.
 
@@ -276,9 +299,11 @@ the GeoJSON property mapping — requires bumping the contract version here and 
 loader, frontend) so they update in lockstep.** The fixture in `docs/fixtures/edge_attributes/` is part of this
 contract; do not edit it to paper over a non-conformant exporter.
 
-As §1 notes, `segment_id` carries no in-wire version token, so **this `edge_attributes` envelope's schema
-version is one of `segment_id`'s operational version-carriers**: a §1 format change REQUIRES bumping this
-contract version too, so consumers reading this artifact can detect the change.
+As §1 notes, `segment_id` carries no in-wire version token, so **this `edge_attributes` envelope's
+`schema_version` is one of `segment_id`'s operational version-carriers**: a §1 format change REQUIRES bumping
+this contract version (and therefore the `schema_version` written into both artifacts) too, so consumers
+reading the Parquet footer metadata or the GeoJSON top-level `schema_version` can detect the change at load
+time rather than silently mis-parsing.
 
 ## 3. `segment-congestion` schema v2 — *to be filled by issue #5*
 
