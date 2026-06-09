@@ -6,7 +6,8 @@
 # (Database/Geospatial Engineer, Data Pipeline Engineer) are currently played by
 # the repo owner.
 
-# Canonical segment_id contract + its golden fixtures + Go reference impl (§1).
+# Frozen contracts doc (all sections), the shared golden fixtures for every
+# contract (segment_id §1, edge_attributes §2, …), and the Go reference impls.
 /docs/contracts.md                       @JennaLeigh311
 /docs/fixtures/                          @JennaLeigh311
 /engine/internal/domain/segmentid.go     @JennaLeigh311
