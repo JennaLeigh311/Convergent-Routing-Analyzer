@@ -1,0 +1,12 @@
+# Code owners — required reviewers for sensitive paths.
+#
+# Frozen cross-team contracts (docs/contracts.md) MUST NOT change without the
+# contract owner's review + a version bump (see docs/contracts.md). These rules
+# make that gate mechanical rather than a gentleman's agreement. The role owners
+# (Database/Geospatial Engineer, Data Pipeline Engineer) are currently played by
+# the repo owner.
+
+# Canonical segment_id contract + its golden fixtures + Go reference impl (§1).
+/docs/contracts.md                       @JennaLeigh311
+/docs/fixtures/                          @JennaLeigh311
+/engine/internal/domain/segmentid.go     @JennaLeigh311
