@@ -3,8 +3,9 @@
 // in a later phase.
 package main
 
-import "fmt"
+import "github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/logging"
 
 func main() {
-	fmt.Println("replay: scaffold stub — not yet implemented")
+	logger := logging.Setup()
+	logger.Info("starting", "component", "replay", "status", "scaffold stub — not yet implemented")
 }

@@ -20,3 +20,11 @@ and keeps the dependency direction acyclic.
 (`congestion/memory`, `congestion/static`, `congestion/kafka`, `graph/loader`, …). Import paths — not
 reviewer vigilance — keep the engine core free of transport dependencies: the core imports the port
 package, never an adapter subpackage that pulls in a Kafka client or PostGIS driver.
+
+**Structured logging via `log/slog`, configured once per binary.** All logging goes through
+`internal/logging`, a thin wrapper over the stdlib `log/slog`. Each binary calls `logging.Setup()` at
+process start, which builds a logger from `LOG_LEVEL` (`debug|info|warn|error`) and `LOG_FORMAT`
+(`text|json`) and installs it as the slog default. Use `text` in development and `json` in deployed
+environments for aggregation. Prefer structured key/value fields over formatted strings
+(`logger.Info("routed", "requests", n, "algo", name)`, not `fmt.Sprintf`) so logs stay queryable; never
+use bare `fmt.Println` for diagnostics.

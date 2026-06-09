@@ -2,8 +2,9 @@
 // six algorithms. Scaffolding stub — wired up in a later phase.
 package main
 
-import "fmt"
+import "github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/logging"
 
 func main() {
-	fmt.Println("benchmark: scaffold stub — not yet implemented")
+	logger := logging.Setup()
+	logger.Info("starting", "component", "benchmark", "status", "scaffold stub — not yet implemented")
 }
