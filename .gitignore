@@ -1,0 +1,5 @@
+# Claude Code local files
+.claude/
+
+# Project spec (kept local / untracked)
+project-spec.md
