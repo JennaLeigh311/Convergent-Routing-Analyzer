@@ -48,8 +48,9 @@ parser, each as an object:
 
 Coverage: empty string, wrong field count (too few / too many colons, trailing
 colon, empty fields), non-integer way/seq, negative values, explicit `+` sign,
-bad/`lowercase`/multi-char `dir`, surrounding whitespace, hex, and run-together
-fields.
+`osm_way_id` of 0 (must be positive, `>= 1`), non-canonical leading zeros on
+`osm_way_id`/`seq`, bad/`lowercase`/multi-char `dir`, surrounding whitespace,
+hex, and run-together fields.
 
 ## Consumers
 

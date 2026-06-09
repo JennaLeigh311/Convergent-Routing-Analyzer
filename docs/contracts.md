@@ -8,6 +8,9 @@
 
 **Contract owner:** Database / Geospatial Engineer.
 **Contract version: 1.**
+**Consumers / depended-on-by:** the `edge_attributes` export (#4, §2) and the `segment-congestion` message
+(#5, §3), and later the frontend.
+**Conformance status:** proven against Go (engine); PySpark (pipeline, #5) pending.
 
 `segment_id` is the single cross-system **wire key** for a directed piece of road. It is the only road
 identifier shared by the database export, the Spark map-matcher/pipeline, and the Go engine. If these three
@@ -79,8 +82,9 @@ detail of one process and MUST NOT appear on the wire.
   two implementations cannot drift. See that directory's `README.md`.
 
 A conformant **parser is strict** and rejects anything that is not exactly the scheme: it requires exactly
-two colons (three fields); `osm_way_id` and `seq` must be canonical base-10 integers `>= 0` (no sign, no
-whitespace, no hex); and `dir` must be exactly `F` or `R`. It returns a descriptive error and never panics.
+two colons (three fields); `osm_way_id` must be a canonical positive base-10 integer (`>= 1`) and `seq` a
+canonical non-negative base-10 integer (`>= 0`), both with no sign, no leading zeros, no whitespace, and no
+hex; and `dir` must be exactly `F` or `R`. It returns a descriptive error and never panics.
 
 ### Worked examples
 
@@ -105,10 +109,19 @@ and notifying every consumer (database export, pipeline, engine, frontend) so th
 shared fixtures in `docs/fixtures/segment_id/` are part of this contract and must be updated in the same
 change; do not edit a fixture to paper over a non-conformant implementation.
 
+Because `segment_id` carries **no in-wire version token** of its own, the `edge_attributes` (§2) and
+`segment-congestion` (§3) **envelope schema versions are its operational version-carriers**: a §1 format
+change REQUIRES bumping those envelope schema versions too, so consumers reading those envelopes can detect
+the change.
+
 ## 2. `edge_attributes` export schema — *to be filled by issue #4*
 
 One row per directed edge; carries the BPR capacity/free-flow fields derived from OSM tags.
 
+The `segment_id` field conforms to §1 and MUST NOT be redefined locally.
+
 ## 3. `segment-congestion` schema v2 — *to be filled by issue #5*
 
 Event-time windowed congestion records on a compacted Kafka topic keyed by `segment_id`.
+
+The `segment_id` field conforms to §1 and MUST NOT be redefined locally.

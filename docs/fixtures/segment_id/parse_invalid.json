@@ -82,5 +82,17 @@
   {
     "segment_id": "123456789:0F",
     "reason": "two fields where seq and dir are run together (one colon)"
+  },
+  {
+    "segment_id": "0:0:F",
+    "reason": "osm_way_id must be positive (>= 1); 0 is not a valid way id"
+  },
+  {
+    "segment_id": "007:0:F",
+    "reason": "non-canonical osm_way_id: leading zeros not allowed"
+  },
+  {
+    "segment_id": "123456789:00:F",
+    "reason": "non-canonical seq: leading zeros not allowed"
   }
 ]

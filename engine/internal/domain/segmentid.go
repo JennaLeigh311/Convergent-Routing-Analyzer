@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -24,10 +25,10 @@ import (
 //   - dir is the travel direction along the way's node ordering (Forward → "F",
 //     Reverse → "R").
 //
-// FormatSegmentID does not validate its inputs (osmWayID and seq are expected to
-// be non-negative); ParseSegmentID is the strict half of the round-trip and is
-// what rejects malformed wire keys. Format and Parse are exact inverses for every
-// row in docs/fixtures/segment_id/format_cases.json.
+// FormatSegmentID does not validate its inputs (osmWayID is expected to be
+// positive and seq non-negative); ParseSegmentID is the strict half of the
+// round-trip and is what rejects malformed wire keys. Format and Parse are exact
+// inverses for every row in docs/fixtures/segment_id/format_cases.json.
 func FormatSegmentID(osmWayID int64, seq int, dir Direction) SegmentID {
 	return SegmentID(strconv.FormatInt(osmWayID, 10) + ":" + strconv.Itoa(seq) + ":" + dir.String())
 }
@@ -40,9 +41,9 @@ func FormatSegmentID(osmWayID int64, seq int, dir Direction) SegmentID {
 // A segment_id is rejected unless ALL of the following hold:
 //
 //   - it splits into exactly three colon-delimited fields (exactly two colons);
-//   - osm_way_id is a base-10 integer >= 0 with no sign, leading/trailing space,
-//     or other cruft;
-//   - seq is a base-10 integer >= 0 under the same rules;
+//   - osm_way_id is a canonical base-10 integer >= 1 (positive) with no sign,
+//     leading zeros, leading/trailing space, or other cruft;
+//   - seq is a canonical base-10 integer >= 0 under the same rules;
 //   - dir is exactly the single byte "F" or "R" (case-sensitive).
 //
 // Every string listed in docs/fixtures/segment_id/parse_invalid.json must return
@@ -63,12 +64,18 @@ func ParseSegmentID(id SegmentID) (osmWayID int64, seq int, dir Direction, err e
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: osm_way_id: %w", s, err)
 	}
+	if osmWayID < 1 {
+		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: osm_way_id must be positive (>= 1)", s)
+	}
 
 	seq64, err := parseNonNegInt64(seqField)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: seq: %w", s, err)
 	}
-	if seq64 > int64(maxInt) {
+	// This guard only fires on 32-bit builds; on 64-bit, math.MaxInt == the
+	// int64 max, so ParseInt's 64-bit bound already rejects anything larger.
+	// Keep it so a future reader doesn't delete it as unreachable.
+	if seq64 > int64(math.MaxInt) {
 		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: seq %d overflows int", s, seq64)
 	}
 	seq = int(seq64)
@@ -85,12 +92,14 @@ func ParseSegmentID(id SegmentID) (osmWayID int64, seq int, dir Direction, err e
 	return osmWayID, seq, dir, nil
 }
 
-const maxInt = int(^uint(0) >> 1)
-
 // parseNonNegInt64 accepts only a canonical non-negative base-10 integer: no
-// sign, no whitespace, no leading "+", and not empty. strconv.ParseInt already
-// rejects whitespace, non-digits, and overflow; we additionally reject any
-// explicit sign so "+5" and "-5" are both invalid wire fields.
+// sign, no whitespace, no leading "+", no leading zeros, and not empty.
+// strconv.ParseInt already rejects whitespace, non-digits, and overflow; we
+// additionally reject any explicit sign so "+5" and "-5" are both invalid, and
+// we reject any value whose base-10 rendering differs from its input so
+// non-canonical forms like "007" (which ParseInt would happily read as 7) are
+// rejected as a distinct, aliasing wire key. "0" stays canonical because
+// FormatInt(0) == "0".
 func parseNonNegInt64(field string) (int64, error) {
 	if field == "" {
 		return 0, fmt.Errorf("empty field")
@@ -101,6 +110,12 @@ func parseNonNegInt64(field string) (int64, error) {
 	v, err := strconv.ParseInt(field, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("must be a non-negative integer, got %q", field)
+	}
+	// Reject non-canonical renderings (e.g. leading zeros: "007" -> 7). A
+	// segment_id is a string key; "007:0:F" and "7:0:F" must not both parse to
+	// the same fields and alias each other on the wire.
+	if strconv.FormatInt(v, 10) != field {
+		return 0, fmt.Errorf("non-canonical integer (leading zeros not allowed), got %q", field)
 	}
 	return v, nil
 }
