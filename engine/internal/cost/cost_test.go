@@ -30,15 +30,20 @@ func TestFakeCostSatisfiesPort(t *testing.T) {
 
 	tests := []struct {
 		name string
+		edge graph.Edge
 		load float64
 		want float64
 	}{
-		{"empty road = free flow", 0, 10},
-		{"at capacity adds 15%", 1000, 11.5},
+		{"empty road = free flow", e, 0, 10},
+		{"at capacity adds 15%", e, 1000, 11.5},
+		// Super-linear blow-up past capacity: 10*(1 + 0.15*2^4) = 34.
+		{"over capacity grows fast", e, 2000, 34},
+		// Zero-capacity edge falls back to free-flow (guards divide-by-zero).
+		{"zero capacity = free flow", graph.Edge{FreeFlowS: 10, CapacityVPH: 0}, 500, 10},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := f.Cost(e, tt.load); math.Abs(got-tt.want) > 1e-9 {
+			if got := f.Cost(tt.edge, tt.load); math.Abs(got-tt.want) > 1e-9 {
 				t.Errorf("Cost(load=%v) = %v, want %v", tt.load, got, tt.want)
 			}
 		})

@@ -2,6 +2,22 @@ package congestion
 
 import "github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 
+// LoadSnapshot is a dense, caller-owned view of per-edge load in vehicles/hour,
+// indexed directly by EdgeID. EdgeIDs are dense load-time indices, so a flat
+// slice indexes them O(1) without hashing and copies in one contiguous block —
+// far cheaper than a map at city scale (~1–3M edges, copied once per assignment
+// round). An EdgeID outside the slice (or an unknown edge) reads as 0.
+type LoadSnapshot []float64
+
+// Load returns the load (vehicles/hour) on the edge, or 0 if the edge is out of
+// range / has no observation.
+func (s LoadSnapshot) Load(id domain.EdgeID) float64 {
+	if id < 0 || int(id) >= len(s) {
+		return 0
+	}
+	return s[id]
+}
+
 // CongestionProvider exposes the current per-edge load in vehicles/hour. The
 // engine never learns the source through this boundary — a Spark-fed Kafka
 // consumer, a static snapshot file, and a synthetic simulator all satisfy it.
@@ -14,8 +30,10 @@ type CongestionProvider interface {
 	// edge has no observation.
 	Load(id domain.EdgeID) float64
 
-	// Snapshot returns an immutable copy of all known edge loads. Batch routing
-	// takes one Snapshot per assignment round so every request in that round
-	// sees a consistent view.
-	Snapshot() map[domain.EdgeID]float64
+	// Snapshot returns a fresh LoadSnapshot that the caller owns and may mutate
+	// freely without affecting the provider. Batch routing takes one Snapshot
+	// per assignment round so every request in that round sees a consistent
+	// view. Implementations must return a fresh copy, never their live backing
+	// store.
+	Snapshot() LoadSnapshot
 }

@@ -1,6 +1,10 @@
 package routing
 
-import "github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
+import (
+	"context"
+
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
+)
 
 // RouteRequest is a single origin→destination navigation request.
 type RouteRequest struct {
@@ -37,8 +41,13 @@ type Route struct {
 // Assign is first-class (not a loop over Route) because demand-aware routing is
 // fundamentally a batch problem: the assignment of one request affects the cost
 // seen by the others.
+//
+// Both methods take a context.Context: Assign runs an iterative equilibrium
+// (MSA / system-optimal) with unbounded wall-clock and is served behind an HTTP
+// handler, so callers need cancellation/deadlines. Implementations of Assign
+// should check ctx.Err() between iterations.
 type Router interface {
-	Route(req RouteRequest) (Route, error)
-	Assign(reqs []RouteRequest) ([]Route, error)
+	Route(ctx context.Context, req RouteRequest) (Route, error)
+	Assign(ctx context.Context, reqs []RouteRequest) ([]Route, error)
 	Name() string
 }

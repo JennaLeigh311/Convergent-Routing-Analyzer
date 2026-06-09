@@ -10,6 +10,7 @@ func TestDirectionString(t *testing.T) {
 	}{
 		{"forward", Forward, "F"},
 		{"reverse", Reverse, "R"},
+		{"out of range surfaces, not silently forward", Direction(7), "Direction(7)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

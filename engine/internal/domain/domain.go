@@ -5,6 +5,8 @@
 // type, and keeps the dependency direction clean.
 package domain
 
+import "strconv"
+
 // NodeID is a compact internal identifier for a graph node (an intersection /
 // OSM node). It is in-memory only and assigned at load time.
 type NodeID int32
@@ -30,12 +32,18 @@ const (
 	Reverse
 )
 
-// String renders a Direction as its SegmentID token.
+// String renders a Direction as its SegmentID token ("F"/"R"). An out-of-range
+// value renders as "Direction(n)" rather than silently masquerading as Forward,
+// so a bad value surfaces instead of producing a valid-looking wire key.
 func (d Direction) String() string {
-	if d == Reverse {
+	switch d {
+	case Forward:
+		return "F"
+	case Reverse:
 		return "R"
+	default:
+		return "Direction(" + strconv.Itoa(int(d)) + ")"
 	}
-	return "F"
 }
 
 // LatLon is a WGS84 coordinate in decimal degrees.

@@ -7,19 +7,17 @@ import (
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 )
 
-// fakeProvider is a minimal map-backed CongestionProvider used to prove the
+// fakeProvider is a minimal slice-backed CongestionProvider used to prove the
 // port is satisfiable. The real in-memory/static/kafka adapters land later.
 type fakeProvider struct {
-	loads map[domain.EdgeID]float64
+	loads congestion.LoadSnapshot // indexed by EdgeID
 }
 
-func (p fakeProvider) Load(id domain.EdgeID) float64 { return p.loads[id] }
+func (p fakeProvider) Load(id domain.EdgeID) float64 { return p.loads.Load(id) }
 
-func (p fakeProvider) Snapshot() map[domain.EdgeID]float64 {
-	out := make(map[domain.EdgeID]float64, len(p.loads))
-	for k, v := range p.loads {
-		out[k] = v
-	}
+func (p fakeProvider) Snapshot() congestion.LoadSnapshot {
+	out := make(congestion.LoadSnapshot, len(p.loads))
+	copy(out, p.loads)
 	return out
 }
 
@@ -27,16 +25,22 @@ func (p fakeProvider) Snapshot() map[domain.EdgeID]float64 {
 var _ congestion.CongestionProvider = fakeProvider{}
 
 func TestFakeProviderSatisfiesPort(t *testing.T) {
-	p := fakeProvider{loads: map[domain.EdgeID]float64{10: 850}}
+	// EdgeID 10 carries load 850; everything else is unobserved.
+	loads := make(congestion.LoadSnapshot, 11)
+	loads[10] = 850
+	p := fakeProvider{loads: loads}
 
 	if got := p.Load(10); got != 850 {
 		t.Errorf("Load(10) = %v, want 850", got)
 	}
+	if got := p.Load(5); got != 0 {
+		t.Errorf("Load(unobserved) = %v, want 0", got)
+	}
 	if got := p.Load(999); got != 0 {
-		t.Errorf("Load(unknown) = %v, want 0", got)
+		t.Errorf("Load(out of range) = %v, want 0", got)
 	}
 
-	// Snapshot must be a copy: mutating it must not affect the provider.
+	// Snapshot must be a fresh copy: mutating it must not affect the provider.
 	snap := p.Snapshot()
 	snap[10] = 0
 	if got := p.Load(10); got != 850 {
