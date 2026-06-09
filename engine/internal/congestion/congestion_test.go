@@ -39,6 +39,9 @@ func TestFakeProviderSatisfiesPort(t *testing.T) {
 	if got := p.Load(999); got != 0 {
 		t.Errorf("Load(out of range) = %v, want 0", got)
 	}
+	if got := p.Load(-1); got != 0 {
+		t.Errorf("Load(negative) = %v, want 0", got)
+	}
 
 	// Snapshot must be a fresh copy: mutating it must not affect the provider.
 	snap := p.Snapshot()

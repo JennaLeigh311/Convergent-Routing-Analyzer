@@ -14,6 +14,10 @@ type NodeID int32
 // EdgeID is a compact internal identifier for a directed graph edge. It is the
 // in-memory key used on hot paths; the stable cross-system wire key is
 // SegmentID.
+//
+// EdgeIDs are assigned densely and contiguously (0..EdgeCount-1) at load time so
+// they can directly index flat per-edge slices (e.g. congestion.LoadSnapshot)
+// without hashing. Every graph loader and CongestionProvider must honor this.
 type EdgeID int32
 
 // SegmentID is the canonical, stable, directed cross-system identifier for a
