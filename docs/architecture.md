@@ -27,4 +27,8 @@ process start, which builds a logger from `LOG_LEVEL` (`debug|info|warn|error`) 
 (`text|json`) and installs it as the slog default. Use `text` in development and `json` in deployed
 environments for aggregation. Prefer structured key/value fields over formatted strings
 (`logger.Info("routed", "requests", n, "algo", name)`, not `fmt.Sprintf`) so logs stay queryable; never
-use bare `fmt.Println` for diagnostics.
+use bare `fmt.Println` for diagnostics. Entrypoints (`cmd/*`) hold the explicit `*slog.Logger` returned by
+`Setup`; library and leaf packages take an injected `*slog.Logger` or use `slog.Default()`, never
+constructing their own. **Never log secrets, credentials, full DSNs, or API keys, and treat raw GPS
+coordinates as user-location PII** — log only derived values (segment IDs, counts), never raw lat/lon tied
+to a device.

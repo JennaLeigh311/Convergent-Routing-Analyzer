@@ -1,15 +1,3 @@
-// Package logging is the engine's structured-logging foundation: a thin wrapper
-// over log/slog so every binary configures logs identically and future
-// components emit structured, queryable logs instead of ad-hoc prints.
-//
-// Typical use at process start:
-//
-//	logger := logging.Setup()           // configured from the environment
-//	logger.Info("starting", "addr", addr)
-//
-// Setup also installs the logger as the slog default, so packages that log via
-// slog.Info/Warn/etc. (or libraries that use the default logger) inherit the
-// same configuration.
 package logging
 
 import (
@@ -19,13 +7,22 @@ import (
 	"strings"
 )
 
+// Format selects the log output handler.
+type Format string
+
+const (
+	// FormatText is dev-friendly key=value output (the default).
+	FormatText Format = "text"
+	// FormatJSON is machine-readable output for log aggregation.
+	FormatJSON Format = "json"
+)
+
 // Config controls how logs are emitted.
 type Config struct {
 	// Level is the minimum level to emit. The zero value is slog.LevelInfo.
 	Level slog.Level
-	// Format selects the handler: "text" (default, dev-friendly) or "json"
-	// (machine-readable, for aggregation).
-	Format string
+	// Format selects the handler. The zero value ("") is treated as FormatText.
+	Format Format
 	// Writer is the log destination; nil defaults to os.Stderr.
 	Writer io.Writer
 }
@@ -55,7 +52,7 @@ func New(cfg Config) *slog.Logger {
 
 	var h slog.Handler
 	switch cfg.Format {
-	case "json":
+	case FormatJSON:
 		h = slog.NewJSONHandler(w, opts)
 	default:
 		h = slog.NewTextHandler(w, opts)
@@ -85,10 +82,10 @@ func parseLevel(s string) slog.Level {
 	}
 }
 
-// parseFormat normalizes a LOG_FORMAT string, defaulting to "text".
-func parseFormat(s string) string {
+// parseFormat maps a LOG_FORMAT string to a Format, defaulting to FormatText.
+func parseFormat(s string) Format {
 	if strings.ToLower(strings.TrimSpace(s)) == "json" {
-		return "json"
+		return FormatJSON
 	}
-	return "text"
+	return FormatText
 }

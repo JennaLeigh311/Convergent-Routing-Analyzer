@@ -7,5 +7,5 @@ import "github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/log
 
 func main() {
 	logger := logging.Setup()
-	logger.Info("starting", "component", "replay", "status", "scaffold stub — not yet implemented")
+	logger.Info("scaffold stub — not yet implemented", "component", "replay")
 }
