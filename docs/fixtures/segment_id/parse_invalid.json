@@ -1,0 +1,86 @@
+[
+  {
+    "segment_id": "",
+    "reason": "empty string: no fields"
+  },
+  {
+    "segment_id": "123456789",
+    "reason": "too few fields: missing seq and dir (no colons)"
+  },
+  {
+    "segment_id": "123456789:0",
+    "reason": "too few fields: missing dir (one colon)"
+  },
+  {
+    "segment_id": "123456789:0:F:extra",
+    "reason": "too many fields: four colon-separated parts"
+  },
+  {
+    "segment_id": "123456789:0:F:",
+    "reason": "too many fields: trailing colon creates a 4th empty field"
+  },
+  {
+    "segment_id": "123456789::F",
+    "reason": "empty seq field"
+  },
+  {
+    "segment_id": ":0:F",
+    "reason": "empty osm_way_id field"
+  },
+  {
+    "segment_id": "123456789:0:",
+    "reason": "empty dir field"
+  },
+  {
+    "segment_id": "abc:0:F",
+    "reason": "non-integer osm_way_id"
+  },
+  {
+    "segment_id": "123456789:x:F",
+    "reason": "non-integer seq"
+  },
+  {
+    "segment_id": "-5:0:F",
+    "reason": "negative osm_way_id: way ids are positive"
+  },
+  {
+    "segment_id": "123456789:-1:F",
+    "reason": "negative seq: seq is a 0-based ordinal"
+  },
+  {
+    "segment_id": "+5:0:F",
+    "reason": "explicit plus sign on osm_way_id is not canonical"
+  },
+  {
+    "segment_id": "123456789:0:X",
+    "reason": "invalid dir letter: must be F or R"
+  },
+  {
+    "segment_id": "123456789:0:f",
+    "reason": "lowercase dir: F/R are case-sensitive"
+  },
+  {
+    "segment_id": "123456789:0:FR",
+    "reason": "dir must be exactly one letter"
+  },
+  {
+    "segment_id": "123456789:0:Forward",
+    "reason": "dir is the token F/R, not the word"
+  },
+  {
+    "segment_id": " 123456789:0:F",
+    "reason": "leading whitespace in osm_way_id"
+  },
+  {
+    "segment_id": "123456789:0:F ",
+    "reason": "trailing whitespace in dir"
+  },
+  {
+    "segment_id": "0x1F:0:F",
+    "reason": "hex osm_way_id: only base-10 integers allowed"
+  },
+  {
+    "segment_id": "123456789:0F",
+    "reason": "two fields where seq and dir are run together (one colon)"
+  }
+]
