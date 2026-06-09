@@ -114,11 +114,171 @@ Because `segment_id` carries **no in-wire version token** of its own, the `edge_
 change REQUIRES bumping those envelope schema versions too, so consumers reading those envelopes can detect
 the change.
 
-## 2. `edge_attributes` export schema — *to be filled by issue #4*
+## 2. `edge_attributes` export schema
 
-One row per directed edge; carries the BPR capacity/free-flow fields derived from OSM tags.
+**Contract owner:** Database / Geospatial Engineer.
+**Contract version: 1.**
+**Consumers / depended-on-by:** the Go routing engine's graph loader (#9, `engine/internal/graph`) and the
+frontend `/graph` endpoint (later).
+**Conformance status:** schema + derivation rules frozen here; Go loader and frontend consumers pending.
+
+`edge_attributes` is the immutable road-network snapshot the engine runs on. It is **one row per directed
+edge** — the two directions of a two-way street are two rows; a one-way street is one row. It is produced by
+`data/scripts` from the PostGIS/pgRouting build and carries everything the engine needs to evaluate BPR cost:
+identity, topology, geometry, and the derived capacity / free-flow fields. The engine loads this artifact once
+at startup into an immutable in-memory graph and **never queries Postgres at request time.** The frontend's
+per-segment geometry comes from the *same* artifact (served as a GeoJSON `/graph` endpoint), so coloring a road
+by congestion is a pure `segment_id` join — there is no second source of geometry to drift from.
 
 The `segment_id` field conforms to §1 and MUST NOT be redefined locally.
+
+### Columns
+
+One row per directed edge, with exactly these 12 columns:
+
+| Column            | Type                  | Definition |
+|-------------------|-----------------------|------------|
+| `segment_id`      | string                | The §1 canonical wire key `"{osm_way_id}:{seq}:{dir}"`. The durable, cross-system identity of this directed edge. Conforms to §1 exactly; see §1 for the scheme and strict-parsing rules. |
+| `edge_id`         | int32, `>= 0`         | The engine's compact dense edge index (§1 `EdgeID`), `0..EdgeCount-1`. Materialized in the export so the Parquet and the GeoJSON `/graph` agree on the *same* integer for a row (see "edge_id is the load-time assignment" below). |
+| `source_node`     | int32, `>= 0`         | The §1 `NodeID` of this directed edge's tail (the `From` vertex). |
+| `target_node`     | int32, `>= 0`         | The §1 `NodeID` of this directed edge's head (the `To` vertex). |
+| `osm_way_id`      | int64, positive       | The OpenStreetMap way id this edge came from. MUST equal the `osm_way_id` embedded in `segment_id` (self-consistency rule below). |
+| `highway_class`   | string (enum)         | OSM `highway` tag, one of: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `residential`, `service`. Drives the default and `class_factor` tables below. |
+| `lanes_effective` | int, `>= 1`           | Lanes available **in this direction** (see derivation). |
+| `length_m`        | float64, meters, `> 0`| Geodesic length of the edge geometry, in meters. |
+| `maxspeed_kmh`    | float64, km/h, `> 0`  | Free-flow speed limit in km/h (see derivation). |
+| `freeflow_time_s` | float64, seconds, `> 0`| Free-flow traversal time in seconds: `length_m / (maxspeed_kmh → m/s)` (see derivation). |
+| `capacity_vph`    | float64, veh/hour, `> 0`| BPR capacity `c` in **vehicles per hour** (see derivation and the unit contract). |
+| `geometry`        | LineString            | The directed edge geometry. Coordinate order is **`[lon, lat]`** (GeoJSON / x,y), drawn in the edge's travel direction (`source_node` first, `target_node` last). |
+
+These map onto the engine's in-memory `graph.Edge` (`engine/internal/graph/graph.go`) as:
+`edge_id`→`ID`, `segment_id`→`Segment`, `source_node`→`From`, `target_node`→`To`, `length_m`→`LengthM`,
+`freeflow_time_s`→`FreeFlowS`, `capacity_vph`→`CapacityVPH`. (`osm_way_id`, `highway_class`,
+`lanes_effective`, `maxspeed_kmh` are derivation inputs the in-memory struct does not retain; `geometry` is
+held separately for map-matching and the `/graph` endpoint.)
+
+#### `edge_id` is the load-time assignment
+
+Mirroring §1's `segment_id ↔ EdgeID` framing: `segment_id` is the durable cross-system wire key; `edge_id`
+is the compact in-memory index. §1 notes the engine assigns `EdgeID` densely at load. In the **export**,
+`edge_id` is **materialized** — written into both the Parquet and the GeoJSON — so the two serializations of
+the same snapshot share one integer per edge and the frontend `/graph` join lines up with the engine's slices.
+The engine MAY reassign `EdgeID`s when it loads (it owns its in-memory layout), but the export's `edge_id` is
+the load-time assignment the engine adopts for *this* snapshot. As in §1, `edge_id` is an in-memory/in-artifact
+index, never a cross-system identity: `segment_id` remains the only key on the `segment-congestion` wire (§3).
+
+### Derivation rules
+
+OSM tags are sparse, so capacity and free-flow are **derived per directed edge** from `highway_class` with
+defaults, never hand-tuned. A conformant exporter MUST reproduce these exactly.
+
+**`lanes_effective`** — OSM `lanes` for this direction if tagged, else the class default:
+
+| highway_class | lanes default |
+|---------------|---------------|
+| motorway      | 3 |
+| trunk         | 2 |
+| primary       | 2 |
+| secondary     | 2 |
+| tertiary      | 1 |
+| residential   | 1 |
+| service       | 1 |
+
+**`maxspeed_kmh`** — OSM `maxspeed` if tagged, else the class default:
+
+| highway_class | maxspeed default (km/h) |
+|---------------|-------------------------|
+| motorway      | 100 |
+| trunk         | 80 |
+| primary       | 60 |
+| secondary     | 50 |
+| tertiary      | 40 |
+| residential   | 30 |
+| service       | 20 |
+
+**`class_factor`** — a monotonic ramp from motorway `1.0` down to `service`, applied in the capacity formula.
+A motorway lane discharges near the `1800 veh/h/lane` saturation flow; lower classes have more friction
+(driveways, parking, pedestrians) and discharge proportionally less:
+
+| highway_class | class_factor |
+|---------------|--------------|
+| motorway      | 1.0 |
+| trunk         | 0.9 |
+| primary       | 0.8 |
+| secondary     | 0.7 |
+| tertiary      | 0.6 |
+| residential   | 0.5 |
+| service       | 0.4 |
+
+**`capacity_vph`** — saturation flow ≈ `1800 veh/h/lane`:
+
+```
+capacity_vph = lanes_effective × 1800 × class_factor × capacity_scale
+```
+
+`capacity_scale` is one **global** multiplier — the frontend's single "tunable" knob for sensitivity sweeps.
+The export is generated at `capacity_scale = 1.0` (the values in the column and the fixtures assume `1.0`);
+the engine/frontend applies any other scale at runtime. Do not bake a non-1.0 scale into the export.
+
+**`freeflow_time_s`** — free-flow traversal time, in seconds, from length and speed limit:
+
+```
+freeflow_time_s = length_m / (maxspeed_kmh × 1000 / 3600)
+                = length_m / (maxspeed_kmh / 3.6)
+```
+
+Units: `length_m` is meters, `maxspeed_kmh` is km/h; `maxspeed_kmh × 1000 / 3600` converts km/h → m/s, so the
+quotient is seconds. (e.g. `60 km/h = 16.6667 m/s`; a `240 m` edge → `240 / 16.6667 = 14.4 s`.)
+
+### Unit contract (BPR flow units)
+
+BPR cost is `t = freeflow_time_s × (1 + α·(v/c)^β)`. Both `v` (assigned flow) and `c` (= `capacity_vph`) **MUST
+be in vehicles per hour.** This is a *written* contract because a mismatch does not crash — it silently
+corrupts the headline number, and with `β = 4` the error is raised to the fourth power.
+
+Spark emits `vehicle_count` per **5-minute** window (§3). The congestion adapter **annualizes that count to an
+hourly rate before BPR**: `v_vph = vehicle_count × 12` (twelve 5-minute windows per hour). `capacity_vph` in
+this export is already vehicles/hour, so once the adapter applies `× 12`, `v` and `c` are in the same unit and
+`v/c` is dimensionless. The `× 12` annualization is the adapter's responsibility (engine side), but it is
+stated here because it is the other half of the unit contract that makes `capacity_vph` meaningful.
+
+### Serializations
+
+The same logical rows are emitted in two formats, and they MUST carry identical values per `segment_id`:
+
+1. **Parquet** (`edge_attributes.parquet`) — for the engine. One record per directed edge, columns as in the
+   table above. `geometry` is stored as a serialized LineString (WKB/GeoJSON-string per the writer); all other
+   columns are the scalar types listed.
+2. **GeoJSON `FeatureCollection`** (`edge_attributes.geojson`) — for the frontend `/graph` endpoint. One
+   `Feature` per directed edge:
+   - `Feature.geometry` is the `LineString` with coordinates in **`[lon, lat]`** order (GeoJSON x,y), in the
+     edge's travel direction.
+   - **Every other column** (`segment_id`, `edge_id`, `source_node`, `target_node`, `osm_way_id`,
+     `highway_class`, `lanes_effective`, `length_m`, `maxspeed_kmh`, `freeflow_time_s`, `capacity_vph`) goes
+     into `Feature.properties` under the same key. The frontend colors a road by joining its live congestion
+     to `properties.segment_id` — a pure §1 join, no geometry recomputation.
+
+### Reference / fixtures
+
+- **Golden fixture (language-neutral, shared):** `docs/fixtures/edge_attributes/example_export.json` — a small
+  array of directed-edge rows with all 12 columns, where every `segment_id` is valid under §1 and
+  `capacity_vph` / `freeflow_time_s` are computed from the rules above (so a conformant exporter must
+  reproduce them). See that directory's `README.md`.
+- The `segment_id` rules and their own fixtures live in §1 / `docs/fixtures/segment_id/`; this section never
+  redefines them.
+
+### Versioning
+
+This is **Contract version: 1**. The column set, their types, the derivation rules (default tables,
+`class_factor`, the capacity and free-flow formulas), the unit contract, and both serializations are frozen.
+**Changing any of them — including adding/removing a column, retuning a default or `class_factor`, or changing
+the GeoJSON property mapping — requires bumping the contract version here and notifying every consumer (engine
+loader, frontend) so they update in lockstep.** The fixture in `docs/fixtures/edge_attributes/` is part of this
+contract; do not edit it to paper over a non-conformant exporter.
+
+As §1 notes, `segment_id` carries no in-wire version token, so **this `edge_attributes` envelope's schema
+version is one of `segment_id`'s operational version-carriers**: a §1 format change REQUIRES bumping this
+contract version too, so consumers reading this artifact can detect the change.
 
 ## 3. `segment-congestion` schema v2 — *to be filled by issue #5*
 

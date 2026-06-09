@@ -1,0 +1,110 @@
+[
+  {
+    "segment_id": "27583001:0:F",
+    "edge_id": 0,
+    "source_node": 10,
+    "target_node": 11,
+    "osm_way_id": 27583001,
+    "highway_class": "primary",
+    "lanes_effective": 2,
+    "length_m": 240.0,
+    "maxspeed_kmh": 60.0,
+    "freeflow_time_s": 14.4,
+    "capacity_vph": 2880.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]]
+    },
+    "note": "one-way primary, defaults used: lanes=2, maxspeed=60. capacity=2*1800*0.8=2880; freeflow=240/(60/3.6)=14.4. way id in segment_id matches osm_way_id."
+  },
+  {
+    "segment_id": "48800123:0:F",
+    "edge_id": 1,
+    "source_node": 11,
+    "target_node": 12,
+    "osm_way_id": 48800123,
+    "highway_class": "secondary",
+    "lanes_effective": 2,
+    "length_m": 180.0,
+    "maxspeed_kmh": 50.0,
+    "freeflow_time_s": 12.96,
+    "capacity_vph": 2520.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.98801, 40.73502], [-73.98655, 40.73610]]
+    },
+    "note": "two-way secondary, forward half of the F/R pair. defaults: lanes=2, maxspeed=50. capacity=2*1800*0.7=2520; freeflow=180/(50/3.6)=12.96."
+  },
+  {
+    "segment_id": "48800123:0:R",
+    "edge_id": 2,
+    "source_node": 12,
+    "target_node": 11,
+    "osm_way_id": 48800123,
+    "highway_class": "secondary",
+    "lanes_effective": 2,
+    "length_m": 180.0,
+    "maxspeed_kmh": 50.0,
+    "freeflow_time_s": 12.96,
+    "capacity_vph": 2520.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.98655, 40.73610], [-73.98801, 40.73502]]
+    },
+    "note": "two-way secondary, reverse half (same way+seq as the F row, dir=R, source/target swapped, geometry reversed). same derived values."
+  },
+  {
+    "segment_id": "905512:0:F",
+    "edge_id": 3,
+    "source_node": 20,
+    "target_node": 21,
+    "osm_way_id": 905512,
+    "highway_class": "motorway",
+    "lanes_effective": 3,
+    "length_m": 500.0,
+    "maxspeed_kmh": 100.0,
+    "freeflow_time_s": 18.0,
+    "capacity_vph": 5400.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.97120, 40.74010], [-73.96650, 40.74180]]
+    },
+    "note": "multi-segment motorway, sub-segment seq=0. OSM-tagged lanes=3, maxspeed=100. capacity=3*1800*1.0=5400; freeflow=500/(100/3.6)=18.0."
+  },
+  {
+    "segment_id": "905512:1:F",
+    "edge_id": 4,
+    "source_node": 21,
+    "target_node": 22,
+    "osm_way_id": 905512,
+    "highway_class": "motorway",
+    "lanes_effective": 3,
+    "length_m": 320.0,
+    "maxspeed_kmh": 100.0,
+    "freeflow_time_s": 11.52,
+    "capacity_vph": 5400.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.96650, 40.74180], [-73.96350, 40.74295]]
+    },
+    "note": "same motorway way 905512, next sub-segment seq=1 after the pgRouting split. same lanes/maxspeed/capacity; shorter length 320 -> freeflow=320/(100/3.6)=11.52."
+  },
+  {
+    "segment_id": "9876543:0:F",
+    "edge_id": 5,
+    "source_node": 30,
+    "target_node": 31,
+    "osm_way_id": 9876543,
+    "highway_class": "residential",
+    "lanes_effective": 1,
+    "length_m": 90.0,
+    "maxspeed_kmh": 30.0,
+    "freeflow_time_s": 10.8,
+    "capacity_vph": 900.0,
+    "geometry": {
+      "type": "LineString",
+      "coordinates": [[-73.95001, 40.75002], [-73.94920, 40.75050]]
+    },
+    "note": "one-way residential, all defaults: lanes=1, maxspeed=30. capacity=1*1800*0.5=900; freeflow=90/(30/3.6)=10.8. lowest-class non-service example."
+  }
+]
