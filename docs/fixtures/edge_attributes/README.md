@@ -50,10 +50,14 @@ An array of directed-edge rows, each as an object with all 12 contract columns:
 - `capacity_vph` — `lanes_effective × 1800 × class_factor × capacity_scale`,
   vehicles/hour. These rows are generated at `capacity_scale = 1.0`, so the
   stored value equals `lanes_effective × 1800 × class_factor`.
-- `geometry` — GeoJSON `LineString`, coordinates in **`[lon, lat]`** order, drawn
-  in the edge's travel direction (source → target). A LineString may have more
-  than two coordinates; interior coordinates are **shape points only**, not graph
-  nodes — only the first/last coordinate map to `source_node`/`target_node`.
+- `geometry` — `LineString`, coordinates in **`[lon, lat]`** order (CRS
+  EPSG:4326), drawn in the edge's travel direction (source → target). A
+  LineString may have more than two coordinates; interior coordinates are
+  **shape points only**, not graph nodes — only the first/last coordinate map to
+  `source_node`/`target_node`. This fixture expresses geometry as GeoJSON
+  `coordinates` for readability; per §2 the **Parquet** serialization carries the
+  same geometry as WKB (same `[lon, lat]` / EPSG:4326), so both serializations
+  decode to these identical coordinates.
 - `note` — human description of what the row exercises (ignore in tests).
 
 `capacity_vph` and `freeflow_time_s` are **computed from the §2 rules** for each
@@ -63,12 +67,15 @@ exporter must reproduce these values exactly, so the fixture is self-checking.
 Coverage: a one-way street (single row), both halves of a two-way (`…:F` and
 `…:R` sharing way+seq, with source/target and geometry reversed), a
 multi-segment way split at an intersection (two `seq` values on the same way),
-a spread of highway classes (`primary`, `secondary`, `motorway`, `residential`,
-`trunk`, `service`) that exercises every `class_factor` value, a three-vertex
-LineString (the `trunk` row, whose middle coordinate is a shape point, not a
-node), and a row whose OSM-tagged `lanes`/`maxspeed` deliberately differ from the
-class defaults (the second `primary` row) so a defaulting-vs-tagged exporter bug
-is caught.
+**all seven** highway classes (`motorway`, `trunk`, `primary`, `secondary`,
+`tertiary`, `residential`, `service`) so every `class_factor` value is
+exercised, a three-vertex LineString (the `trunk` row, whose middle coordinate
+is a shape point, not a node), a row whose OSM-tagged `lanes`/`maxspeed`
+deliberately differ from the class defaults (the second `primary` row) so a
+defaulting-vs-tagged exporter bug is caught, and a two-way pair tagged with a
+**bare both-directions `lanes` total** (way `8123456`, `lanes=6 → 3` per
+direction) so the lane-split rule is exercised — a row catching an exporter that
+applies a bare `lanes` whole or falls back to the class default.
 
 These are the **logical row** vectors. The envelope-level `schema_version` (§2
 "Envelope `schema_version`") is a property of the serialized Parquet/GeoJSON

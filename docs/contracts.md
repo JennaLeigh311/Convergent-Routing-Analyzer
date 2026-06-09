@@ -140,8 +140,8 @@ One row per directed edge, with exactly these 12 columns:
 |-------------------|-----------------------|------------|
 | `segment_id`      | string                | The §1 canonical wire key `"{osm_way_id}:{seq}:{dir}"`. The durable, cross-system identity of this directed edge. Conforms to §1 exactly; see §1 for the scheme and strict-parsing rules. |
 | `edge_id`         | int32, `>= 0`         | The engine's compact dense edge index (§1 `EdgeID`), `0..EdgeCount-1`. Materialized in the export so the Parquet and the GeoJSON `/graph` agree on the *same* integer for a row (see "edge_id is the load-time assignment" below). |
-| `source_node`     | int32, `>= 0`         | The §1 `NodeID` of this directed edge's tail (the `From` vertex). |
-| `target_node`     | int32, `>= 0`         | The §1 `NodeID` of this directed edge's head (the `To` vertex). |
+| `source_node`     | int32, `0..NodeCount-1` | The engine's compact `NodeID` (`engine/internal/domain`, `int32`) of this directed edge's tail (the `From` vertex). Dense and contiguous — see "node ids are a load-time assignment" below. |
+| `target_node`     | int32, `0..NodeCount-1` | The engine's compact `NodeID` of this directed edge's head (the `To` vertex). Same governance as `source_node`. |
 | `osm_way_id`      | int64, positive       | The OpenStreetMap way id this edge came from. MUST equal the `osm_way_id` embedded in `segment_id` (self-consistency rule below). |
 | `highway_class`   | string (enum)         | OSM `highway` tag, one of exactly: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `residential`, `service`. Drives the default and `class_factor` tables below. The exporter MUST map every edge into one of these seven (collapsing OSM `*_link`/variant tags into their base class); a value outside the enum has no derivation rule, so a loader MAY reject it. |
 | `lanes_effective` | int, `>= 1`           | Lanes available **in this direction** (see derivation). |
@@ -173,12 +173,36 @@ frontend `/graph` ↔ live-congestion join, and any join that must survive a re-
 its in-memory slices — is **`segment_id`**. A consumer MUST NOT use `edge_id` as a cross-serialization or
 cross-snapshot join key unless it is pairing the two files of one specific export.
 
+#### `source_node` / `target_node` are a load-time assignment too
+
+Node ids follow the same rule as `edge_id`. `NodeID` is the engine's compact node index
+(`engine/internal/domain`, `int32`), assigned **densely and contiguously `0..NodeCount-1`** at graph-build
+time so a loader can size a flat per-node slice directly. The export materializes `source_node`/`target_node`
+so the Parquet and the GeoJSON agree per edge, and `length_m`-based topology lines up. Like `edge_id`, node
+ids are an **in-artifact/in-memory index, not a cross-system identity**: they are not stable across a
+re-export (a new build MAY renumber them) and MUST NOT be used as a durable or cross-snapshot key — the only
+durable identity remains `segment_id` (for edges) and the geometry endpoints (for node position). The OSM node
+id a vertex came from is not part of this contract; if a future consumer needs stable node identity it must be
+added here under a version bump.
+
 ### Derivation rules
 
 OSM tags are sparse, so capacity and free-flow are **derived per directed edge** from `highway_class` with
 defaults, never hand-tuned. A conformant exporter MUST reproduce these exactly.
 
-**`lanes_effective`** — OSM `lanes` for this direction if tagged, else the class default:
+**`lanes_effective`** — lanes available **in this one direction of travel**, resolved in this precedence
+(this matters: OSM `lanes` is conventionally the *both-directions total*, so applying it whole to each
+direction would double a two-way street's capacity — and with `β = 4` that silently corrupts the headline
+number):
+
+1. If the direction-specific tag is present (`lanes:forward` for the `F` row, `lanes:backward` for the `R`
+   row), use it directly.
+2. Else, if the edge is **one-way**, use the bare `lanes` tag (it already describes the single direction).
+3. Else (two-way, only a bare `lanes` tagged), the bare `lanes` is the both-directions total: split it across
+   directions — `floor(lanes / 2)`, clamped to a minimum of `1`.
+4. Else (no `lanes` tag at all), use the class default below.
+
+Class default when no usable tag exists:
 
 | highway_class | lanes default |
 |---------------|---------------|
@@ -245,10 +269,10 @@ and `β` themselves are *not* part of this export contract — they are pinned b
 `CostFunction`, default `α = 0.15`, `β = 4`; this section only fixes the **units** of `v` and `c` that flow
 into it.)
 
-Spark emits `vehicle_count` per **5-minute** window (§3). The congestion adapter **annualizes that count to an
+Spark emits `vehicle_count` per **5-minute** window (§3). The congestion adapter **scales that count to an
 hourly rate before BPR**: `v_vph = vehicle_count × 12` (twelve 5-minute windows per hour). `capacity_vph` in
 this export is already vehicles/hour, so once the adapter applies `× 12`, `v` and `c` are in the same unit and
-`v/c` is dimensionless. The `× 12` annualization is the adapter's responsibility (engine side), but it is
+`v/c` is dimensionless. The `× 12` hourly scaling is the adapter's responsibility (engine side), but it is
 stated here because it is the other half of the unit contract that makes `capacity_vph` meaningful.
 
 ### Serializations
@@ -257,8 +281,10 @@ The same logical rows are emitted in two formats, and they MUST carry identical 
 
 1. **Parquet** (`edge_attributes.parquet`) — for the engine. One record per directed edge, columns as in the
    table above. `geometry` is stored as **WKB** (well-known binary) `LineString` — a single fixed encoding so a
-   Go loader decodes it without out-of-band knowledge (do **not** emit a GeoJSON string or WKT here); all other
-   columns are the scalar types listed.
+   Go loader decodes it without out-of-band knowledge (do **not** emit a GeoJSON string or WKT here). WKB
+   carries no CRS or axis convention of its own, so this contract pins both: **axis order `(X = lon, Y = lat)`
+   and CRS EPSG:4326 (WGS84)** — identical to the GeoJSON `[lon, lat]` rule, so a decoder must never swap
+   axes. All other columns are the scalar types listed.
 2. **GeoJSON `FeatureCollection`** (`edge_attributes.geojson`) — for the frontend `/graph` endpoint. One
    `Feature` per directed edge:
    - `Feature.geometry` is the `LineString` with coordinates in **`[lon, lat]`** order (GeoJSON x,y), in the
