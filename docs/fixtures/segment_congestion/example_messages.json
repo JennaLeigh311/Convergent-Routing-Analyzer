@@ -1,0 +1,93 @@
+[
+  {
+    "schema_version": 1,
+    "segment_id": "27583001:0:F",
+    "window_start": "2026-06-08T08:00:00Z",
+    "window_end": "2026-06-08T08:05:00Z",
+    "vehicle_count": 31,
+    "avg_speed_kmh": 22.4,
+    "sample_pings": 98,
+    "is_final": false,
+    "emit_time": "2026-06-08T08:05:03Z",
+    "producer": "spark-structured-stream",
+    "note": "Row 1 — normal PROVISIONAL record (is_final=false) for window [08:00,08:05) on segment 27583001:0:F (a known one-way edge from the edge_attributes fixture). Baseline emission a few seconds after window_end. sample_pings(98) >= vehicle_count(31)."
+  },
+  {
+    "schema_version": 1,
+    "segment_id": "27583001:0:F",
+    "window_start": "2026-06-08T08:00:00Z",
+    "window_end": "2026-06-08T08:05:00Z",
+    "vehicle_count": 37,
+    "avg_speed_kmh": 21.1,
+    "sample_pings": 121,
+    "is_final": false,
+    "emit_time": "2026-06-08T08:06:04Z",
+    "producer": "spark-structured-stream",
+    "note": "Row 2 — LATER REVISION of the SAME window+segment as row 1 (same segment_id, same window_start/window_end). Still provisional, but newer emit_time (08:06:04 > 08:05:03) and higher vehicle_count (37 > 31) after late pings folded in. Proves 'latest emit_time wins within a window': this supersedes row 1."
+  },
+  {
+    "schema_version": 1,
+    "segment_id": "27583001:0:F",
+    "window_start": "2026-06-08T08:00:00Z",
+    "window_end": "2026-06-08T08:05:00Z",
+    "vehicle_count": 39,
+    "avg_speed_kmh": 20.8,
+    "sample_pings": 130,
+    "is_final": true,
+    "emit_time": "2026-06-08T08:07:05Z",
+    "producer": "spark-structured-stream",
+    "note": "Row 3 — FINAL record for the same window+segment (is_final=true, newest emit_time 08:07:05 after the 2-min watermark passed window_end). This is the (window_start, emit_time) winner among rows 1-3 and the value a consumer must keep for this window."
+  },
+  {
+    "schema_version": 1,
+    "segment_id": "27583001:0:F",
+    "window_start": "2026-06-08T08:01:00Z",
+    "window_end": "2026-06-08T08:06:00Z",
+    "vehicle_count": 35,
+    "avg_speed_kmh": 19.6,
+    "sample_pings": 118,
+    "is_final": false,
+    "emit_time": "2026-06-08T08:06:03Z",
+    "producer": "spark-structured-stream",
+    "note": "Row 4 — the NEXT SLIDING WINDOW [08:01,08:06) for the same segment (1-minute slide; it OVERLAPS rows 1-3's [08:00,08:05) window by 4 minutes, so its count shares pings with them — a consumer MUST replace, never sum). Provisional, and note its emit_time 08:06:03 is EARLIER than the row-3 final's 08:07:05, yet row 4 still wins: (window_start, emit_time) sorts on window_start first (08:01 > 08:00), so the newer window supersedes the earlier window's final. Proves window_start is the primary sort key and the freshest window (provisional) is the current load under a sliding window."
+  },
+  {
+    "schema_version": 1,
+    "segment_id": "48800123:0:R",
+    "window_start": "2026-06-08T08:00:00Z",
+    "window_end": "2026-06-08T08:05:00Z",
+    "vehicle_count": 12,
+    "avg_speed_kmh": 27.9,
+    "sample_pings": 41,
+    "is_final": true,
+    "emit_time": "2026-06-08T08:07:06Z",
+    "producer": "spark-structured-stream",
+    "note": "Row 5 — a DIFFERENT segment, the REVERSE (dir=R) direction of two-way way 48800123 (both directions, :F and :R, are in the edge_attributes fixture). Its own independent window [08:00,08:05), final. Exercises directionality and per-segment independence: it shares window_start with rows 1-3 but is a distinct segment_id, so it is kept independently."
+  },
+  {
+    "schema_version": 1,
+    "segment_id": "48800123:0:F",
+    "window_start": "2026-06-08T08:00:00Z",
+    "window_end": "2026-06-08T08:05:00Z",
+    "vehicle_count": 18,
+    "avg_speed_kmh": 24.5,
+    "sample_pings": 63,
+    "is_final": true,
+    "emit_time": "2026-06-08T08:07:06Z",
+    "producer": "spark-structured-stream",
+    "note": "Row 6 — the FORWARD (dir=F) counterpart of way 48800123 for the same window as row 5. Same way+seq, dir=F vs the row-5 dir=R, with an independent vehicle_count (18 vs 12). Mirrors §1's directional rule: a two-way street's two directions carry fully independent congestion records keyed by distinct segment_ids."
+  },
+  {
+    "schema_version": 1,
+    "segment_id": "123456789:2:F",
+    "window_start": "2026-06-08T08:00:00Z",
+    "window_end": "2026-06-08T08:05:00Z",
+    "vehicle_count": 42,
+    "avg_speed_kmh": 18.3,
+    "sample_pings": 137,
+    "is_final": false,
+    "emit_time": "2026-06-08T08:05:03Z",
+    "producer": "spark-structured-stream",
+    "note": "Row 7 — the canonical spec example message verbatim (§R4). A MULTI-SEQ segment_id (seq=2, a sub-segment of way 123456789 after a pgRouting split), proving non-zero seq values flow on this topic. Provisional record for window [08:00,08:05)."
+  }
+]
