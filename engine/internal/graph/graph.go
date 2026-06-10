@@ -39,6 +39,13 @@ type Graph interface {
 	// NodeCount returns the number of nodes in the graph.
 	NodeCount() int
 
+	// EdgeCount returns the number of directed edges in the graph. EdgeIDs are
+	// dense and contiguous (0..EdgeCount-1), so a consumer can size a flat
+	// per-edge slice directly — e.g. make([]float64, g.EdgeCount()) for a flow
+	// or congestion-load array indexed by EdgeID — without hashing. The
+	// congestion adapter and every flow-accumulating router rely on this.
+	EdgeCount() int
+
 	// NearestNode returns the closest node to a coordinate. Used to resolve
 	// route origin/destination endpoints (backed by a k-d tree over nodes).
 	NearestNode(p domain.LatLon) (domain.NodeID, bool)
