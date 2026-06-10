@@ -105,6 +105,10 @@ func TestAdjacencyGraphReadsAreIsolated(t *testing.T) {
 	if again[0].LengthM != 100 {
 		t.Errorf("Neighbors(0)[0].LengthM = %v after caller mutation, want 100 (returned slice must be isolated)", again[0].LengthM)
 	}
+	// The mutation must not have reached shared edge storage via another accessor.
+	if e, _ := g.Edge(0); e.LengthM != 100 {
+		t.Errorf("Edge(0).LengthM = %v after Neighbors mutation, want 100 (returned slice must not alias g.edges)", e.LengthM)
+	}
 }
 
 func TestNewRejectsMalformedInput(t *testing.T) {
@@ -125,9 +129,19 @@ func TestNewRejectsMalformedInput(t *testing.T) {
 			edges: []graph.Edge{{ID: 7, From: 0, To: 1}},
 		},
 		{
-			name:  "edge endpoint out of range",
+			name:  "edge To out of range",
 			nodes: []graph.Node{good, {ID: 1, Pos: domain.LatLon{Lat: 2, Lon: 2}}},
 			edges: []graph.Edge{{ID: 0, From: 0, To: 9}},
+		},
+		{
+			name:  "edge From out of range",
+			nodes: []graph.Node{good, {ID: 1, Pos: domain.LatLon{Lat: 2, Lon: 2}}},
+			edges: []graph.Edge{{ID: 0, From: 9, To: 1}},
+		},
+		{
+			name:  "edge in empty graph",
+			nodes: nil,
+			edges: []graph.Edge{{ID: 0, From: 0, To: 0}},
 		},
 	}
 	for _, tc := range cases {
@@ -139,9 +153,38 @@ func TestNewRejectsMalformedInput(t *testing.T) {
 	}
 }
 
+// TestNewEmptyGraph covers the degenerate boundary: a graph with no nodes and
+// no edges must build without error and read back as empty without panicking
+// (the CSR outOffsets is len 1, so the offset arithmetic must stay in bounds).
+func TestNewEmptyGraph(t *testing.T) {
+	g, err := graph.New(nil, nil)
+	if err != nil {
+		t.Fatalf("graph.New(nil, nil) = %v, want a valid empty graph", err)
+	}
+	if got := g.NodeCount(); got != 0 {
+		t.Errorf("NodeCount() = %d, want 0", got)
+	}
+	if got := g.EdgeCount(); got != 0 {
+		t.Errorf("EdgeCount() = %d, want 0", got)
+	}
+	if got := g.Neighbors(0); got != nil {
+		t.Errorf("Neighbors(0) = %+v, want nil (empty graph)", got)
+	}
+	if _, ok := g.Edge(0); ok {
+		t.Error("Edge(0) ok = true, want false (empty graph)")
+	}
+	if _, ok := g.Node(0); ok {
+		t.Error("Node(0) ok = true, want false (empty graph)")
+	}
+}
+
 // TestAdjacencyGraphConcurrentReads exercises the immutable-shared-graph
 // invariant: many goroutines read concurrently with no synchronization. Run
 // under -race (CI Lane A does) this fails if any accessor mutates shared state.
+// Each worker also writes into its own returned Neighbors slice: on the correct
+// fresh-allocation implementation that write is goroutine-local and harmless,
+// but if Neighbors ever regressed to aliasing the internal CSR storage, those
+// writes would race against the other workers' reads and -race would catch it.
 func TestAdjacencyGraphConcurrentReads(t *testing.T) {
 	g := buildTestGraph(t)
 	const workers = 32
@@ -151,10 +194,12 @@ func TestAdjacencyGraphConcurrentReads(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
-				if got := g.Neighbors(0); len(got) != 2 {
+				got := g.Neighbors(0)
+				if len(got) != 2 {
 					t.Errorf("concurrent Neighbors(0) len = %d, want 2", len(got))
 					return
 				}
+				got[0].LengthM = float64(i) // must touch only this goroutine's copy
 				_, _ = g.Edge(1)
 				_, _ = g.Node(2)
 				_ = g.NodeCount()
