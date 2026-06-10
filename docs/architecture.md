@@ -78,3 +78,30 @@ startup is deterministic rather than racy (the #1 demo-failure mode per §R7):
 Config is env-driven (`.env`, copied from `.env.example`); `core` needs none of it. No service hardcodes a
 broker address, PG DSN, or topic name — they interpolate from the environment so the dev↔full adapter swap is
 config-driven.
+
+## Deferred engineering decisions
+
+Decisions made deliberately *not* to act on yet, recorded so the rationale and the trigger survive. Each is
+tracked by a GitHub issue; the rule is to leave the simple form in place until the trigger fires, not to
+pre-build for a cost we haven't measured.
+
+**Zero-copy neighbor iteration on the router hot path (issue #35).** `AdjacencyGraph.Neighbors(n)` returns a
+freshly allocated `[]Edge` and copies full `Edge` structs. That allocation is a deliberate isolation
+guarantee — a caller cannot reach the internal CSR storage, which is what makes the shared graph safe for
+unsynchronized concurrent reads (R5). It is the right default and stays. But on a traversal that settles
+millions of nodes it will be the dominant per-route allocation source, and the CSR ranges
+(`outEdgeIDs[lo:hi]`) are read-only by construction — so a router can iterate them and dereference `Edge(eid)`
+itself without copying, preserving immutability *without* the per-call allocation. The zero-copy accessor is
+**additive** (the safe `Neighbors` stays for non-hot callers), not a breaking change. **Trigger:** a real
+router exercises the hot path (#27) *and* a benchmark confirms `Neighbors` allocation is a measured hotspot
+(#31) — not before. Surfaced by the PR #34 review.
+
+**Honest deferral of the spatial-query stubs (issue #36).** `NearestNode` (k-d tree, #24) and `NearestEdge`
+(map-matching R-tree, Phase 7) are stubbed returning `ok=false` until their spatial indexes land. Because the
+`(value, ok)` contract already means "no match", a stub and a real "found nothing" are indistinguishable.
+That is harmless today (no production callers), but once `NearestNode` ships a half-wired integration could
+silently resolve *every* OD endpoint to "no node found" and never error. Two things are deferred to #36:
+(1) deciding whether the still-unimplemented method keeps `ok=false` or `panic`s with an issue reference so a
+premature integration fails loudly, and (2) requiring the #24 and Phase-7 PRs to add a test that asserts a
+*real* match — so neither method can ship while still effectively a stub. #24 carries the matching acceptance
+item. Surfaced by the PR #34 review.
