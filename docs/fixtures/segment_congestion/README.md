@@ -73,18 +73,23 @@ record for window `[08:00,08:05)`; (2) a **later revision of the same
 window+segment** with a newer `emit_time` and higher `vehicle_count`, proving
 *latest `emit_time` wins within a window*; (3) the **final** record for that same
 window (`is_final: true`, newest `emit_time`), the value a consumer must keep; and
-(4) a **later window** `[08:05,08:10)` for that segment with a greater
-`window_start`, proving *newest window wins* in the `(window_start, emit_time)`
-ordering (it supersedes the row-3 final even though it is only provisional). It
-then exercises **directionality and per-segment independence**: (5) the **reverse**
+(4) the **next sliding window** `[08:01,08:06)` for that segment (1-minute slide,
+so it **overlaps** rows 1-3 by 4 minutes), proving *newest `window_start` wins* in
+the `(window_start, emit_time)` ordering — it supersedes the row-3 final even
+though it is only provisional **and** its `emit_time` (08:06:03) is earlier than
+row 3's (08:07:05), because `window_start` is the primary sort key. (Overlapping
+windows are **replaced, never summed** — their counts share pings; see
+[`../../contracts.md` §3](../../contracts.md) "Sliding windows replace.") It then
+exercises **directionality and per-segment independence**: (5) the **reverse**
 (`48800123:0:R`) and (6) the **forward** (`48800123:0:F`) halves of one two-way
 street carry independent records for the same window with different
 `vehicle_count`s — mirroring §1's directional rule — and (7) a **multi-seq**
 `segment_id` (`123456789:2:F`, the verbatim §R4 spec example) shows a non-zero
-`seq` flowing on the topic. Every window is exactly 5 minutes, every timestamp is
-RFC3339 UTC `Z`, every `emit_time` is consistent with the dedup story (provisional
-emits a few seconds after `window_end`; finals after the 2-min watermark), and
-`sample_pings >= vehicle_count` throughout.
+`seq` flowing on the topic (it intentionally has no `edge_attributes` counterpart —
+it is the spec's example id, not a reused edge). Every window is exactly 5 minutes,
+every timestamp is RFC3339 UTC `Z`, every `emit_time` is consistent with the dedup
+story (provisional emits a few seconds after `window_end`; finals after the 2-min
+watermark), and `sample_pings >= vehicle_count` throughout.
 
 ## Consumers
 
@@ -92,8 +97,9 @@ emits a few seconds after `window_end`; finals after the 2-min watermark), and
   `engine/internal/...`) — will load these to validate that messages parse into
   the in-memory congestion snapshot and that the `(window_start, emit_time)`
   keep-latest dedup rule is applied correctly (rows 1→2→3 collapse to row 3 for
-  the window; row 4 then supersedes by newer window; rows 5/6/7 are kept
-  independently per `segment_id`).
+  the window; row 4's newer `window_start` then supersedes it — and replaces, not
+  sums, despite the windows overlapping; rows 5/6/7 are kept independently per
+  `segment_id`).
 - **PySpark producer conformance** (future) — will validate that the Spark
   Structured Streaming job serializes the identical 10-field shape (and only
   these fields — `dropped_late` is a producer metric, not a message field).

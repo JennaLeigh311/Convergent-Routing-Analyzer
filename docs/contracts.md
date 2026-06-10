@@ -405,6 +405,18 @@ timestamps are RFC3339 UTC, so this comparison is a string/lexicographic compare
 conformant consumer MUST apply this ordering and MUST NOT, e.g., sum successive emissions for one window
 (that would double-count the revisions).
 
+**Sliding windows replace, they do not accumulate.** Because the windows slide (5-min length, 1-min slide —
+see "Windowing & streaming semantics"), successive windows on one segment **overlap** and the same ping is
+counted in several of them. The dedup rule keeps exactly **one** record per segment — the latest
+`window_start` — as that segment's current load, and **discards** the overlapping earlier windows; a consumer
+MUST NOT sum or otherwise combine two overlapping windows (their counts share pings, so adding them
+double-counts). Note a direct consequence: under a 1-min slide the latest-`window_start` record is normally
+still **provisional** (`is_final: false`) — it is the freshest window and has had the least time to absorb
+late pings — and that is intended: "freshest window wins" deliberately prefers currency over finality for the
+live load estimate. `is_final` records still arrive (for dedup within a window and for the batch pass); they
+do **not** override a later window merely for being final, because rule 1 (`window_start`) is the primary
+sort key (see fixture rows 3→4).
+
 ### Windowing & streaming semantics
 
 The producer is a **Spark Structured Streaming** job (not legacy DStreams) — Structured Streaming is required
@@ -450,13 +462,19 @@ and retention are load-bearing for the dedup rule and the batch replay.
   set **≥ a full replay window** so the `Trigger.AvailableNow` batch run can re-read the entire ping file.
 - **`segment-congestion`** (output, **this contract**). Keyed by **`segment_id`** (the message key above), so
   all records for one segment land on one partition and compaction can collapse them. **`cleanup.policy=compact`.**
-  Log compaction is the **storage embodiment of the dedup rule**: with the key = `segment_id`, compaction
-  retains the latest record per key, which — because the producer emits revisions and the final record for a
-  window in `emit_time` order, newest window last — leaves the keep-latest `(window_start, emit_time)` winner as
-  the surviving compacted value. Compaction and the `(window_start, emit_time)` rule are two views of the same
-  invariant: a fresh consumer reading the compacted log converges to the same per-segment state an online
-  consumer reaches by applying the dedup rule. (The engine still applies the dedup rule in-memory, because
-  before compaction runs a consumer can still observe an older record after a newer one.)
+  Compaction **approximates, but is not identical to, the dedup rule** and the difference matters. Kafka log
+  compaction retains the latest record per key **by append (offset) order** — i.e. by produce order — *not* by
+  the contract's `(window_start, emit_time)` value order. The two coincide **only if the producer appends
+  records for a given `segment_id` in non-decreasing `(window_start, emit_time)` order** (newest window last);
+  under that precondition compaction leaves the keep-latest winner as the surviving value, and a fresh consumer
+  of the compacted log converges to the same per-segment state an online consumer reaches by applying the dedup
+  rule. That precondition is **not guaranteed**: late-data revisions, producer retries, and the
+  `AvailableNow` batch pass interleaving with the live stream can all append a value-**older** record after a
+  value-newer one, in which case compaction would retain the wrong (append-latest but value-older) record.
+  **Therefore the `(window_start, emit_time)` dedup rule is authoritative and every consumer MUST apply it
+  in-memory; a consumer MUST NOT treat Kafka compaction order as a substitute for it.** Compaction is a
+  storage-bound optimization (it keeps the log small and lets a cold consumer warm-start near the right state),
+  not the definition of correctness.
 
 ### Reference / fixtures
 
