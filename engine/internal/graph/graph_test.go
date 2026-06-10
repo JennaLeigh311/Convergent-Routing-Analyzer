@@ -27,6 +27,7 @@ func (g *fakeGraph) Neighbors(n domain.NodeID) []graph.Edge {
 func (g *fakeGraph) Edge(id domain.EdgeID) (graph.Edge, bool) { e, ok := g.edges[id]; return e, ok }
 func (g *fakeGraph) Node(id domain.NodeID) (graph.Node, bool) { n, ok := g.nodes[id]; return n, ok }
 func (g *fakeGraph) NodeCount() int                           { return len(g.nodes) }
+func (g *fakeGraph) EdgeCount() int                           { return len(g.edges) }
 
 func (g *fakeGraph) NearestNode(_ domain.LatLon) (domain.NodeID, bool) {
 	for id := range g.nodes {
@@ -62,6 +63,9 @@ func TestFakeGraphSatisfiesPort(t *testing.T) {
 
 	if got := g.NodeCount(); got != 2 {
 		t.Fatalf("NodeCount() = %d, want 2", got)
+	}
+	if got := g.EdgeCount(); got != 1 {
+		t.Fatalf("EdgeCount() = %d, want 1", got)
 	}
 	if got := g.Neighbors(1); len(got) != 1 || got[0].ID != 10 {
 		t.Fatalf("Neighbors(1) = %+v, want one edge id 10", got)
