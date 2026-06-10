@@ -331,8 +331,156 @@ this contract version (and therefore the `schema_version` written into both arti
 reading the Parquet footer metadata or the GeoJSON top-level `schema_version` can detect the change at load
 time rather than silently mis-parsing.
 
-## 3. `segment-congestion` schema v2 — *to be filled by issue #5*
+## 3. `segment-congestion` schema v2
 
-Event-time windowed congestion records on a compacted Kafka topic keyed by `segment_id`.
+**Contract owner:** Data Pipeline Engineer.
+**Contract version: 1.**
+**Consumers / depended-on-by:** the Go routing engine's congestion adapter and its static replayer
+(`engine/internal/...`, future), and the frontend live-congestion overlay (later).
+**Conformance status:** message schema frozen here; the Go adapter + static replayer and the PySpark
+producer are pending.
 
-The `segment_id` field conforms to §1 and MUST NOT be redefined locally.
+`segment-congestion` is the live congestion feed flowing from the pipeline (producer) to the engine
+(consumer): **one JSON object per Kafka message** on the `segment-congestion` topic, each carrying the
+per-segment, per-time-window vehicle aggregate plus the bookkeeping fields that make late and updated data
+correct. It is frozen **before the pipeline exists** because the engine develops its congestion adapter
+against a fake/simulated source first; if the future Spark producer and the engine disagree on this shape,
+congestion silently attaches to the wrong window or the wrong road and every downstream number — the headline
+"26% improvement" — is computed against garbage without anything crashing. That silent-and-catastrophic
+failure mode is why this is a written, frozen contract with MUST/MUST NOT rules, not a convention.
+
+The `segment_id` field conforms to §1 and MUST NOT be redefined locally; it is the §1 wire key and the Kafka
+**message key** on this topic.
+
+### Why "v2"
+
+"v2" is the **schema generation**, not the in-wire version number. The original v1 design was a flat
+per-segment count with no notion of event time and no handling of late or revised data. **v2** is the
+redesign that adds event-time windowing, watermarks, and the late-data / dedup bookkeeping (`window_start`,
+`window_end`, `is_final`, `emit_time`) documented below. The in-wire version carried on each message is
+`schema_version`, and the first frozen version of the v2 envelope is **`schema_version: 1`**. So a message on
+this topic reads `"schema_version": 1` even though the contract is named "v2": "v2" names *which generation of
+the schema design* this is; `schema_version: 1` is *the first frozen revision of that generation's wire
+envelope*. They are independent counters and MUST NOT be conflated.
+
+### Message shape
+
+One JSON object per message, exactly these 10 fields, in this order:
+
+```json
+{ "schema_version": 1, "segment_id": "123456789:2:F",
+  "window_start": "2026-06-08T08:00:00Z", "window_end": "2026-06-08T08:05:00Z",
+  "vehicle_count": 42, "avg_speed_kmh": 18.3, "sample_pings": 137,
+  "is_final": false, "emit_time": "2026-06-08T08:05:03Z", "producer": "spark-structured-stream" }
+```
+
+### Fields
+
+| Field            | Type                       | Definition |
+|------------------|----------------------------|------------|
+| `schema_version` | int, currently `1`         | Envelope-level wire version of this message schema. Currently `1` (the first frozen v2 envelope — see "Why 'v2'" above). It is **also the operational version-carrier for the §1 `segment_id` format on this topic**: a §1 format change REQUIRES bumping this (see "Versioning"), so a consumer can detect the change at ingest before mis-parsing the key. Not to be confused with the "v2" schema generation. |
+| `segment_id`     | string                     | The §1 canonical wire key `"{osm_way_id}:{seq}:{dir}"` and the **Kafka message KEY** on this topic. Conforms to §1 exactly; see §1 for the scheme and strict-parsing rules. MUST NOT be redefined locally. |
+| `window_start`   | string, RFC3339 UTC        | **Event-time** lower bound of the aggregation window, inclusive. RFC3339 with a `Z` (UTC) offset. |
+| `window_end`     | string, RFC3339 UTC        | **Event-time** upper bound of the window, **exclusive**. The window is half-open `[window_start, window_end)`. `window_end − window_start` is **exactly 5 minutes** — the window length (see "Windowing & streaming semantics"). |
+| `vehicle_count`  | int, `>= 0`                | Count of **distinct vehicles** observed on this segment during this window. This is a **per-5-minute-window count, NOT an hourly rate.** The engine's congestion adapter scales it to vehicles/hour before BPR as `v_vph = vehicle_count × 12` (twelve 5-min windows per hour) — see "Unit contract" and §2's unit contract. |
+| `avg_speed_kmh`  | float64, km/h, `> 0`       | Mean map-matched vehicle speed over the window, in km/h. A diagnostic/heatmap field (the engine's cost is driven by `vehicle_count`/capacity via BPR, not by this speed). |
+| `sample_pings`   | int, `>= 0`                | Count of raw GPS pings that contributed to this aggregate. Typically `>= vehicle_count`, since one vehicle emits many pings over a 5-minute window. Diagnostic/confidence field — a window with few pings behind its `vehicle_count` is lower-confidence. |
+| `is_final`       | bool                       | `false` = a **provisional** emission for a window that may still receive more (late) pings before the watermark passes — overwritable by a later emission for the same window (see dedup rule). `true` = the window has closed past the watermark and will **not** be updated; this is the last record for the window. |
+| `emit_time`      | string, RFC3339 UTC        | Wall-clock (processing-time) instant the producer emitted **this** record. RFC3339 with `Z`. Used purely for **dedup ordering** (see the dedup rule); it is producer wall-clock, distinct from the event-time `window_start`/`window_end`. |
+| `producer`       | string                     | Identifier of the emitting job, e.g. `"spark-structured-stream"`. The **same** value for the live and the batch run modes, because it is one job run two ways (see "Windowing & streaming semantics"). |
+
+### Dedup rule (latest `(window_start, emit_time)` wins)
+
+The engine keeps, per `segment_id`, exactly **one** current record: the one with the **latest
+`(window_start, emit_time)`** under lexicographic ordering of that pair —
+
+1. **Newest window wins.** A record with a greater `window_start` supersedes any record for an earlier window
+   on the same segment.
+2. **Within the same window, the latest `emit_time` wins.** Two records sharing `segment_id` *and*
+   `window_start` are ordered by `emit_time`; the later one supersedes the earlier.
+
+Consequently an `is_final: false` (provisional) record is **overwritable** by any later emission for the same
+window — whether a higher-count provisional revision or the eventual `is_final: true` record. Both event-time
+timestamps are RFC3339 UTC, so this comparison is a string/lexicographic compare on normalized timestamps. A
+conformant consumer MUST apply this ordering and MUST NOT, e.g., sum successive emissions for one window
+(that would double-count the revisions).
+
+### Windowing & streaming semantics
+
+The producer is a **Spark Structured Streaming** job (not legacy DStreams) — Structured Streaming is required
+for first-class **event-time** windowing and watermarks, which DStreams lack.
+
+- **Windowing.** A **sliding window**: **5-minute window length, 1-minute slide**, over **event time**. Each
+  ping contributes to every overlapping window it falls in (so a given event-time instant is counted across
+  several overlapping 5-minute windows emitted 1 minute apart). `window_end − window_start` on the wire is
+  therefore always exactly the 5-minute window length.
+- **Watermark.** An event-time **watermark of 2 minutes**: a ping whose event time lags the current watermark
+  is **dropped** (too late to fold into its window) and counted in a producer-side **`dropped_late`** operational
+  metric. `dropped_late` is a producer metric **only** — it is **NOT** a message field and never appears on the
+  topic.
+- **Dual trigger, one job.** The same job runs two ways: `Trigger.ProcessingTime` drives the **live** heatmap
+  (continuous micro-batches), and `Trigger.AvailableNow` drives the **batch** pass over the full ~15M-ping file
+  for the "Spark batch processing" headline number. **Same code, two run modes** — not two jobs — so both modes
+  emit the identical schema and the **same `producer` value**.
+
+### Unit contract (the other half of §2)
+
+`vehicle_count` is a **per-5-minute count**, and BPR needs flow `v` in **vehicles per hour** (§2's unit
+contract: `v` and `c = capacity_vph` MUST both be vph, and with `β = 4` a unit mismatch is raised to the
+fourth power and silently corrupts the headline number). The engine's congestion adapter therefore annualizes
+each window's count to an hourly rate as:
+
+```
+v_vph = vehicle_count × 12          (twelve 5-minute windows per hour)
+```
+
+The `× 12` scaling is the **engine adapter's responsibility** (consumer side); it is documented here because it
+is the half of the §2 unit contract that lives on this topic. `capacity_vph` (§2) is already vehicles/hour, so
+once the adapter applies `× 12`, `v` and `c` share a unit and `v/c` is dimensionless. A producer MUST emit the
+raw per-window count and MUST NOT pre-multiply by 12.
+
+### Kafka topics
+
+Two topics frame this pipeline; this contract governs the second, but both are pinned here because their keying
+and retention are load-bearing for the dedup rule and the batch replay.
+
+- **`gps-pings`** (input, raw pings — not this contract's payload, listed for context). Keyed by **`taxi_id`**.
+  Keying by `taxi_id` preserves per-trajectory ping ordering within a partition — keying by anything else
+  shatters a vehicle's trajectory across partitions and breaks map-matching. **12–24 partitions.** Retention is
+  set **≥ a full replay window** so the `Trigger.AvailableNow` batch run can re-read the entire ping file.
+- **`segment-congestion`** (output, **this contract**). Keyed by **`segment_id`** (the message key above), so
+  all records for one segment land on one partition and compaction can collapse them. **`cleanup.policy=compact`.**
+  Log compaction is the **storage embodiment of the dedup rule**: with the key = `segment_id`, compaction
+  retains the latest record per key, which — because the producer emits revisions and the final record for a
+  window in `emit_time` order, newest window last — leaves the keep-latest `(window_start, emit_time)` winner as
+  the surviving compacted value. Compaction and the `(window_start, emit_time)` rule are two views of the same
+  invariant: a fresh consumer reading the compacted log converges to the same per-segment state an online
+  consumer reaches by applying the dedup rule. (The engine still applies the dedup rule in-memory, because
+  before compaction runs a consumer can still observe an older record after a newer one.)
+
+### Reference / fixtures
+
+- **Golden fixture (language-neutral, shared):** `docs/fixtures/segment_congestion/example_messages.json` — an
+  array of messages with all 10 fields, where every `segment_id` is valid under §1, several reuse `segment_id`s
+  from the §2 `edge_attributes` fixture (so the engine can join congestion onto known edges), every window is
+  exactly 5 minutes, and the rows are constructed to exercise the dedup `(window_start, emit_time)` ordering and
+  directionality. Each row also carries a non-contract `note` field describing what it exercises; it is
+  documentation only and is **not** part of the schema. See that directory's `README.md`.
+- The `segment_id` rules and their own fixtures live in §1 / `docs/fixtures/segment_id/`; this section never
+  redefines them.
+
+### Versioning
+
+This is **Contract version: 1**. The field set, their order and types, the half-open 5-minute window semantics,
+the dedup `(window_start, emit_time)` rule, the streaming/windowing/watermark semantics, the unit contract, and
+the topic keying/compaction rules are frozen. **Changing any of them — adding/removing a field, changing the
+window length, the watermark, the dedup ordering, the message key, or the compaction policy — requires bumping
+the contract version here (and therefore the on-wire `schema_version`) and notifying every consumer (engine
+adapter + static replayer, frontend) so they update in lockstep.** The fixture in
+`docs/fixtures/segment_congestion/` is part of this contract; do not edit it to paper over a non-conformant
+producer.
+
+As §1 notes, `segment_id` carries no in-wire version token, so **this message's `schema_version` is one of
+`segment_id`'s operational version-carriers**: a §1 format change REQUIRES bumping this contract version (and
+therefore the `schema_version` on every message) too, so a consumer reading the envelope can detect the change
+at ingest rather than silently mis-parsing the message key.
