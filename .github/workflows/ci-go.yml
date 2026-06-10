@@ -1,0 +1,55 @@
+# Lane A — Go engine CI (issue #7, project-spec.md §R7).
+# Fast, Docker-free: format + vet + test + the toy-graph benchmark stub.
+# Push/PR-triggered; intended to be a REQUIRED status check on `main`.
+name: Lane A
+
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: lane-a-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: gofmt + vet + test + bench
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # The Go module lives under engine/, not the repo root.
+        working-directory: engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Pinned to the engine's go.mod toolchain (go 1.25).
+          go-version: "1.25"
+          # No go.sum yet (engine has no external deps); cache keys off go.mod.
+          cache-dependency-path: engine/go.mod
+
+      - name: gofmt (must report no files)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: clean"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: bench (toy graph; scaffold stub today)
+        run: go run ./cmd/benchmark

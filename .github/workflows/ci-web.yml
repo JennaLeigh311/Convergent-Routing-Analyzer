@@ -1,0 +1,96 @@
+# Lane B — web CI (issue #7, project-spec.md §R7).
+#
+# web/ is a Phase-0 static nginx placeholder: a single index.html + Dockerfile,
+# NO package.json / React yet (that lands in Phase 10). So this lane does the
+# only genuinely useful, non-flaky checks available today:
+#   1. assert web/index.html exists and is well-formed markup
+#   2. sanity-check web/Dockerfile (pinned base image, COPYs the page)
+#
+# Phase 10 (web lane): replace these with the real `node build` pipeline —
+#   actions/setup-node (pinned) -> npm ci -> npm run lint -> npm run build —
+# plus a proper Dockerfile lint (hadolint). Node is intentionally NOT set up
+# here because there is no node project to build yet.
+name: Lane B
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: lane-b-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: validate static placeholder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: index.html exists and is well-formed
+        run: |
+          test -f web/index.html || { echo "web/index.html missing"; exit 1; }
+          # Well-formedness via Python's HTML parser (stdlib, no install). It
+          # raises on malformed/unbalanced markup; we also assert a <title> and
+          # the <h1> banner are present so an empty file can't pass.
+          python3 - <<'PY'
+          import sys
+          from html.parser import HTMLParser
+
+          class Checker(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.stack = []
+                  self.saw_title = False
+                  self.saw_h1 = False
+              # void elements that never need a closing tag
+              VOID = {"area","base","br","col","embed","hr","img","input",
+                      "link","meta","param","source","track","wbr"}
+              def handle_starttag(self, tag, attrs):
+                  if tag not in self.VOID:
+                      self.stack.append(tag)
+                  if tag == "title": self.saw_title = True
+                  if tag == "h1": self.saw_h1 = True
+              def handle_endtag(self, tag):
+                  if tag in self.VOID:
+                      return
+                  if tag in self.stack:
+                      # pop back to the matching open tag (tolerate optional
+                      # end tags like </p> being implied)
+                      while self.stack and self.stack.pop() != tag:
+                          pass
+
+          html = open("web/index.html", encoding="utf-8").read()
+          c = Checker()
+          c.feed(html)
+          c.close()
+          errs = []
+          if c.stack:
+              errs.append(f"unclosed tags: {c.stack}")
+          if not c.saw_title:
+              errs.append("missing <title>")
+          if not c.saw_h1:
+              errs.append("missing <h1>")
+          if errs:
+              print("web/index.html validation failed:")
+              for e in errs: print("  -", e)
+              sys.exit(1)
+          print("web/index.html: well-formed (title + h1 present)")
+          PY
+
+      - name: Dockerfile sanity check
+        run: |
+          test -f web/Dockerfile || { echo "web/Dockerfile missing"; exit 1; }
+          # Pinned base image (no floating :latest) and it must COPY the page in.
+          grep -Eq '^FROM .+:[^ ]+' web/Dockerfile \
+            || { echo "web/Dockerfile FROM is not pinned to a tag"; exit 1; }
+          grep -q 'index.html' web/Dockerfile \
+            || { echo "web/Dockerfile does not COPY index.html"; exit 1; }
+          if grep -Eq '^FROM .+:latest' web/Dockerfile; then
+            echo "web/Dockerfile pins a floating :latest tag"; exit 1
+          fi
+          echo "web/Dockerfile: pinned base + copies index.html"
