@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<!--
+  Phase-0 placeholder. The real React + deck.gl/Leaflet frontend (live
+  congestion map, route overlays, before/after dashboard) lands in Phase 10
+  (web lane); see web/README.md and project-spec.md §R6. This static page exists
+  only so the `web` container in the docker-compose `core` profile serves HTTP
+  200 on / and reports healthy.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Convergent Routing Analyzer — web (Phase 0 placeholder)</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem; line-height: 1.5; }
+      code { background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; }
+    </style>
+  </head>
+  <body>
+    <h1>Convergent Routing Analyzer</h1>
+    <p><strong>web</strong> service — Phase 0 placeholder.</p>
+    <p>
+      The real React frontend ships in Phase 10. This page exists so the
+      <code>core</code> compose profile has a healthy <code>web</code> container.
+      The routing-server health endpoints live at
+      <code>/healthz</code> and <code>/readyz</code> on the engine.
+    </p>
+  </body>
+</html>

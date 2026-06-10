@@ -34,12 +34,24 @@ docs/          architecture, algorithms, data-pipeline, api, benchmarks, contrac
 ```bash
 # Build & test the engine
 cd engine && go build ./... && go test ./...
-
-# (later phases) bring up the lightweight stack
-docker compose up            # default = core profile (engine + web + simulator)
 ```
 
-Configuration lives in `.env` (copy from `.env.example`). The `core` profile needs none of it.
+## Running the stack
+
+The stack boots through three additive docker-compose profiles — `core` is the
+default and the laptop-light option; `data`/`full` are opt-in. See
+[`docs/architecture.md`](docs/architecture.md) for per-profile services,
+resource footprints, and startup order.
+
+```bash
+docker compose up                  # core (default): engine + web
+docker compose --profile data up   # + PostGIS / pgRouting
+docker compose --profile full up   # + Kafka (KRaft) + Spark pipeline (local[*])
+```
+
+Configuration lives in `.env` (copy from `.env.example`); the `core` profile needs
+none of it. Convenience `make up-core` / `make up-full` wrappers arrive with the
+Makefile (issue #7).
 
 ## Status
 

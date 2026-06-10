@@ -1,0 +1,172 @@
+# Convergent Routing Analyzer — docker-compose (issue #6, project-spec.md §R7)
+#
+# Three additive profiles:
+#   core (default)  engine + web                  — the laptop default, lightweight
+#   data            core + postgis                — adds PostGIS + pgRouting
+#   full            data + kafka + pipeline        — adds Kafka (KRaft) + Spark (local[*])
+#
+# Profile mechanics: `core` services carry NO `profiles:` key, so they are ALWAYS
+# started (the default `docker compose up`). `postgis` is in [data, full];
+# `kafka`/`pipeline` are in [full]. Dependents wait on healthchecks via
+# `depends_on: { condition: service_healthy }` so startup is deterministic.
+#
+# Config comes from .env (env_file below, required: false so `core` needs none).
+# No hardcoded broker/DSN/topic — they are interpolated from the environment with
+# the .env.example defaults as fallbacks. Pinned images, no floating `latest`.
+
+services:
+  # ---- core profile (always on) ----------------------------------------
+
+  engine:
+    # routing-server; hosts the simulator congestion adapter IN-PROCESS.
+    # There is no separate simulator container (§R7 / lead decision).
+    build:
+      context: ./engine
+      dockerfile: Dockerfile
+    image: cra/engine:phase0
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Default address; .env may override. Bind all interfaces so the published
+      # port is reachable; the in-container healthcheck dials localhost.
+      ROUTING_SERVER_ADDR: ${ROUTING_SERVER_ADDR:-:8080}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+    ports:
+      - "${ROUTING_SERVER_PORT:-8080}:8080"
+    healthcheck:
+      # Distroless has no shell/wget; use the bundled Go healthcheck binary.
+      test: ["CMD", "/usr/local/bin/healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  web:
+    # Phase-0 placeholder: nginx serving a static page (real React app = Phase 10).
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    image: cra/web:phase0
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    healthcheck:
+      # nginx:alpine ships wget (busybox). 200 on / => healthy.
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # ---- data profile (adds PostGIS) -------------------------------------
+
+  postgis:
+    # PostGIS + pgRouting-capable image (pgrouting ships pgRouting + PostGIS).
+    # Pinned: Postgres 16 / PostGIS 3.5 / pgRouting 3.7.3.
+    image: pgrouting/pgrouting:16-3.5-3.7.3
+    profiles: ["data", "full"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Credentials derive from PG_DSN's defaults in .env.example
+      # (postgres://routing:routing@.../routing). Kept in sync here so the
+      # container provisions the same role/db the engine's PG_DSN expects.
+      POSTGRES_USER: ${POSTGRES_USER:-routing}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-routing}
+      POSTGRES_DB: ${POSTGRES_DB:-routing}
+    ports:
+      # Loopback-only: the DB carries dev creds (routing/routing) and no TLS, so
+      # don't expose it on 0.0.0.0 to the LAN. Drop the 127.0.0.1 prefix only if
+      # you deliberately need off-host access.
+      - "127.0.0.1:${PG_PORT:-5432}:5432"
+    volumes:
+      - postgis-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-routing} -d ${POSTGRES_DB:-routing}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # ---- full profile (adds Kafka + pipeline) ----------------------------
+
+  kafka:
+    # Single-node KRaft (NO Zookeeper) per §R7. apache/kafka ships KRaft natively.
+    image: apache/kafka:3.7.1
+    profiles: ["full"]
+    environment:
+      # KRaft combined broker+controller, single node.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      # Two client listeners: in-cluster clients use the PLAINTEXT listener
+      # (advertised kafka:9092, container port 9092); host clients use the
+      # PLAINTEXT_HOST listener (advertised localhost:9092, container port 29092,
+      # published below). Each advertises an address resolvable from its side.
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    ports:
+      # Host port -> the PLAINTEXT_HOST listener (29092), whose advertised
+      # localhost:9092 resolves from the host. Mapping to 9092 (the in-cluster
+      # PLAINTEXT listener) would hand host clients an unresolvable kafka:9092.
+      # Loopback-only: single-node dev broker, no auth — don't expose to the LAN.
+      - "127.0.0.1:${KAFKA_HOST_PORT:-9092}:29092"
+    healthcheck:
+      # Broker API check against the KRaft PLAINTEXT listener.
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  pipeline:
+    # PySpark Structured Streaming job in local[*] mode (§R7). Spark is a LIBRARY
+    # in this container, not a separate master/worker cluster. Phase-0 placeholder
+    # (real job = Phase 7). Waits for Kafka to be healthy before starting.
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    image: cra/pipeline:phase0
+    profiles: ["full"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # In-cluster broker address — overrides the localhost default in .env so the
+      # container reaches Kafka by service name. Topics still come from .env.
+      KAFKA_BROKER: ${KAFKA_BROKER_INTERNAL:-kafka:9092}
+      TOPIC_GPS_PINGS: ${TOPIC_GPS_PINGS:-gps-pings}
+      TOPIC_SEGMENT_CONGESTION: ${TOPIC_SEGMENT_CONGESTION:-segment-congestion}
+      PG_DSN: ${PG_DSN:-postgres://routing:routing@postgis:5432/routing?sslmode=disable}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgis:
+        condition: service_healthy
+    healthcheck:
+      # Placeholder liveness: the CMD touches /tmp/pipeline-alive on start.
+      # Phase 7: replace this healthcheck too (a stale marker survives a crashed
+      # job) — not just the CMD — when the real Spark job lands.
+      test: ["CMD-SHELL", "test -f /tmp/pipeline-alive"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgis-data:

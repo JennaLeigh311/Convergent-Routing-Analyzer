@@ -32,3 +32,49 @@ use bare `fmt.Println` for diagnostics. Entrypoints (`cmd/*`) hold the explicit 
 constructing their own. **Never log secrets, credentials, full DSNs, or API keys, and treat raw GPS
 coordinates as user-location PII** — log only derived values (segment IDs, counts), never raw lat/lon tied
 to a device.
+
+## Compose profiles & runtime footprint (issue #6, §R7)
+
+The stack boots through three **additive** docker-compose profiles. `core` is the default — the "one
+command" (`docker compose up`) story targets it; the heavy infrastructure is strictly opt-in so a laptop
+isn't asked to run a 4-heavy-service stack by default. Profiles are additive: `core` services carry no
+`profiles:` key (always on), `data` adds PostGIS, `full` adds Kafka + the Spark pipeline.
+
+| Profile | Command | Services | Adds |
+|---|---|---|---|
+| `core` (default) | `docker compose up` | `engine`, `web` | — |
+| `data` | `docker compose --profile data up` | core + `postgis` | PostGIS + pgRouting |
+| `full` | `docker compose --profile full up` | data + `kafka`, `pipeline` | Kafka (KRaft) + Spark (`local[*]`) |
+
+**Service notes**
+
+- **engine** — the routing-server. Hosts the simulator congestion adapter **in-process**; there is *no*
+  separate simulator container. Exposes `/healthz` + `/readyz` (Phase 0: both 200 `ok`; `/readyz` gains real
+  readiness gating later). Distroless image; healthcheck is a bundled Go `healthcheck` binary (no shell in
+  the image).
+- **web** — Phase-0 placeholder (`nginx:1.27-alpine` serving a static page). The React app lands in Phase 10.
+- **postgis** — `pgrouting/pgrouting:16-3.5-3.7.3` (Postgres 16 / PostGIS 3.5 / pgRouting 3.7.3). Healthcheck:
+  `pg_isready`.
+- **kafka** — `apache/kafka:3.7.1`, **single-node KRaft, no Zookeeper**. Healthcheck:
+  `kafka-broker-api-versions` against the PLAINTEXT listener.
+- **pipeline** — PySpark **`local[*]`** (Spark as a library, not a master/worker cluster). Phase-0 placeholder
+  (`python:3.11-slim` + `pyspark==3.5.1`); the real Structured Streaming job lands in Phase 7.
+
+**Startup order (healthcheck gating).** Dependents wait on `depends_on: { condition: service_healthy }`, so
+startup is deterministic rather than racy (the #1 demo-failure mode per §R7):
+
+- `core`: `engine` and `web` start in parallel; nothing depends on anything.
+- `data`: `postgis` becomes healthy via `pg_isready` before consumers connect.
+- `full`: `kafka` must be healthy (broker-API check) and `postgis` healthy **before** `pipeline` starts.
+
+**Resource footprint per profile (rough, dev laptop).**
+
+| Profile | Containers | Approx. RAM | Notes |
+|---|---|---|---|
+| `core` | 2 | ~50–100 MB | engine (static Go, single-digit MB) + nginx. Light; the laptop default. |
+| `data` | 3 | ~+300–500 MB | adds PostGIS; Postgres baseline + shared buffers. |
+| `full` | 5 | ~+2–4 GB | adds JVM Kafka (~1 GB) + a JVM Spark `local[*]` driver (~1–2 GB heap). Heavy — the explicit scale path, not the default. |
+
+Config is env-driven (`.env`, copied from `.env.example`); `core` needs none of it. No service hardcodes a
+broker address, PG DSN, or topic name — they interpolate from the environment so the dev↔full adapter swap is
+config-driven.
