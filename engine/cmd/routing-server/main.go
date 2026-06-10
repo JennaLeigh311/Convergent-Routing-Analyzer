@@ -19,20 +19,14 @@ import (
 	"time"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/logging"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/serveraddr"
 )
-
-// defaultAddr is used when ROUTING_SERVER_ADDR is unset. It matches the
-// `.env.example` default so the dev (core) profile needs no configuration.
-const defaultAddr = ":8080"
 
 func main() {
 	logger := logging.Setup()
 	logger = logger.With("service", "routing-server")
 
-	addr := os.Getenv("ROUTING_SERVER_ADDR")
-	if addr == "" {
-		addr = defaultAddr
-	}
+	addr := serveraddr.Resolve()
 
 	mux := http.NewServeMux()
 	// /healthz — liveness: the process is up. /readyz — readiness: the process
@@ -52,17 +46,24 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Surface a fatal serve error (e.g. the address is already bound) so the
+	// process exits non-zero rather than masquerading as a clean shutdown.
+	srvErr := make(chan error, 1)
 	go func() {
 		logger.Info("health server listening", "addr", addr,
 			"endpoints", "/healthz,/readyz")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("health server failed", "err", err)
-			stop()
+			srvErr <- err
 		}
 	}()
 
-	<-ctx.Done()
-	logger.Info("shutting down")
+	select {
+	case <-ctx.Done():
+		logger.Info("shutting down")
+	case err := <-srvErr:
+		logger.Error("health server failed", "err", err)
+		os.Exit(1)
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

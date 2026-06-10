@@ -3,34 +3,22 @@
 // curl). It GETs /healthz on the configured address and exits 0 on HTTP 200,
 // non-zero otherwise — exactly the contract a docker-compose HEALTHCHECK wants.
 //
-// Address resolution mirrors routing-server: ROUTING_SERVER_ADDR (default
-// ":8080"). A bare ":port" is dialed against localhost inside the container.
+// Address resolution mirrors routing-server via the shared internal/serveraddr
+// leaf: ROUTING_SERVER_ADDR (default ":8080"), with wildcard/empty hosts dialed
+// against localhost inside the container.
 package main
 
 import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/serveraddr"
 )
 
 func main() {
-	addr := os.Getenv("ROUTING_SERVER_ADDR")
-	if addr == "" {
-		addr = ":8080"
-	}
-	// ":8080" -> "localhost:8080"; "0.0.0.0:8080" -> "localhost:8080".
-	host, port, found := strings.Cut(addr, ":")
-	if !found {
-		// No colon: treat the whole value as a port.
-		port = addr
-		host = ""
-	}
-	if host == "" || host == "0.0.0.0" || host == "[::]" {
-		host = "localhost"
-	}
-	url := fmt.Sprintf("http://%s:%s/healthz", host, port)
+	url := serveraddr.HealthURL(serveraddr.Resolve())
 
 	client := &http.Client{Timeout: 3 * time.Second}
 	resp, err := client.Get(url)

@@ -6,3 +6,8 @@
 
 # Project spec (kept local / untracked)
 project-spec.md
+
+# Local env — never commit real secrets; keep the template (.env.example)
+.env
+.env.*
+!.env.example

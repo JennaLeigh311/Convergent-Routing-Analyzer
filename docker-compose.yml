@@ -79,7 +79,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-routing}
       POSTGRES_DB: ${POSTGRES_DB:-routing}
     ports:
-      - "${PG_PORT:-5432}:5432"
+      # Loopback-only: the DB carries dev creds (routing/routing) and no TLS, so
+      # don't expose it on 0.0.0.0 to the LAN. Drop the 127.0.0.1 prefix only if
+      # you deliberately need off-host access.
+      - "127.0.0.1:${PG_PORT:-5432}:5432"
     volumes:
       - postgis-data:/var/lib/postgresql/data
     healthcheck:
@@ -102,7 +105,10 @@ services:
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_HOST://0.0.0.0:29092
-      # In-cluster clients use kafka:9092; host clients use localhost:9092.
+      # Two client listeners: in-cluster clients use the PLAINTEXT listener
+      # (advertised kafka:9092, container port 9092); host clients use the
+      # PLAINTEXT_HOST listener (advertised localhost:9092, container port 29092,
+      # published below). Each advertises an address resolvable from its side.
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
@@ -112,7 +118,11 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     ports:
-      - "${KAFKA_HOST_PORT:-9092}:9092"
+      # Host port -> the PLAINTEXT_HOST listener (29092), whose advertised
+      # localhost:9092 resolves from the host. Mapping to 9092 (the in-cluster
+      # PLAINTEXT listener) would hand host clients an unresolvable kafka:9092.
+      # Loopback-only: single-node dev broker, no auth — don't expose to the LAN.
+      - "127.0.0.1:${KAFKA_HOST_PORT:-9092}:29092"
     healthcheck:
       # Broker API check against the KRaft PLAINTEXT listener.
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
@@ -149,6 +159,8 @@ services:
         condition: service_healthy
     healthcheck:
       # Placeholder liveness: the CMD touches /tmp/pipeline-alive on start.
+      # Phase 7: replace this healthcheck too (a stale marker survives a crashed
+      # job) — not just the CMD — when the real Spark job lands.
       test: ["CMD-SHELL", "test -f /tmp/pipeline-alive"]
       interval: 15s
       timeout: 5s
