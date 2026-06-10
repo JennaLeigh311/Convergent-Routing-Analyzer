@@ -1,10 +1,7 @@
 package domain
 
 import (
-	"encoding/json"
 	"math"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -61,36 +58,22 @@ type edgeAttrRow struct {
 	CapacityVPH    float64 `json:"capacity_vph"`
 }
 
-// loadEdgeAttributes loads the edge_attributes golden fixture. It mirrors the
-// loadFixture helper in segmentid_test.go but reads from the edge_attributes
-// fixture directory rather than the package-level segment_id one.
-func loadEdgeAttributes(t *testing.T, name string) []edgeAttrRow {
-	t.Helper()
-	path := filepath.Join(edgeAttributesFixtureDir, name)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read fixture %s: %v", path, err)
-	}
-	var out []edgeAttrRow
-	if err := json.Unmarshal(data, &out); err != nil {
-		t.Fatalf("unmarshal fixture %s: %v", path, err)
-	}
-	if len(out) == 0 {
-		t.Fatalf("fixture %s is empty", path)
-	}
-	return out
-}
-
 // TestEdgeAttributesConformance executes the frozen edge_attributes golden
 // fixture instead of leaving it to be eyeballed via the `note` strings. Per row
-// (keyed by segment_id) it re-derives capacity and free-flow from the §2 rules,
-// confirms the segment_id parses and agrees with the osm_way_id column, and
-// checks the highway_class enum; across all rows it confirms edge_id is a dense
-// 0..N-1 set and that every one of the seven highway classes is exercised.
+// (keyed by segment_id) it asserts the §2 column invariants, re-derives capacity
+// and free-flow from the §2 rules, confirms the segment_id parses and agrees
+// with the osm_way_id column, and checks the highway_class enum; across all rows
+// it confirms edge_id is a dense 0..N-1 set and that every one of the seven
+// highway classes is exercised. The fixture loads via the shared loadFixture
+// helper (segmentid_test.go), pointed at the edge_attributes directory.
 func TestEdgeAttributesConformance(t *testing.T) {
-	rows := loadEdgeAttributes(t, "example_export.json")
+	rows := loadFixture[edgeAttrRow](t, edgeAttributesFixtureDir, "example_export.json")
 
 	// Accumulators for the two whole-file invariants asserted after the loop.
+	// Both are cross-row bookkeeping, so both are written here in the loop body
+	// (outside the per-row subtest) under one mental model: the subtest closure
+	// validates a single row; the loop body records what the whole-file checks
+	// need, and runs even when a subtest fails.
 	seenEdgeIDs := make(map[int]bool, len(rows))
 	seenClasses := make(map[string]bool, len(classFactor))
 
@@ -105,6 +88,29 @@ func TestEdgeAttributesConformance(t *testing.T) {
 				t.Fatalf("highway_class %q is not one of the 7 contract classes", row.HighwayClass)
 			}
 
+			// (0) column invariants — §2 freezes hard per-row lower bounds that
+			// the derived-value checks below cannot catch on their own: a
+			// lanes_effective of 0, for instance, makes capacity_vph = 0 satisfy
+			// the capacity formula (0 == 0×1800×cf), so a zero-capacity edge that
+			// blows up the BPR (v/c) term would slip through. Assert them
+			// explicitly. (Asserting maxspeed_kmh > 0 here also keeps the
+			// free-flow division below from producing a misleading Inf/NaN.)
+			if row.LanesEffective < 1 {
+				t.Errorf("lanes_effective = %d, want >= 1 (§2)", row.LanesEffective)
+			}
+			if row.LengthM <= 0 {
+				t.Errorf("length_m = %g, want > 0 (§2)", row.LengthM)
+			}
+			if row.MaxspeedKmh <= 0 {
+				t.Errorf("maxspeed_kmh = %g, want > 0 (§2)", row.MaxspeedKmh)
+			}
+			if row.CapacityVPH <= 0 {
+				t.Errorf("capacity_vph = %g, want > 0 (§2)", row.CapacityVPH)
+			}
+			if row.FreeflowTimeS <= 0 {
+				t.Errorf("freeflow_time_s = %g, want > 0 (§2)", row.FreeflowTimeS)
+			}
+
 			// (1) capacity — §2: capacity_vph = lanes_effective × 1800 ×
 			// class_factor (at the export's capacity_scale = 1.0). e.g. row 0
 			// primary lanes=2 → 2×1800×0.8 = 2880.
@@ -116,11 +122,15 @@ func TestEdgeAttributesConformance(t *testing.T) {
 
 			// (2) freeflow — §2: freeflow_time_s = length_m / (maxspeed_kmh ×
 			// 1000/3600). e.g. row 0 length=240, maxspeed=60 → 240/(60×1000/3600)
-			// = 14.4.
-			wantFreeflow := row.LengthM / (row.MaxspeedKmh * 1000.0 / 3600.0)
-			if math.Abs(row.FreeflowTimeS-wantFreeflow) > floatTol {
-				t.Errorf("freeflow_time_s = %g, want %g (= %g m / (%g km/h → m/s))",
-					row.FreeflowTimeS, wantFreeflow, row.LengthM, row.MaxspeedKmh)
+			// = 14.4. Guarded on maxspeed_kmh > 0 (the invariant above already
+			// reports a violation) so the division can't yield a misleading
+			// Inf/NaN that the tolerance comparison would silently accept.
+			if row.MaxspeedKmh > 0 {
+				wantFreeflow := row.LengthM / (row.MaxspeedKmh * 1000.0 / 3600.0)
+				if math.Abs(row.FreeflowTimeS-wantFreeflow) > floatTol {
+					t.Errorf("freeflow_time_s = %g, want %g (= %g m / (%g km/h → m/s))",
+						row.FreeflowTimeS, wantFreeflow, row.LengthM, row.MaxspeedKmh)
+				}
 			}
 
 			// (3) segment_id consistency — the segment_id must parse under the
@@ -135,17 +145,16 @@ func TestEdgeAttributesConformance(t *testing.T) {
 				t.Errorf("segment_id %q decodes osm_way_id %d, but osm_way_id column is %d",
 					row.SegmentID, gotWay, row.OSMWayID)
 			}
-
-			seenClasses[row.HighwayClass] = true
 		})
 
-		// edge_id is a per-row property but the density check is whole-file, so
-		// accumulate (and reject duplicates) outside the subtest. Done here so a
-		// failing subtest above doesn't skip the bookkeeping.
+		// edge_id density and class coverage are whole-file properties, so record
+		// both here (rejecting duplicate edge_ids as we go). Done outside the
+		// subtest so a failing subtest above doesn't skip the bookkeeping.
 		if seenEdgeIDs[row.EdgeID] {
 			t.Errorf("duplicate edge_id %d (segment_id %q)", row.EdgeID, row.SegmentID)
 		}
 		seenEdgeIDs[row.EdgeID] = true
+		seenClasses[row.HighwayClass] = true
 	}
 
 	// (5) dense edge_id — across all rows the edge_id set must be exactly
