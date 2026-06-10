@@ -1,0 +1,407 @@
+[
+  {
+    "violates": "top-level schema_version is 2, not the contract version 1 (§2 Envelope schema_version)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 2,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "top-level schema_version member is absent — the envelope must carry schema_version (§2 Envelope schema_version)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "top-level schema_version is the JSON string \"1\", not the integer 1 — GeoJSON requires the integer (the string \"1\" is the Parquet-footer form) (§2 Envelope schema_version)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": "1",
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "segment_id embeds osm_way_id 48800123 but the osm_way_id property is 27583001 — they must match (§2 self-consistency / §1)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.98801, 40.73502], [-73.98655, 40.73610]] },
+          "properties": {
+            "segment_id": "48800123:0:F",
+            "edge_id": 0,
+            "source_node": 11,
+            "target_node": 12,
+            "osm_way_id": 27583001,
+            "highway_class": "secondary",
+            "lanes_effective": 2,
+            "length_m": 180.0,
+            "maxspeed_kmh": 50.0,
+            "freeflow_time_s": 12.96,
+            "capacity_vph": 2520.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "edge_id set is not dense 0..N-1: a gap (edge_ids 0,1,3 for 3 features — 2 is missing) (§2 edge_id density)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        },
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.98801, 40.73502], [-73.98655, 40.73610]] },
+          "properties": {
+            "segment_id": "48800123:0:F",
+            "edge_id": 1,
+            "source_node": 11,
+            "target_node": 12,
+            "osm_way_id": 48800123,
+            "highway_class": "secondary",
+            "lanes_effective": 2,
+            "length_m": 180.0,
+            "maxspeed_kmh": 50.0,
+            "freeflow_time_s": 12.96,
+            "capacity_vph": 2520.0
+          }
+        },
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.98655, 40.73610], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "48800123:0:R",
+            "edge_id": 3,
+            "source_node": 12,
+            "target_node": 11,
+            "osm_way_id": 48800123,
+            "highway_class": "secondary",
+            "lanes_effective": 2,
+            "length_m": 180.0,
+            "maxspeed_kmh": 50.0,
+            "freeflow_time_s": 12.96,
+            "capacity_vph": 2520.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "edge_id set is not dense 0..N-1: a duplicate (two features both edge_id 0) (§2 edge_id density)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        },
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.98801, 40.73502], [-73.98655, 40.73610]] },
+          "properties": {
+            "segment_id": "48800123:0:F",
+            "edge_id": 0,
+            "source_node": 11,
+            "target_node": 12,
+            "osm_way_id": 48800123,
+            "highway_class": "secondary",
+            "lanes_effective": 2,
+            "length_m": 180.0,
+            "maxspeed_kmh": 50.0,
+            "freeflow_time_s": 12.96,
+            "capacity_vph": 2520.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "highway_class \"living_street\" is outside the seven legal §2 enum values (motorway/trunk/primary/secondary/tertiary/residential/service)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.95001, 40.75002], [-73.94920, 40.75050]] },
+          "properties": {
+            "segment_id": "9876543:0:F",
+            "edge_id": 0,
+            "source_node": 30,
+            "target_node": 31,
+            "osm_way_id": 9876543,
+            "highway_class": "living_street",
+            "lanes_effective": 1,
+            "length_m": 90.0,
+            "maxspeed_kmh": 30.0,
+            "freeflow_time_s": 10.8,
+            "capacity_vph": 900.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "interior LineString shape point promoted to a graph node — §2: only the first/last coordinates map to source_node/target_node. The trunk way 33112200:0:F is split into two features whose shared endpoint is its interior shape point [-73.93720, 40.75640]. (Both halves share segment_id 33112200:0:F; that duplicate segment_id is intrinsic to the split — the same single root cause — so a loader may reject on either signal.)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.94000, 40.75500], [-73.93720, 40.75640]] },
+          "properties": {
+            "segment_id": "33112200:0:F",
+            "edge_id": 0,
+            "source_node": 40,
+            "target_node": 42,
+            "osm_way_id": 33112200,
+            "highway_class": "trunk",
+            "lanes_effective": 2,
+            "length_m": 200.0,
+            "maxspeed_kmh": 80.0,
+            "freeflow_time_s": 9.0,
+            "capacity_vph": 3240.0
+          }
+        },
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.93720, 40.75640], [-73.93410, 40.75810]] },
+          "properties": {
+            "segment_id": "33112200:0:F",
+            "edge_id": 1,
+            "source_node": 42,
+            "target_node": 41,
+            "osm_way_id": 33112200,
+            "highway_class": "trunk",
+            "lanes_effective": 2,
+            "length_m": 200.0,
+            "maxspeed_kmh": 80.0,
+            "freeflow_time_s": 9.0,
+            "capacity_vph": 3240.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "geometry coordinates are emitted as [lat, lon] instead of the contract's [lon, lat] (§2 / GeoJSON x,y axis order)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[40.73456, -73.99012], [40.73502, -73.98801]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "length_m is non-positive (-240.0) — §2: length_m > 0. freeflow_time_s co-moves negative (-14.4 = -240/(60/3.6)) so the row stays derivation-consistent and the single root is the negative length, not a stacked derivation mismatch.",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": -240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": -14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "maxspeed_kmh is non-positive (-60.0) — §2: maxspeed_kmh > 0. freeflow_time_s co-moves negative (-14.4 = 240/(-60/3.6)) so the row stays derivation-consistent and the single root is the negative maxspeed.",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": -60.0,
+            "freeflow_time_s": -14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "osm_way_id is non-positive (0) — §2/§1: osm_way_id must be positive (>= 1). segment_id embeds the same 0 ('0:0:F') so the way id is self-consistent; the single root is the non-positive way id (a loader may reject via the osm_way_id > 0 check or the §1 strict parse of segment_id).",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "0:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 0,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "segment_id '27583001:0:f' is invalid under §1 (lowercase dir; must be F or R) — a §1 strict-parse failure. osm_way_id 27583001 matches the way component, so this is purely the malformed segment_id, not a self-consistency mismatch. (§1 segment_id rules are owned by docs/fixtures/segment_id/parse_invalid.json; this sample shows the edge_attributes loader must also reject §1-invalid ids.)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:f",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  }
+]

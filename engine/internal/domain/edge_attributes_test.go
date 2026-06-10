@@ -46,6 +46,10 @@ const floatTol = 1e-6
 // carries geometry/source_node/target_node and a non-contract `note` string;
 // those are intentionally omitted here as they are not part of the derivations
 // under test. Field→column mapping follows docs/contracts.md §2.
+//
+// NOTE: edge_attributes_geojson_test.go embeds this struct (in edgeProps) and
+// relies on it staying comparable for a `==` row-equivalence check — keep all
+// fields scalar; adding a slice/map field would break that file's compile.
 type edgeAttrRow struct {
 	SegmentID      string  `json:"segment_id"`
 	EdgeID         int     `json:"edge_id"`
