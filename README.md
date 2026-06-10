@@ -63,27 +63,33 @@ A root `Makefile` wraps the common workflows (run `make help` for the list):
 | `up-full`      | `docker compose --profile full up -d --build` — + postgis + kafka + pipeline |
 | `down`         | `docker compose --profile full down` — stop + remove containers          |
 | `clean`        | `down -v` + remove built images and the Go build/test cache              |
-| `test`         | `cd engine && go test ./...`                                             |
+| `test`         | `cd engine && go test -race ./...`                                       |
 | `bench`        | `cd engine && go run ./cmd/benchmark` (toy graph; scaffold stub today)   |
 | `replay`       | `cd engine && go run ./cmd/replay` (scaffold stub today)                 |
 | `lint`         | `gofmt` check + `go vet ./...` (runs `golangci-lint` only if installed)  |
 | `integration`  | boot `full`, smoke engine `/healthz` + `/readyz` and web `/`, tear down  |
+| `protect-main` | apply `main`'s branch-protection rule (repo admin; post-CI — see `scripts/`) |
 
 ### CI
 
-GitHub Actions runs three lanes (`.github/workflows/`):
+GitHub Actions runs two fast merge-gate lanes plus a heavy gated lane
+(`.github/workflows/`):
 
-- **Lane A** (`ci-go.yml`) — push + PR: `gofmt`, `go vet`, `go test ./...`, and the
-  toy-graph benchmark. Go pinned to 1.25. No Docker.
-- **Lane B** (`ci-web.yml`) — push + PR: validates the `web/` static placeholder
-  (`index.html` well-formedness + `Dockerfile` sanity). Expands to a real
+- **Lane A** (`ci.yml`, job `Lane A`) — push + PR: `gofmt`, `go vet`,
+  `go test -race ./...`, and the toy-graph benchmark. Go pinned to 1.25. No Docker.
+- **Lane B** (`ci.yml`, job `Lane B`) — push + PR: validates the `web/` static
+  placeholder (`index.html` well-formedness + `Dockerfile` sanity). Expands to a real
   `node build` + lint when the React app lands in Phase 10.
+- **`CI passed`** (`ci.yml`, aggregate job) — succeeds only if both lanes pass. This
+  is the single required status check, so lanes can be renamed/split without touching
+  the branch-protection rule.
 - **Lane C** (`integration.yml`) — nightly cron + manual `workflow_dispatch` (NOT on
-  push): boots the `full` profile and runs the same e2e smoke as `make integration`.
+  push): boots the `full` profile and runs the same smoke as `make integration`.
 
-`main` is protected: PRs must pass **Lane A** and **Lane B** (required status checks,
-branches up to date) before merge; direct pushes to `main` are blocked. Lane C is
-informational/gated, not a merge gate.
+`main` is protected: PRs must pass the **`CI passed`** check (i.e. both lanes, branches
+up to date) before merge; direct pushes to `main` are blocked. Lane C is
+informational/gated, not a merge gate. The rule is applied with `make protect-main`
+(`scripts/protect-main.sh`) once the checks exist on `main`.
 
 ## Status
 

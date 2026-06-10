@@ -4,7 +4,14 @@
 # (engine + web + postgis + kafka + Spark pipeline, the pipeline image pins
 # pyspark==3.5.1). Therefore NOT push/PR-triggered — it runs nightly on a cron
 # and on-demand via workflow_dispatch (the gated/manual path). It is NOT a
-# required check for merging to `main` (lanes A & B are).
+# required check for merging to `main` (the `CI passed` gate is).
+#
+# Scope today: this BOOTS the full profile (so the kafka/postgis/pipeline images
+# build and their healthchecks pass) but the smoke only probes the core HTTP
+# endpoints (engine /healthz + /readyz, web /). The pipeline healthcheck is a
+# liveness marker, not a real data-path assertion.
+# TODO (Phase 7, when the real Spark job lands): assert a kafka-level fact too
+# (e.g. kafka-broker-api-versions / topic create+list) so this is a true e2e.
 #
 # Versions are pinned in the images/go.mod, not here: Go 1.25 (engine go.mod),
 # PySpark 3.5.1 (pipeline/Dockerfile). Node is deferred to Phase 10 (no web
@@ -26,7 +33,7 @@ permissions:
 
 jobs:
   integration:
-    name: full-profile e2e smoke
+    name: full boot + core smoke
     runs-on: ubuntu-latest
     # Generous cap: image builds + Kafka/PostGIS startup can be slow on shared
     # runners. The smoke itself polls for ~60s.

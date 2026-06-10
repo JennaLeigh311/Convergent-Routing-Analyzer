@@ -1,31 +1,74 @@
-# Lane B — web CI (issue #7, project-spec.md §R7).
+# CI — fast merge gates (issue #7, project-spec.md §R7).
 #
-# web/ is a Phase-0 static nginx placeholder: a single index.html + Dockerfile,
-# NO package.json / React yet (that lands in Phase 10). So this lane does the
-# only genuinely useful, non-flaky checks available today:
-#   1. assert web/index.html exists and is well-formed markup
-#   2. sanity-check web/Dockerfile (pinned base image, COPYs the page)
+# Two Docker-free lanes run on every push + PR, plus a single aggregate gate.
+# Branch protection on `main` requires ONLY the `CI passed` check, which succeeds
+# iff BOTH lanes succeed — so lanes can be renamed/split/added without touching
+# the branch-protection rule (the required-check contract is one stable job name,
+# not each lane's name). See scripts/protect-main.sh.
 #
-# Phase 10 (web lane): replace these with the real `node build` pipeline —
-#   actions/setup-node (pinned) -> npm ci -> npm run lint -> npm run build —
-# plus a proper Dockerfile lint (hadolint). Node is intentionally NOT set up
-# here because there is no node project to build yet.
-name: Lane B
+#   Lane A — Go engine: gofmt + vet + race-enabled tests + the toy-graph bench.
+#   Lane B — web: validate the Phase-0 static placeholder (index.html + Dockerfile).
+#            web/ has no package.json/React yet (Phase 10); this expands to a real
+#            node build + lint (setup-node -> npm ci -> lint -> build, + hadolint)
+#            when the React app lands.
+#
+# Heavy integration (the full compose profile) is Lane C in integration.yml —
+# nightly/gated, NOT a merge gate.
+name: CI
 
 on:
   push:
   pull_request:
 
+# Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
-  group: lane-b-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  web:
-    name: validate static placeholder
+  lane-a:
+    name: Lane A
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # The Go module lives under engine/, not the repo root.
+        working-directory: engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # Pinned to the engine's go.mod toolchain (go 1.25).
+          go-version: "1.25"
+          # No go.sum yet (engine has no external deps); cache keys off go.mod.
+          cache-dependency-path: engine/go.mod
+
+      - name: gofmt (must report no files)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: clean"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test (race detector — the engine is a concurrent server)
+        run: go test -race ./...
+
+      - name: bench (toy graph; scaffold stub today)
+        run: go run ./cmd/benchmark
+
+  lane-b:
+    name: Lane B
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -94,3 +137,22 @@ jobs:
             echo "web/Dockerfile pins a floating :latest tag"; exit 1
           fi
           echo "web/Dockerfile: pinned base + copies index.html"
+
+  ci-passed:
+    # The single required status check for branch protection. Runs after both
+    # lanes regardless of their result (if: always()) and fails unless BOTH
+    # succeeded. Requiring just this one stable context ("CI passed") means
+    # renaming/splitting a lane never silently breaks the `main` protection rule.
+    name: CI passed
+    runs-on: ubuntu-latest
+    needs: [lane-a, lane-b]
+    if: always()
+    steps:
+      - name: Require all lanes to have succeeded
+        run: |
+          echo "lane-a=${{ needs.lane-a.result }} lane-b=${{ needs.lane-b.result }}"
+          if [ "${{ needs.lane-a.result }}" != "success" ] || [ "${{ needs.lane-b.result }}" != "success" ]; then
+            echo "::error::a required CI lane did not succeed"
+            exit 1
+          fi
+          echo "all required lanes passed"
