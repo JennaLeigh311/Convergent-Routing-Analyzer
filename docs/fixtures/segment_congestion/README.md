@@ -84,9 +84,10 @@ exercises **directionality and per-segment independence**: (5) the **reverse**
 (`48800123:0:R`) and (6) the **forward** (`48800123:0:F`) halves of one two-way
 street carry independent records for the same window with different
 `vehicle_count`s — mirroring §1's directional rule — and (7) a **multi-seq**
-`segment_id` (`123456789:2:F`, the verbatim §R4 spec example) shows a non-zero
+`segment_id` (`123456789:2:F`, the canonical example message from
+[`../../contracts.md` §3](../../contracts.md) "Message shape") shows a non-zero
 `seq` flowing on the topic (it intentionally has no `edge_attributes` counterpart —
-it is the spec's example id, not a reused edge). Every window is exactly 5 minutes,
+it is the contract's example id, not a reused edge). Every window is exactly 5 minutes,
 every timestamp is RFC3339 UTC `Z`, every `emit_time` is consistent with the dedup
 story (provisional emits a few seconds after `window_end`; finals after the 2-min
 watermark), and `sample_pings >= vehicle_count` throughout.

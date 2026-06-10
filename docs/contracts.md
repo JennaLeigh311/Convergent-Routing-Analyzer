@@ -380,19 +380,19 @@ One JSON object per message, exactly these 10 fields, in this order:
 |------------------|----------------------------|------------|
 | `schema_version` | int, currently `1`         | Envelope-level wire version of this message schema. Currently `1` (the first frozen v2 envelope — see "Why 'v2'" above). It is **also the operational version-carrier for the §1 `segment_id` format on this topic**: a §1 format change REQUIRES bumping this (see "Versioning"), so a consumer can detect the change at ingest before mis-parsing the key. Not to be confused with the "v2" schema generation. |
 | `segment_id`     | string                     | The §1 canonical wire key `"{osm_way_id}:{seq}:{dir}"` and the **Kafka message KEY** on this topic. Conforms to §1 exactly; see §1 for the scheme and strict-parsing rules. MUST NOT be redefined locally. |
-| `window_start`   | string, RFC3339 UTC        | **Event-time** lower bound of the aggregation window, inclusive. RFC3339 with a `Z` (UTC) offset. |
+| `window_start`   | string, RFC3339 UTC        | **Event-time** lower bound of the aggregation window, inclusive. **Canonical wire form:** RFC3339 with a literal `Z` (UTC) offset, whole-second precision, no fractional digits — so the dedup comparison is well-defined (see "Dedup rule"). |
 | `window_end`     | string, RFC3339 UTC        | **Event-time** upper bound of the window, **exclusive**. The window is half-open `[window_start, window_end)`. `window_end − window_start` is **exactly 5 minutes** — the window length (see "Windowing & streaming semantics"). |
 | `vehicle_count`  | int, `>= 0`                | Count of **distinct vehicles** observed on this segment during this window. This is a **per-5-minute-window count, NOT an hourly rate.** The engine's congestion adapter scales it to vehicles/hour before BPR as `v_vph = vehicle_count × 12` (twelve 5-min windows per hour) — see "Unit contract" and §2's unit contract. |
 | `avg_speed_kmh`  | float64, km/h, `> 0`       | Mean map-matched vehicle speed over the window, in km/h. A diagnostic/heatmap field (the engine's cost is driven by `vehicle_count`/capacity via BPR, not by this speed). |
 | `sample_pings`   | int, `>= 0`                | Count of raw GPS pings that contributed to this aggregate. Typically `>= vehicle_count`, since one vehicle emits many pings over a 5-minute window. Diagnostic/confidence field — a window with few pings behind its `vehicle_count` is lower-confidence. |
 | `is_final`       | bool                       | `false` = a **provisional** emission for a window that may still receive more (late) pings before the watermark passes — overwritable by a later emission for the same window (see dedup rule). `true` = the window has closed past the watermark and will **not** be updated; this is the last record for the window. |
-| `emit_time`      | string, RFC3339 UTC        | Wall-clock (processing-time) instant the producer emitted **this** record. RFC3339 with `Z`. Used purely for **dedup ordering** (see the dedup rule); it is producer wall-clock, distinct from the event-time `window_start`/`window_end`. |
+| `emit_time`      | string, RFC3339 UTC        | Wall-clock (processing-time) instant the producer emitted **this** record. Same **canonical wire form** as `window_start` (literal `Z`, whole-second precision, no fractional digits). Used purely for **dedup ordering** (see the dedup rule); it is producer wall-clock, distinct from the event-time `window_start`/`window_end`. |
 | `producer`       | string                     | Identifier of the emitting job, e.g. `"spark-structured-stream"`. The **same** value for the live and the batch run modes, because it is one job run two ways (see "Windowing & streaming semantics"). |
 
 ### Dedup rule (latest `(window_start, emit_time)` wins)
 
 The engine keeps, per `segment_id`, exactly **one** current record: the one with the **latest
-`(window_start, emit_time)`** under lexicographic ordering of that pair —
+`(window_start, emit_time)`**, ordered by `window_start` first and `emit_time` only as the tiebreaker —
 
 1. **Newest window wins.** A record with a greater `window_start` supersedes any record for an earlier window
    on the same segment.
@@ -400,10 +400,15 @@ The engine keeps, per `segment_id`, exactly **one** current record: the one with
    `window_start` are ordered by `emit_time`; the later one supersedes the earlier.
 
 Consequently an `is_final: false` (provisional) record is **overwritable** by any later emission for the same
-window — whether a higher-count provisional revision or the eventual `is_final: true` record. Both event-time
-timestamps are RFC3339 UTC, so this comparison is a string/lexicographic compare on normalized timestamps. A
-conformant consumer MUST apply this ordering and MUST NOT, e.g., sum successive emissions for one window
-(that would double-count the revisions).
+window — whether a higher-count provisional revision or the eventual `is_final: true` record. The two
+timestamps being compared have **different clocks** — `window_start` is event-time, `emit_time` is producer
+wall-clock (processing-time) — but both are emitted in the **canonical wire form** required by the field table
+(RFC3339, a literal `Z` offset, whole-second precision, no fractional digits). A conformant consumer MUST
+apply this ordering by comparing the timestamps **as parsed instants**; it MAY instead byte-compare them
+lexicographically, which is equivalent **only because** the canonical form is fixed-width and `Z`-normalized
+(a consumer MUST NOT byte-compare a timestamp it has not validated to that form — e.g. a `+00:00` offset,
+lowercase `z`, or fractional seconds would sort wrongly). A conformant consumer MUST NOT, e.g., sum
+successive emissions for one window (that would double-count the revisions).
 
 **Sliding windows replace, they do not accumulate.** Because the windows slide (5-min length, 1-min slide —
 see "Windowing & streaming semantics"), successive windows on one segment **overlap** and the same ping is
@@ -416,6 +421,13 @@ late pings — and that is intended: "freshest window wins" deliberately prefers
 live load estimate. `is_final` records still arrive (for dedup within a window and for the batch pass); they
 do **not** override a later window merely for being final, because rule 1 (`window_start`) is the primary
 sort key (see fixture rows 3→4).
+
+One consequence is **accepted explicitly**: the freshest window is also the **least-settled** one — having
+slid forward only a minute, part of its span still falls within the 2-min watermark horizon, so its
+`vehicle_count` is a partial, still-filling count that feeds directly into BPR `v`. This is a deliberate bias
+of the *live* path (a real-time load estimate favors currency over completeness), not a defect. A consumer
+that needs a fully-settled load instead — the batch / static-replay path — reads the `is_final: true` records,
+which are emitted only after the watermark closes the window.
 
 ### Windowing & streaming semantics
 
@@ -434,12 +446,18 @@ for first-class **event-time** windowing and watermarks, which DStreams lack.
   (continuous micro-batches), and `Trigger.AvailableNow` drives the **batch** pass over the full ~15M-ping file
   for the "Spark batch processing" headline number. **Same code, two run modes** — not two jobs — so both modes
   emit the identical schema and the **same `producer` value**.
+- **Producer emission order (SHOULD).** The producer SHOULD append per-`segment_id` records in
+  **non-decreasing `(window_start, emit_time)` order** (newest window last). Correctness does **not** depend on
+  it — every consumer applies the dedup rule in-memory (see "Dedup rule" and "Kafka topics") — but
+  log-compaction fidelity does: an out-of-order append can leave the compacted log holding a value-older
+  record, which a cold consumer would warm-start from before its in-memory dedup corrects it. This obligation
+  is restated for producers here because it is easy to miss in the consumer-facing "Kafka topics" section.
 
 ### Unit contract (the other half of §2)
 
 `vehicle_count` is a **per-5-minute count**, and BPR needs flow `v` in **vehicles per hour** (§2's unit
 contract: `v` and `c = capacity_vph` MUST both be vph, and with `β = 4` a unit mismatch is raised to the
-fourth power and silently corrupts the headline number). The engine's congestion adapter therefore annualizes
+fourth power and silently corrupts the headline number). The engine's congestion adapter therefore scales
 each window's count to an hourly rate as:
 
 ```
