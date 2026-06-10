@@ -25,14 +25,26 @@ type geojsonGeometry struct {
 	Coordinates [][]float64 `json:"coordinates"`
 }
 
+// edgeProps is the full set of 11 non-geometry contract columns: edgeAttrRow
+// (edge_attributes_test.go) carries the 9 derivation-relevant columns, and this
+// adds source_node/target_node, which it omits. The row-equivalence check below
+// compares this whole struct, so all 11 columns are diffed — the reversed F/R
+// pairs (48800123, 8123456) differ ONLY in source_node/target_node, so omitting
+// the node columns would blind the check to exactly the swap those rows exist to
+// verify. It stays comparable (all scalar fields) so `==` works.
+type edgeProps struct {
+	edgeAttrRow
+	SourceNode int `json:"source_node"`
+	TargetNode int `json:"target_node"`
+}
+
 // geojsonFeature mirrors one Feature in the FeatureCollection. The 11 non-geometry
-// contract columns live under properties (reusing edgeAttrRow from
-// edge_attributes_test.go for the contract subset under test); geometry is a
-// sibling, and `note` is a documentation foreign member.
+// contract columns live under properties (edgeProps); geometry is a sibling, and
+// `note` is a documentation foreign member.
 type geojsonFeature struct {
 	Type       string          `json:"type"`
 	Geometry   geojsonGeometry `json:"geometry"`
-	Properties edgeAttrRow     `json:"properties"`
+	Properties edgeProps       `json:"properties"`
 	Note       string          `json:"note"`
 }
 
@@ -46,12 +58,10 @@ type geojsonFeatureCollection struct {
 }
 
 // sourceRow mirrors a full row of example_export.json for the row-equivalence
-// check, including the geometry that edgeAttrRow omits.
+// check: the 11 contract columns (edgeProps) plus the geometry edgeProps omits.
 type sourceRow struct {
-	edgeAttrRow
-	SourceNode int             `json:"source_node"`
-	TargetNode int             `json:"target_node"`
-	Geometry   geojsonGeometry `json:"geometry"`
+	edgeProps
+	Geometry geojsonGeometry `json:"geometry"`
 }
 
 // loadGeoJSON reads and unmarshals the FeatureCollection. Unlike loadFixture
@@ -137,10 +147,10 @@ func TestEdgeAttributesGeoJSONConformance(t *testing.T) {
 			continue
 		}
 
-		// 11 contract properties (edgeAttrRow covers 9; source_node/target_node
-		// are the remaining two and live in the geojson feature properties).
-		if f.Properties != src.edgeAttrRow {
-			t.Errorf("segment_id %q: geojson properties %+v != source %+v", id, f.Properties, src.edgeAttrRow)
+		// all 11 contract properties, including source_node/target_node (the
+		// reversed F/R pairs differ only in those two).
+		if f.Properties != src.edgeProps {
+			t.Errorf("segment_id %q: geojson properties %+v != source %+v", id, f.Properties, src.edgeProps)
 		}
 
 		// geometry coordinates must match exactly.
