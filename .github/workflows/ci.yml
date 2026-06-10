@@ -62,6 +62,8 @@ jobs:
         run: go vet ./...
 
       - name: go test (race detector — the engine is a concurrent server)
+        # Also the frozen-fixture conformance gate: runs the segment_id (§1) and
+        # edge_attributes (§2) golden-fixture tests, so a drifted fixture fails CI.
         run: go test -race ./...
 
       - name: bench (toy graph; scaffold stub today)

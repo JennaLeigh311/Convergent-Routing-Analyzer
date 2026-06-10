@@ -28,9 +28,13 @@ type invalidCase struct {
 	Reason    string `json:"reason"`
 }
 
-func loadFixture[T any](t *testing.T, name string) []T {
+// loadFixture reads and unmarshals a golden fixture from dir/name into a slice
+// of T. dir is passed explicitly (rather than hardcoding fixtureDir) so the
+// edge_attributes conformance test in this package can share this loader against
+// its own fixture directory; see edge_attributes_test.go.
+func loadFixture[T any](t *testing.T, dir, name string) []T {
 	t.Helper()
-	path := filepath.Join(fixtureDir, name)
+	path := filepath.Join(dir, name)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read fixture %s: %v", path, err)
@@ -61,7 +65,7 @@ func dirToken(t *testing.T, tok string) Direction {
 // TestFormatCasesRoundTrip asserts that every valid fixture row both formats to
 // its expected segment_id and parses back to its source fields.
 func TestFormatCasesRoundTrip(t *testing.T) {
-	cases := loadFixture[formatCase](t, "format_cases.json")
+	cases := loadFixture[formatCase](t, fixtureDir, "format_cases.json")
 	for _, tc := range cases {
 		t.Run(tc.SegmentID, func(t *testing.T) {
 			wantDir := dirToken(t, tc.Dir)
@@ -93,7 +97,7 @@ func TestFormatCasesRoundTrip(t *testing.T) {
 // TestParseInvalidRejected asserts that every malformed fixture string is
 // rejected with an error and never panics.
 func TestParseInvalidRejected(t *testing.T) {
-	cases := loadFixture[invalidCase](t, "parse_invalid.json")
+	cases := loadFixture[invalidCase](t, fixtureDir, "parse_invalid.json")
 	for _, tc := range cases {
 		t.Run(tc.Reason, func(t *testing.T) {
 			_, _, _, err := ParseSegmentID(SegmentID(tc.SegmentID))

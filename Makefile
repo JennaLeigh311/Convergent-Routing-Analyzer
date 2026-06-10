@@ -71,7 +71,10 @@ clean:
 # ---- Go toolchain (no infra; what lane A runs) ------------------------------
 
 ## test: run the full engine test suite with the race detector
-## (-race: the engine is a concurrent HTTP server; also picks up fixture tests)
+## (-race: the engine is a concurrent HTTP server). This is also the frozen-fixture
+## conformance gate: it executes BOTH the segment_id (contracts.md §1) AND the
+## edge_attributes (§2) golden fixtures via their *_test.go files, so a fixture that
+## drifts from its contract fails here.
 test:
 	cd engine && go test -race ./...
 
