@@ -87,11 +87,16 @@ carried by `example_export.geojson` below.
 The golden **GeoJSON `FeatureCollection`** serialization (§2 "Serializations" /
 "Envelope `schema_version`") of the very same logical rows. It is the frontend
 `/graph` endpoint's golden artifact, and it is **row-equivalent** to
-`example_export.json` — same set of contract columns + geometry per `segment_id`,
-in the same order (`edge_id` 0..11) — a property the Go test
+`example_export.json` — the same *set* of rows (matched by `segment_id`), each
+carrying identical contract columns + geometry — a property the Go test
 `TestEdgeAttributesGeoJSONConformance`
-(`engine/internal/domain/edge_attributes_geojson_test.go`) asserts
-mechanically against both files.
+(`engine/internal/domain/edge_attributes_geojson_test.go`) asserts mechanically
+against both files. Equivalence is by `segment_id`, not by position: feature
+order is not part of the contract, so the test does not require the two files to
+agree on row order (this file happens to list `edge_id` 0..11 in order for
+readability). This equivalence is **GeoJSON ↔ logical-JSON only**; the
+Parquet/WKB serialization and the cross-serialization value-equality check are a
+separate Phase-5 artifact (see the board note on issue #22), not asserted here.
 
 Envelope:
 
@@ -118,7 +123,9 @@ Each row maps to one `Feature`, in source order:
 - `note` — the row's documentation string, preserved as a **Feature-level
   foreign member** (a sibling of `geometry`/`properties`, which GeoJSON permits)
   so the per-row documentation parity with `example_export.json` is kept
-  **without** polluting the contract `properties`.
+  **without** polluting the contract `properties`. The Go test asserts this
+  parity (`note` survives verbatim) and, conversely, that `properties` contains
+  **exactly** the 11 columns and no extras.
 
 The downstream-relied-on rows are present and cross-checked by the Go test: the
 3-vertex `LineString` row `33112200:0:F` (interior coordinate is a shape point,
@@ -146,7 +153,8 @@ light guard only — it asserts the corpus loads, is non-empty, every entry is
 annotated and carries a `FeatureCollection`, and that each mandated invariant
 category is represented; it does **not** perform the rejection (that is #25's).
 
-Invariants covered:
+Invariants covered — **12 categories across 13 corpus entries** (category 5,
+`edge_id` density, is split into two entries: a gap and a duplicate):
 
 1. **Wrong `schema_version`** — top-level `"schema_version": 2`.
 2. **Absent `schema_version`** — the top-level member omitted entirely.
@@ -164,6 +172,22 @@ Invariants covered:
    (§2: only first/last coordinates map to `source_node`/`target_node`).
 8. **Swapped `[lat, lon]` axis** — geometry emitted as `[lat, lon]`
    (`[40.73456, -73.99012]`) instead of the contract's `[lon, lat]`.
+9. **Non-positive `length_m`** — `length_m: -240.0` (§2: `length_m > 0`);
+   `freeflow_time_s` co-moves negative so the negative length is the single root.
+10. **Non-positive `maxspeed_kmh`** — `maxspeed_kmh: -60.0` (§2: `maxspeed_kmh >
+    0`); `freeflow_time_s` co-moves negative for the same reason.
+11. **Non-positive `osm_way_id`** — `osm_way_id: 0` with `segment_id` `"0:0:F"`
+    self-consistently embedding it (§2/§1: `osm_way_id` must be `>= 1`).
+12. **`segment_id` invalid under §1** — `"27583001:0:f"` (lowercase `dir`); the
+    `edge_attributes` loader must reject §1-invalid ids too. The full §1
+    strict-parse corpus lives in
+    [`../segment_id/parse_invalid.json`](../segment_id/parse_invalid.json); this
+    is one representative case in the export context.
+
+Categories 9–12 (the §2 positive-value/range constraints and §1-validity) round
+out the corpus beyond the shape/identity invariants; the #25 loader's
+validate-and-reject path should still treat this as a starting corpus, not an
+exhaustive enumeration of every §2 numeric bound.
 
 ## Consumers
 

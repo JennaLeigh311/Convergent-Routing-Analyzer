@@ -58,10 +58,25 @@ type geojsonFeatureCollection struct {
 }
 
 // sourceRow mirrors a full row of example_export.json for the row-equivalence
-// check: the 11 contract columns (edgeProps) plus the geometry edgeProps omits.
+// check: the 11 contract columns (edgeProps) plus the geometry edgeProps omits
+// and the non-contract `note` (compared so the README's documentation-parity
+// claim — the per-row note survives into the GeoJSON Feature — is actually
+// backed by a test rather than left to rot).
 type sourceRow struct {
 	edgeProps
 	Geometry geojsonGeometry `json:"geometry"`
+	Note     string          `json:"note"`
+}
+
+// contractPropertyKeys is the exact set of 11 non-geometry columns §2 permits in
+// a Feature's `properties` — and nothing else. The typed edgeProps decode above
+// silently ignores unknown keys, so a leaked or renamed extra property would pass
+// the row-equivalence check; this set lets the test re-decode properties raw and
+// reject any key outside it, enforcing the README's "and nothing else" guarantee.
+var contractPropertyKeys = map[string]bool{
+	"segment_id": true, "edge_id": true, "source_node": true, "target_node": true,
+	"osm_way_id": true, "highway_class": true, "lanes_effective": true,
+	"length_m": true, "maxspeed_kmh": true, "freeflow_time_s": true, "capacity_vph": true,
 }
 
 // loadGeoJSON reads and unmarshals the FeatureCollection. Unlike loadFixture
@@ -79,6 +94,39 @@ func loadGeoJSON(t *testing.T, dir, name string) geojsonFeatureCollection {
 		t.Fatalf("unmarshal fixture %s: %v", path, err)
 	}
 	return fc
+}
+
+// assertExactPropertyKeys re-decodes the FeatureCollection with each Feature's
+// properties as a raw key map and asserts every Feature carries exactly the 11
+// §2 contract columns (contractPropertyKeys) and no others. This catches the one
+// thing a typed decode cannot: an unexpected EXTRA property silently ignored by
+// json.Unmarshal.
+func assertExactPropertyKeys(t *testing.T, dir, name string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fixture %s: %v", path, err)
+	}
+	var rawFC struct {
+		Features []struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"features"`
+	}
+	if err := json.Unmarshal(data, &rawFC); err != nil {
+		t.Fatalf("unmarshal fixture %s: %v", path, err)
+	}
+	for i, f := range rawFC.Features {
+		if len(f.Properties) != len(contractPropertyKeys) {
+			t.Errorf("feature %d: properties has %d keys, want exactly %d (the §2 contract columns)",
+				i, len(f.Properties), len(contractPropertyKeys))
+		}
+		for k := range f.Properties {
+			if !contractPropertyKeys[k] {
+				t.Errorf("feature %d: unexpected property key %q — properties must be exactly the 11 §2 contract columns", i, k)
+			}
+		}
+	}
 }
 
 func coordsEqual(a, b [][]float64) bool {
@@ -118,8 +166,20 @@ func TestEdgeAttributesGeoJSONConformance(t *testing.T) {
 		t.Errorf("top-level schema_version raw bytes = %q, want integer 1 (no quotes; \"1\" is the Parquet footer form)", string(raw))
 	}
 
+	// (2b) properties must be EXACTLY the 11 contract columns — no extras. The
+	// typed edgeProps decode in (3) silently drops unknown keys, so re-decode each
+	// Feature's properties as a raw key map and reject anything outside the §2 set.
+	// Without this, a leaked internal column (e.g. a `gid`) would ship green and
+	// break the frontend's "properties.segment_id is a pure §1 join, no extras"
+	// guarantee. Re-reads the file once into a raw shape (the typed loader can't
+	// also surface the raw key set).
+	assertExactPropertyKeys(t, edgeAttributesFixtureDir, "example_export.geojson")
+
 	// (3) row-equivalence against the logical-row fixture. Build the source map
-	// keyed by segment_id, then match each GeoJSON feature against it.
+	// keyed by segment_id, then match each GeoJSON feature against it. Equivalence
+	// is asserted as a SET keyed by segment_id, deliberately NOT positionally:
+	// feature order is not part of the contract, so re-ordering the GeoJSON must
+	// not fail this test (the README is worded to match — "same set of rows").
 	srcRows := loadFixture[sourceRow](t, edgeAttributesFixtureDir, "example_export.json")
 	srcByID := make(map[string]sourceRow, len(srcRows))
 	for _, r := range srcRows {
@@ -153,12 +213,37 @@ func TestEdgeAttributesGeoJSONConformance(t *testing.T) {
 			t.Errorf("segment_id %q: geojson properties %+v != source %+v", id, f.Properties, src.edgeProps)
 		}
 
+		// the non-contract `note` must survive verbatim (README documentation
+		// parity), even though it is a foreign member, not a contract property.
+		if f.Note != src.Note {
+			t.Errorf("segment_id %q: geojson note %q != source note %q", id, f.Note, src.Note)
+		}
+
 		// geometry coordinates must match exactly.
 		if f.Geometry.Type != src.Geometry.Type {
 			t.Errorf("segment_id %q: geometry type %q != source %q", id, f.Geometry.Type, src.Geometry.Type)
 		}
 		if !coordsEqual(f.Geometry.Coordinates, src.Geometry.Coordinates) {
 			t.Errorf("segment_id %q: geometry coordinates %v != source %v", id, f.Geometry.Coordinates, src.Geometry.Coordinates)
+		}
+
+		// [lon, lat] axis order (§2). Cross-checking coords against
+		// example_export.json cannot catch a transposition if BOTH files swapped,
+		// so assert each coordinate falls in this NYC fixture's lon/lat envelope
+		// (lon ≈ -73.9, lat ≈ 40.7). A [lat, lon] swap puts ~40 in the lon slot
+		// and ~-73 in the lat slot, both out of these bounds — the classic
+		// transposition bug fails loudly instead of shipping green.
+		for _, c := range f.Geometry.Coordinates {
+			if len(c) != 2 {
+				t.Errorf("segment_id %q: coordinate %v is not a [lon, lat] pair", id, c)
+				continue
+			}
+			if lon := c[0]; lon < -75 || lon > -73 {
+				t.Errorf("segment_id %q: lon %v outside NYC bounds [-75,-73] — [lat,lon] axis swap?", id, lon)
+			}
+			if lat := c[1]; lat < 40 || lat > 41 {
+				t.Errorf("segment_id %q: lat %v outside NYC bounds [40,41] — [lat,lon] axis swap?", id, lat)
+			}
 		}
 	}
 
@@ -225,6 +310,11 @@ func TestMalformedExportsCorpus(t *testing.T) {
 	}
 
 	// Each mandated category, matched by a lowercase substring of `violates`.
+	// NOTE: each needle is a verbatim fragment of a `violates` label in
+	// malformed_exports.json. The coupling is intentional (it asserts every
+	// invariant category stays represented), and it fails LOUD — a reworded label
+	// makes this test error here, it does not silently drop coverage. If you edit
+	// a `violates` string in the JSON, update its needle below in the same change.
 	mandated := map[string]string{
 		"schema_version 2":           "schema_version is 2",
 		"absent schema_version":      "schema_version member is absent",
@@ -235,6 +325,10 @@ func TestMalformedExportsCorpus(t *testing.T) {
 		"out-of-enum highway_class":  "outside the seven legal",
 		"interior node":              "interior linestring shape point promoted to a graph node",
 		"swapped axis":               "[lat, lon] instead of",
+		"non-positive length_m":      "length_m is non-positive",
+		"non-positive maxspeed_kmh":  "maxspeed_kmh is non-positive",
+		"non-positive osm_way_id":    "osm_way_id is non-positive",
+		"segment_id invalid (§1)":    "invalid under §1",
 	}
 	for name, needle := range mandated {
 		found := false

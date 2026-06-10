@@ -232,7 +232,7 @@
     }
   },
   {
-    "violates": "interior LineString shape point promoted to a graph node — §2: only the first/last coordinates map to source_node/target_node. The trunk way 33112200:0:F is split into two features whose shared endpoint is its interior shape point [-73.93720, 40.75640].",
+    "violates": "interior LineString shape point promoted to a graph node — §2: only the first/last coordinates map to source_node/target_node. The trunk way 33112200:0:F is split into two features whose shared endpoint is its interior shape point [-73.93720, 40.75640]. (Both halves share segment_id 33112200:0:F; that duplicate segment_id is intrinsic to the split — the same single root cause — so a loader may reject on either signal.)",
     "feature_collection": {
       "type": "FeatureCollection",
       "schema_version": 1,
@@ -285,6 +285,110 @@
           "geometry": { "type": "LineString", "coordinates": [[40.73456, -73.99012], [40.73502, -73.98801]] },
           "properties": {
             "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "length_m is non-positive (-240.0) — §2: length_m > 0. freeflow_time_s co-moves negative (-14.4 = -240/(60/3.6)) so the row stays derivation-consistent and the single root is the negative length, not a stacked derivation mismatch.",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": -240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": -14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "maxspeed_kmh is non-positive (-60.0) — §2: maxspeed_kmh > 0. freeflow_time_s co-moves negative (-14.4 = 240/(-60/3.6)) so the row stays derivation-consistent and the single root is the negative maxspeed.",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": -60.0,
+            "freeflow_time_s": -14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "osm_way_id is non-positive (0) — §2/§1: osm_way_id must be positive (>= 1). segment_id embeds the same 0 ('0:0:F') so the way id is self-consistent; the single root is the non-positive way id (a loader may reject via the osm_way_id > 0 check or the §1 strict parse of segment_id).",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "0:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 0,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "segment_id '27583001:0:f' is invalid under §1 (lowercase dir; must be F or R) — a §1 strict-parse failure. osm_way_id 27583001 matches the way component, so this is purely the malformed segment_id, not a self-consistency mismatch. (§1 segment_id rules are owned by docs/fixtures/segment_id/parse_invalid.json; this sample shows the edge_attributes loader must also reject §1-invalid ids.)",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:f",
             "edge_id": 0,
             "source_node": 10,
             "target_node": 11,
