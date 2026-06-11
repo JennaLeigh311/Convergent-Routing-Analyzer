@@ -119,6 +119,30 @@ func TestNaiveRouteDirectSingleHop(t *testing.T) {
 	}
 }
 
+// TestNaiveRouteSameNode pins the src==dst contract: when From and To snap to the
+// same graph node the route is a clean zero-edge, zero-cost success — not an error,
+// and not a panic on the empty predecessor walk. Locked here because downstream
+// flow accumulation relies on tolerating an empty Edges slice.
+func TestNaiveRouteSameNode(t *testing.T) {
+	g := loadToyGraph(t)
+	r := routing.NewNaiveRouter(g)
+
+	n0, _ := g.Node(0)
+	got, err := r.Route(context.Background(), routing.RouteRequest{ID: "n0->n0", From: n0.Pos, To: n0.Pos})
+	if err != nil {
+		t.Fatalf("Route() same-node error = %v, want nil", err)
+	}
+	if len(got.Edges) != 0 {
+		t.Errorf("Edges = %v, want empty path for a same-node request", got.Edges)
+	}
+	if got.CostS != 0 {
+		t.Errorf("CostS = %v, want 0 for a same-node request", got.CostS)
+	}
+	if got.RequestID != "n0->n0" {
+		t.Errorf("RequestID = %q, want %q", got.RequestID, "n0->n0")
+	}
+}
+
 // TestNaiveRouteUnreachable confirms an unreachable destination is a clean error,
 // not a panic or a zero-cost empty route. Node 5 is a sink (no outgoing edge), so
 // nothing is reachable from it.
@@ -167,6 +191,76 @@ func TestNaiveAssignIndependentRoutes(t *testing.T) {
 	// Empty input yields an empty, non-error result.
 	if routes, err := r.Assign(context.Background(), nil); err != nil || len(routes) != 0 {
 		t.Errorf("Assign(nil) = (%v, %v), want empty, nil", routes, err)
+	}
+}
+
+// TestNaiveAssignFirstErrorReturnsNil locks the documented Assign contract: on the
+// first unroutable request it returns (nil, error) — never a partially-filled slice
+// a caller might read stale zero-value Routes from. The second request originates at
+// the sink node 5, from which nothing is reachable, so its Route fails.
+func TestNaiveAssignFirstErrorReturnsNil(t *testing.T) {
+	g := loadToyGraph(t)
+	r := routing.NewNaiveRouter(g)
+
+	n0, _ := g.Node(0)
+	n2, _ := g.Node(2)
+	n5, _ := g.Node(5) // sink: nothing is reachable from it
+	reqs := []routing.RouteRequest{
+		{ID: "ok", From: n0.Pos, To: n2.Pos},
+		{ID: "unroutable", From: n5.Pos, To: n0.Pos},
+	}
+
+	routes, err := r.Assign(context.Background(), reqs)
+	if err == nil {
+		t.Fatal("Assign() with an unroutable request err = nil, want non-nil")
+	}
+	if routes != nil {
+		t.Errorf("Assign() returned a partial slice %v, want nil on error", routes)
+	}
+}
+
+// countingCtx reports cancellation only after liveCalls observations of Err(),
+// letting a test drive Assign's per-request ctx.Err() check to a chosen point in
+// the batch deterministically (no wall-clock races). Each fully-routed Assign
+// iteration consumes two Err() calls — the loop guard plus Route's own
+// top-of-function check — so liveCalls = 2 lets request[0] route, then trips the
+// loop guard at request[1].
+type countingCtx struct {
+	context.Context
+	calls     int
+	liveCalls int
+}
+
+func (c *countingCtx) Err() error {
+	c.calls++
+	if c.calls > c.liveCalls {
+		return context.Canceled
+	}
+	return c.Context.Err()
+}
+
+// TestNaiveAssignHonorsMidBatchCancellation confirms the per-request ctx.Err()
+// check inside Assign's loop (not just the pre-call guard) aborts a batch already
+// in progress, with no partial slice — the property that lets a cancelled HTTP
+// request stop a long assignment promptly instead of running it to completion.
+func TestNaiveAssignHonorsMidBatchCancellation(t *testing.T) {
+	g := loadToyGraph(t)
+	r := routing.NewNaiveRouter(g)
+
+	n0, _ := g.Node(0)
+	n2, _ := g.Node(2)
+	ctx := &countingCtx{Context: context.Background(), liveCalls: 2}
+	reqs := []routing.RouteRequest{
+		{ID: "first", From: n0.Pos, To: n2.Pos},
+		{ID: "second", From: n0.Pos, To: n2.Pos},
+	}
+
+	routes, err := r.Assign(ctx, reqs)
+	if err != context.Canceled {
+		t.Errorf("Assign() mid-batch cancel err = %v, want context.Canceled", err)
+	}
+	if routes != nil {
+		t.Errorf("Assign() returned %v, want nil when cancelled mid-batch", routes)
 	}
 }
 

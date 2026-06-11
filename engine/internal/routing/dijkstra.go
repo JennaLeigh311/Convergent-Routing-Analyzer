@@ -30,9 +30,12 @@ type weightFunc func(graph.Edge) float64
 // decrease-key'd. Node ids are dense 0..NodeCount-1 (the loader guarantees this),
 // so the per-node bookkeeping is flat slices indexed by NodeID — no hashing.
 //
-// The relaxation loop is deliberately A*-wrappable: a future A* supplies an
-// admissible heuristic by pushing priority = dist + h(node) while keeping dist as
-// the settled cost, without changing the settle/relax structure here.
+// The relaxation loop is deliberately A*-wrappable: each frontier entry carries
+// both its settled cost g and its heap priority. Dijkstra sets priority == g; a
+// future A* sets priority = g + h(node) for an admissible heuristic h. The
+// staleness check compares the entry's g against the settled-cost slice (never the
+// priority), so adding the heuristic reorders the heap without touching the
+// settle/relax structure here.
 func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []domain.EdgeID, cost float64, ok bool) {
 	n := g.NodeCount()
 	if int(src) < 0 || int(src) >= n || int(dst) < 0 || int(dst) >= n {
@@ -42,6 +45,10 @@ func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []
 		return []domain.EdgeID{}, 0, true
 	}
 
+	// dist/prevEdge are allocated and initialized per call (O(n)) to keep the
+	// router safe for unsynchronized concurrent use; a per-worker scratch buffer is
+	// a possible future optimization once the Assign worker-pool shape is concrete
+	// (deferred behind a benchmark, as it is secondary to the Neighbors alloc below).
 	dist := make([]float64, n)
 	for i := range dist {
 		dist[i] = math.Inf(1)
@@ -55,21 +62,27 @@ func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []
 	}
 
 	dist[src] = 0
-	pq := &priorityQueue{{node: src, priority: 0}}
+	pq := &priorityQueue{{node: src, g: 0, priority: 0}}
 	for pq.Len() > 0 {
 		cur := heap.Pop(pq).(pqItem)
-		if cur.priority > dist[cur.node] {
+		if cur.g > dist[cur.node] {
 			continue // stale entry superseded by a shorter settle
 		}
 		if cur.node == dst {
 			break // dst settled; its distance can no longer improve
 		}
+		// g.Neighbors allocates a fresh []Edge per settled node (a Graph-port
+		// limitation, not a need of this loop, which reads only ID/To/weight). On
+		// the MSA/equilibrium hot path an allocation-free CSR neighbor view is a
+		// worthwhile follow-up — tracked in #35, gated on a profiler-confirmed hotspot.
 		for _, e := range g.Neighbors(cur.node) {
 			relaxed := dist[cur.node] + weight(e)
 			if relaxed < dist[e.To] {
 				dist[e.To] = relaxed
 				prevEdge[e.To] = e.ID
-				heap.Push(pq, pqItem{node: e.To, priority: relaxed})
+				// priority == g for Dijkstra; an A* wrapper would push
+				// g: relaxed, priority: relaxed + h(e.To).
+				heap.Push(pq, pqItem{node: e.To, g: relaxed, priority: relaxed})
 			}
 		}
 	}
@@ -83,7 +96,7 @@ func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []
 		eid := prevEdge[at]
 		e, found := g.Edge(eid)
 		if !found {
-			return nil, 0, false // defensive: settled node must have a predecessor edge
+			return nil, 0, false // defensive: a settled node always has a predecessor edge; a missing one is a logic bug above, not a valid graph
 		}
 		path = append(path, eid)
 		at = e.From
@@ -94,12 +107,14 @@ func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []
 	return path, dist[dst], true
 }
 
-// pqItem is one entry in the Dijkstra frontier: a node keyed by its tentative
-// distance (priority). A* will set priority = dist + heuristic while the settle
-// check above continues to compare against the pure dist slice.
+// pqItem is one entry in the Dijkstra frontier: a node with its settled cost g and
+// its heap priority. For Dijkstra priority == g; an A* wrapper sets priority =
+// g + h(node) while g stays the pure cost the staleness check compares against, so
+// the heap orders by f = g + h without corrupting the settle decision.
 type pqItem struct {
 	node     domain.NodeID
-	priority float64
+	g        float64 // settled cost-so-far at push time; the staleness key
+	priority float64 // heap key: g for Dijkstra, g + h(node) for A*
 }
 
 // priorityQueue is a min-heap of pqItems ordered by priority, implementing
