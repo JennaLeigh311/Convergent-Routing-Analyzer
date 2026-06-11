@@ -12,7 +12,8 @@
 #   make help         list targets
 #   make test         go test -race ./...     (no infra)
 #   make lint         gofmt + go vet          (no infra)
-#   make bench        run the benchmark stub on a toy graph
+#   make route        run the route CLI on the toy graph (flag passthrough)
+#   make bench        run the naive-router toy-graph bench
 #   make up-core      boot the core profile (engine + web)
 #   make up-full      boot the full profile (+ postgis + kafka + pipeline)
 #   make integration  boot full, smoke /healthz /readyz / , tear down
@@ -32,7 +33,7 @@ COMPOSE ?= docker compose
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up-core up-full down clean test bench replay integration lint protect-main
+.PHONY: help up-core up-full down clean test route bench replay integration lint protect-main
 
 ## help: list the available targets
 help:
@@ -42,7 +43,8 @@ help:
 	@echo "  down         docker compose --profile full down (stop + remove containers)"
 	@echo "  clean        down -v + remove built images and Go build/test cache"
 	@echo "  test         cd engine && go test -race ./..."
-	@echo "  bench        cd engine && go run ./cmd/benchmark (toy graph; stub today)"
+	@echo "  route        cd engine && go run ./cmd/route (toy graph; flag passthrough)"
+	@echo "  bench        cd engine && go run ./cmd/benchmark (naive router over the toy graph)"
 	@echo "  replay       cd engine && go run ./cmd/replay (stub today)"
 	@echo "  lint         cd engine && gofmt check + go vet ./... (golangci-lint if present)"
 	@echo "  integration  boot full, smoke (engine /healthz /readyz, web /), tear down"
@@ -78,7 +80,15 @@ clean:
 test:
 	cd engine && go test -race ./...
 
-## bench: run the benchmark binary on a toy graph (scaffold stub today)
+## route: run the route CLI on the toy graph; pass flags via ARGS, e.g.
+## `make route ARGS="-from 40.73,-73.99 -to 40.74,-73.97"` (default flags print the
+## canonical toy route). Errors go to stderr with a non-zero exit.
+route:
+	cd engine && go run ./cmd/route $(ARGS)
+
+## bench: run the naive free-flow router over the toy graph and print a real
+## timing summary (nodes, edges, requests routed, elapsed). Phase-1 minimal run,
+## not the six-algorithm comparison harness; exits non-zero on any failure.
 bench:
 	cd engine && go run ./cmd/benchmark
 
