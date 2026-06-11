@@ -216,7 +216,19 @@ func TestAdjacencyGraphConcurrentReads(t *testing.T) {
 // kdtree_test.go now that issue #24 wired it to a real k-d tree.
 func TestAdjacencyGraphNearestEdgeStub(t *testing.T) {
 	g := buildTestGraph(t)
-	if _, _, _, ok := g.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90); ok {
+	eid, snapped, distM, ok := g.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90)
+	if ok {
 		t.Error("NearestEdge ok = true, want false (stub until Phase 7)")
+	}
+	// The stub must return a fully zero-valued tuple, not a partially-filled
+	// result that a caller could mistake for a real match.
+	if eid != 0 {
+		t.Errorf("NearestEdge EdgeID = %d, want 0 (zero-valued stub)", eid)
+	}
+	if snapped != (domain.LatLon{}) {
+		t.Errorf("NearestEdge snapped = %+v, want zero LatLon (zero-valued stub)", snapped)
+	}
+	if distM != 0 {
+		t.Errorf("NearestEdge distM = %v, want 0 (zero-valued stub)", distM)
 	}
 }

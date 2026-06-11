@@ -8,10 +8,11 @@ import (
 )
 
 // kdTree is a static, balanced, 2-d k-d tree over WGS84 points, built once and
-// thereafter read-only. It is a reusable spatial primitive: it indexes generic
-// (position, payload-index) pairs rather than being welded to NearestNode, so
-// Phase-7 point→edge map-matching can build a kdTree over edge sample points and
-// reuse the same nearest-neighbor search. It owns no graph types.
+// thereafter read-only. It is a reusable indexed-point spatial primitive: it
+// indexes generic (position, payload-index) pairs rather than being welded to
+// NearestNode (node lookup today; an edge-sample index later), so the same
+// nearest-neighbor search can be reused for a different point set. It owns no
+// graph types.
 //
 // Concurrency: after build the tree is never mutated — search allocates nothing
 // and writes nothing shared — so any number of goroutines may query it without
@@ -51,6 +52,16 @@ import (
 // Both per-axis bounds are themselves lower bounds on the full great-circle
 // distance (each ignores the other axis's contribution), so pruning on them
 // never discards the true nearest neighbor.
+//
+// # Precondition: no ±180° antimeridian crossing
+//
+// The result equals brute-force-haversine-nearest for any query provided the
+// indexed point set does not span the ±180° antimeridian (equivalently: it lies
+// within a <180°-wide longitude band), which holds for any single-region road
+// network. The longitude pruning bound is computed from the raw longitude gap in
+// degrees, so a seam-crossing point set could mis-prune the true nearest: a
+// far-side point near the opposite seam can be closer than its raw gap-to-plane
+// suggests. This is a documented limitation, not a handled case.
 type kdTree struct {
 	pts       []kdPoint
 	nodes     []kdNode
@@ -76,7 +87,10 @@ type kdNode struct {
 
 // newKDTree builds a balanced k-d tree over pts. It takes ownership of and
 // reorders the pts slice. An empty input yields a tree whose search always
-// misses. The build is O(n log n) via median selection at each level.
+// misses. The build is O(n log²n): a sort.Slice runs at every level to find the
+// median (n log n elements sorted across log n levels). This is a one-time
+// startup cost and acceptable at city scale; a quickselect partition could make
+// it O(n log n) if startup latency ever matters.
 func newKDTree(pts []kdPoint) *kdTree {
 	t := &kdTree{pts: pts, root: -1}
 	if len(pts) == 0 {
@@ -134,7 +148,8 @@ func (t *kdTree) coord(pi int32, axis uint8) float64 {
 
 // nearest returns the indexed point closest to q by haversine distance, and
 // ok=false for an empty tree. The result equals brute-force-haversine-nearest
-// for every query (see the type doc on pruning admissibility).
+// for any query provided the indexed point set does not span the ±180°
+// antimeridian (see the type doc on pruning admissibility and its precondition).
 func (t *kdTree) nearest(q domain.LatLon) (idx int32, ok bool) {
 	if t.root < 0 {
 		return 0, false
@@ -146,6 +161,12 @@ func (t *kdTree) nearest(q domain.LatLon) (idx int32, ok bool) {
 	// Computed once per query (O(1)) and threaded into the longitude bound.
 	lonCos := math.Cos(degToRad(math.Max(t.maxAbsLat, math.Abs(q.Lat))))
 	t.search(t.root, q, lonCos, &bestIdx, &bestDist)
+	// A NaN in q makes every haversine NaN, so no comparison ever beats the
+	// initial best and bestIdx stays -1; report a miss rather than indexing
+	// t.pts[-1]. Also defends any future path that finds nothing.
+	if bestIdx < 0 {
+		return 0, false
+	}
 	return t.pts[bestIdx].idx, true
 }
 

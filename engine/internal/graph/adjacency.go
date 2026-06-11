@@ -97,6 +97,10 @@ func New(nodes []Node, edges []Edge) (*AdjacencyGraph, error) {
 	// tree owns its own point slice and never reaches back into g.nodes.
 	kdPts := make([]kdPoint, len(g.nodes))
 	for i := range g.nodes {
+		// idx round-trips back to a NodeID in NearestNode. Dense ids (enforced
+		// above: nodes[i].ID == i) guarantee the int32(NodeID)→...→NodeID(idx)
+		// round-trip is exact. A future edge-sample reuse of kdPoint must NOT
+		// blindly cast idx back to a NodeID — it would carry an edge index.
 		kdPts[i] = kdPoint{pos: g.nodes[i].Pos, idx: int32(g.nodes[i].ID)}
 	}
 	g.kd = newKDTree(kdPts)
@@ -150,14 +154,19 @@ func (g *AdjacencyGraph) EdgeCount() int { return len(g.edges) }
 
 // NearestNode resolves a coordinate to the node closest to it by great-circle
 // (haversine) distance, using the immutable k-d tree built in New. ok is false
-// only for a graph with no nodes. The query reads shared immutable state and
-// allocates nothing shared, so it is safe to call concurrently from many
-// goroutines without synchronization.
+// only for a graph with no nodes (or a query carrying a NaN coordinate). The
+// query reads shared immutable state and allocates nothing shared, so it is safe
+// to call concurrently from many goroutines without synchronization.
+//
+// The result is exact provided the node set does not span the ±180° antimeridian
+// (it lies within a <180°-wide longitude band), which holds for any single-region
+// road network; see the kdTree pruning-admissibility doc for the seam caveat.
 func (g *AdjacencyGraph) NearestNode(p domain.LatLon) (domain.NodeID, bool) {
 	idx, ok := g.kd.nearest(p)
 	if !ok {
 		return 0, false
 	}
+	// idx is the dense NodeID packed in New; the round-trip is exact (see New).
 	return domain.NodeID(idx), true
 }
 

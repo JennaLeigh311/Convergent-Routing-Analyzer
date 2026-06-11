@@ -12,11 +12,10 @@ import (
 // package graph test rather than the external graph_test package.
 func TestHaversineKnownDistances(t *testing.T) {
 	cases := []struct {
-		name    string
-		a, b    domain.LatLon
-		wantM   float64
-		tolM    float64
-		comment string
+		name  string
+		a, b  domain.LatLon
+		wantM float64
+		tolM  float64
 	}{
 		{
 			name:  "one degree of latitude",

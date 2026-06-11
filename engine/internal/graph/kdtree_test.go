@@ -117,3 +117,130 @@ func TestNearestNodeSingleNode(t *testing.T) {
 		t.Errorf("NearestNode = (%d, ok=%v), want (0, true)", id, ok)
 	}
 }
+
+// TestNearestNodeNaNQuery guards the NaN-query path: a NaN lat and/or lon makes
+// every haversine NaN, so no candidate ever beats the initial best and the
+// search ends with nothing found. NearestNode must report ok=false rather than
+// index t.pts[-1] and panic. Run on a non-empty graph so only the NaN — not an
+// empty tree — can produce the miss.
+func TestNearestNodeNaNQuery(t *testing.T) {
+	g := buildTestGraph(t)
+	nan := math.NaN()
+	cases := []struct {
+		name  string
+		query domain.LatLon
+	}{
+		{"NaN lat", domain.LatLon{Lat: nan, Lon: -8.61}},
+		{"NaN lon", domain.LatLon{Lat: 41.15, Lon: nan}},
+		{"NaN both", domain.LatLon{Lat: nan, Lon: nan}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			id, ok := g.NearestNode(tc.query) // must not panic
+			if ok {
+				t.Errorf("NearestNode(%v) = (%d, true), want ok=false for a NaN query", tc.query, id)
+			}
+		})
+	}
+}
+
+// TestNearestNodeHighLatitudeAboveBand is the integration counterpart to the
+// unit guard TestKDTreeLonBoundAdmissibleQueryAboveBand: it proves search()
+// threads the per-query lonCos factor correctly through the recursion. Nodes are
+// spread across a wide longitude range at ~80° latitude and queries sit at
+// ~80.2°, ABOVE the tree's maxAbsLat, where a maxAbsLat-only longitude bound
+// would over-estimate and could mis-prune. NearestNode must still equal the
+// brute-force nearest for every query.
+func TestNearestNodeHighLatitudeAboveBand(t *testing.T) {
+	const seed = 0x5eed_80
+	rng := rand.New(rand.NewSource(seed))
+
+	// A handful of nodes spread across a wide longitude band at high latitude.
+	lons := []float64{-150, -90, -30, 0, 30, 90, 150}
+	nodes := make([]graph.Node, len(lons))
+	for i, lon := range lons {
+		nodes[i] = graph.Node{
+			ID:  domain.NodeID(i),
+			Pos: domain.LatLon{Lat: 80.0, Lon: lon},
+		}
+	}
+	g, err := graph.New(nodes, nil)
+	if err != nil {
+		t.Fatalf("graph.New: %v", err)
+	}
+
+	for q := 0; q < 500; q++ {
+		// Query latitude sits above every node's latitude (the failure regime),
+		// across the full longitude span.
+		query := domain.LatLon{Lat: 80.2, Lon: -180 + rng.Float64()*360}
+		gotID, ok := g.NearestNode(query)
+		if !ok {
+			t.Fatalf("NearestNode(%v) ok = false on non-empty graph", query)
+		}
+		wantID, wantD := bruteNearest(nodes, query)
+		if gotID == wantID {
+			continue
+		}
+		// Identity mismatch is only acceptable as a genuine distance tie.
+		gotNode, _ := g.Node(gotID)
+		gotD := bruteHaversineM(gotNode.Pos, query)
+		if math.Abs(gotD-wantD) > 1e-6 {
+			t.Fatalf("NearestNode(%v) = node %d (%.6f m), brute = node %d (%.6f m): not nearest above band",
+				query, gotID, gotD, wantID, wantD)
+		}
+	}
+}
+
+// TestNearestNodeDuplicateCoordinates exercises the tie branch and the build's
+// equal-split-key handling that the seeded-random test cannot reach (it never
+// produces exact coordinate ties). Several nodes share one Pos (different IDs)
+// and one node sits a hair closer to the query. NearestNode must return a node
+// at the true-minimum distance. When the query is equidistant from the tied
+// cluster, ANY of those tied IDs is acceptable, so the assertion is on distance,
+// not a specific ID (sort.Slice is unstable, so the surviving tied ID is not
+// determined).
+func TestNearestNodeDuplicateCoordinates(t *testing.T) {
+	dup := domain.LatLon{Lat: 41.15, Lon: -8.61}
+	nodes := []graph.Node{
+		{ID: 0, Pos: dup},
+		{ID: 1, Pos: dup},
+		{ID: 2, Pos: dup},
+		{ID: 3, Pos: dup},
+		// Node 4 sits a hair closer to the query than the duplicated cluster.
+		{ID: 4, Pos: domain.LatLon{Lat: 41.1501, Lon: -8.61}},
+	}
+	g, err := graph.New(nodes, nil)
+	if err != nil {
+		t.Fatalf("graph.New: %v", err)
+	}
+
+	t.Run("query nearest the lone closer node", func(t *testing.T) {
+		// Query just past node 4: node 4 is unambiguously the unique nearest.
+		query := domain.LatLon{Lat: 41.1502, Lon: -8.61}
+		gotID, ok := g.NearestNode(query)
+		if !ok {
+			t.Fatalf("NearestNode(%v) ok = false on non-empty graph", query)
+		}
+		if gotID != 4 {
+			t.Errorf("NearestNode(%v) = node %d, want node 4 (the lone closer node)", query, gotID)
+		}
+	})
+
+	t.Run("query equidistant from the tied cluster", func(t *testing.T) {
+		// Query exactly at the duplicated coordinate: all four tied nodes are at
+		// distance 0, node 4 is farther. Assert on the returned distance (any tied
+		// id is acceptable), not on a specific id.
+		query := dup
+		gotID, ok := g.NearestNode(query)
+		if !ok {
+			t.Fatalf("NearestNode(%v) ok = false on non-empty graph", query)
+		}
+		gotNode, _ := g.Node(gotID)
+		gotD := bruteHaversineM(gotNode.Pos, query)
+		_, wantD := bruteNearest(nodes, query)
+		if math.Abs(gotD-wantD) > 1e-6 {
+			t.Errorf("NearestNode(%v) = node %d at %.6f m, want a node at the minimum %.6f m",
+				query, gotID, gotD, wantD)
+		}
+	})
+}
