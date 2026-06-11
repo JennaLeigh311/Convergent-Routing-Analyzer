@@ -42,7 +42,10 @@ func main() {
 	// the toy graph. The coordinates match the toy fixture's documented endpoints
 	// (the toy network is largely one-way): bench-0 is origin node 0 -> destination
 	// node 2, exercising the lowest-cost (≠ fewest-hops) path the network was built
-	// to demonstrate; bench-1 is node 3 -> node 4 over the two-way secondary pair.
+	// to demonstrate (intentionally the same demo route as cmd/route's defaults);
+	// bench-1 is node 3 -> node 4 over the two-way secondary pair. These are this
+	// harness's own batch inputs — it asserts nothing about the resulting paths, so
+	// they are deliberately independent of the canonical-route golden.
 	router := routing.NewNaiveRouter(g)
 	reqs := []routing.RouteRequest{
 		{ID: "bench-0", From: domain.LatLon{Lat: 40.73, Lon: -73.99}, To: domain.LatLon{Lat: 40.74, Lon: -73.97}},

@@ -26,6 +26,17 @@ import (
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/routing"
 )
 
+// Default flag values — also the canonical Phase-1 demo route over the toy graph:
+// node 0 -> node 2, the lowest-cost 2-hop motorway path (NOT the 1-hop residential
+// edge). These are the single source of truth for the demo's inputs; main_test.go
+// drives the same coordinates, and the route's expected OUTPUT is pinned once in
+// testdata/canonical_route.golden (asserted by both the unit test and CI's smoke).
+const (
+	defaultGraphPath = "testdata/toy_network.geojson"
+	defaultFrom      = "40.73,-73.99"
+	defaultTo        = "40.74,-73.97"
+)
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -39,10 +50,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("route", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	graphPath := fs.String("graph", "testdata/toy_network.geojson",
+	graphPath := fs.String("graph", defaultGraphPath,
 		"path to an edge_attributes GeoJSON FeatureCollection")
-	from := fs.String("from", "40.73,-73.99", "origin coordinate as \"lat,lon\" (decimal degrees)")
-	to := fs.String("to", "40.74,-73.97", "destination coordinate as \"lat,lon\" (decimal degrees)")
+	from := fs.String("from", defaultFrom, "origin coordinate as \"lat,lon\" (decimal degrees)")
+	to := fs.String("to", defaultTo, "destination coordinate as \"lat,lon\" (decimal degrees)")
 
 	if err := fs.Parse(args); err != nil {
 		// flag already printed the error + usage to stderr (our writer).

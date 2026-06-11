@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -11,33 +12,34 @@ import (
 // default (which is resolved against the engine/ CWD of `go run ./cmd/route`).
 const toyGraph = "../../testdata/toy_network.geojson"
 
+// canonicalRouteGolden is the single source of truth for the canonical demo
+// route's STDOUT (node 0 -> node 2). CI's route-CLI smoke asserts the real
+// binary against this same file, so the expected output lives in exactly one
+// place. Path is ../../testdata for the same reason as toyGraph.
+const canonicalRouteGolden = "../../testdata/canonical_route.golden"
+
 // TestRunCanonicalLowestCostPath pins the headline acceptance property: from
 // node 0 to node 2 the router takes the 2-hop motorway path (32.4 s), NOT the
-// 1-hop residential edge (108.0 s). Lowest-cost ≠ fewest-hops.
+// 1-hop residential edge (108.0 s) — lowest-cost ≠ fewest-hops. The expected
+// output is the golden file (an exact match is strictly stronger than the old
+// contains/not-contains checks: it also rejects the residential edge and cost).
 func TestRunCanonicalLowestCostPath(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
 		"-graph", toyGraph,
-		"-from", "40.73,-73.99", // node 0
-		"-to", "40.74,-73.97", // node 2
+		"-from", defaultFrom, // node 0
+		"-to", defaultTo, // node 2
 	}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr=%q", code, stderr.String())
 	}
-	out := stdout.String()
-	if want := "905512:0:F -> 905512:1:F"; !strings.Contains(out, want) {
-		t.Errorf("stdout = %q, want it to contain the 2-hop motorway path %q", out, want)
+	want, err := os.ReadFile(canonicalRouteGolden)
+	if err != nil {
+		t.Fatalf("read golden %q: %v", canonicalRouteGolden, err)
 	}
-	if !strings.Contains(out, "32.4") {
-		t.Errorf("stdout = %q, want it to contain cost 32.4", out)
-	}
-	// The fewest-hops residential path must NOT win.
-	if strings.Contains(out, "9000001:0:F") {
-		t.Errorf("stdout = %q, must not contain the residential 1-hop edge 9000001:0:F", out)
-	}
-	if strings.Contains(out, "108.0") {
-		t.Errorf("stdout = %q, must not contain the residential cost 108.0", out)
+	if got := stdout.String(); got != string(want) {
+		t.Errorf("route output = %q, want it to equal %s = %q", got, canonicalRouteGolden, string(want))
 	}
 }
 
