@@ -80,7 +80,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// Zero-edge result: From and To snapped to the same node. Not an error — a
 	// path to where you already are. (See NaiveRouter.Route doc comment.)
 	if len(rt.Edges) == 0 {
-		fmt.Fprintf(stdout, "origin == destination, 0 edges, cost %.1f s\n", rt.CostS)
+		// Keep the trailing "cost <n> s" line identical to the normal branch so a
+		// caller always finds the cost on the last line regardless of path length.
+		fmt.Fprintf(stdout, "origin == destination, 0 edges\ncost %.1f s\n", rt.CostS)
 		return 0
 	}
 
@@ -110,13 +112,15 @@ func parseLatLon(s string) (domain.LatLon, error) {
 	if len(parts) != 2 {
 		return domain.LatLon{}, fmt.Errorf("want \"lat,lon\" (two comma-separated decimal degrees), got %d field(s)", len(parts))
 	}
-	lat, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+	latStr := strings.TrimSpace(parts[0])
+	lat, err := strconv.ParseFloat(latStr, 64)
 	if err != nil {
-		return domain.LatLon{}, fmt.Errorf("lat %q is not a number", parts[0])
+		return domain.LatLon{}, fmt.Errorf("lat %q is not a number", latStr)
 	}
-	lon, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	lonStr := strings.TrimSpace(parts[1])
+	lon, err := strconv.ParseFloat(lonStr, 64)
 	if err != nil {
-		return domain.LatLon{}, fmt.Errorf("lon %q is not a number", parts[1])
+		return domain.LatLon{}, fmt.Errorf("lon %q is not a number", lonStr)
 	}
 	return domain.LatLon{Lat: lat, Lon: lon}, nil
 }

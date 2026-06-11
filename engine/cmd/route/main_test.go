@@ -116,3 +116,67 @@ func TestRunMalformedFromSingleValue(t *testing.T) {
 		t.Errorf("stderr = %q, want it to name the invalid -from input", msg)
 	}
 }
+
+// TestRunMalformedTo mirrors the -from rejection for -to: the destination parse
+// is a separate code path, so it gets its own guard against a future refactor
+// dropping or mislabeling it (e.g. saying "invalid -from" for both).
+func TestRunMalformedTo(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"-graph", toyGraph,
+		"-from", "40.73,-73.99",
+		"-to", "not,coords",
+	}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Fatalf("exit code = 0, want non-zero; stdout=%q", stdout.String())
+	}
+	if msg := stderr.String(); !strings.Contains(msg, "invalid -to") {
+		t.Errorf("stderr = %q, want it to name the invalid -to input", msg)
+	}
+}
+
+// TestRunGraphLoadError: a -graph path that does not exist is a clean user error
+// (non-zero exit, a stderr message naming the load failure), not a panic.
+func TestRunGraphLoadError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"-graph", "../../testdata/does_not_exist.geojson",
+		"-from", "40.73,-73.99",
+		"-to", "40.74,-73.97",
+	}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if msg := stderr.String(); !strings.Contains(msg, "load graph") {
+		t.Errorf("stderr = %q, want it to name the graph load failure", msg)
+	}
+}
+
+// TestRunFarCoordinateSnaps characterizes a deliberately surprising property:
+// there is NO proximity guard. NearestNode snaps any valid coordinate to the
+// closest graph node with no distance threshold, so a destination at (0,0) — the
+// Gulf of Guinea — still produces a valid route over the NYC toy graph and exits
+// 0. Every node is reachable from node 0, so this holds whichever node (0,0)
+// snaps to. This pins the snap-anything decision so a future reader does not
+// mistake it for a bug, and fails loudly if someone later adds a guard without
+// updating this caller.
+func TestRunFarCoordinateSnaps(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"-graph", toyGraph,
+		"-from", "40.73,-73.99", // node 0
+		"-to", "0,0", // far off-network — snaps to some NYC node anyway
+	}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (a far coordinate still snaps); stderr=%q", code, stderr.String())
+	}
+	if out := stdout.String(); !strings.Contains(out, "cost") {
+		t.Errorf("stdout = %q, want a routed result with a cost line", out)
+	}
+	if msg := stderr.String(); strings.Contains(msg, "no graph node near") {
+		t.Errorf("stderr = %q, must not claim no node is near — there is no proximity guard", msg)
+	}
+}
