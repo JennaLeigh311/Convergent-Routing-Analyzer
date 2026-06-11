@@ -15,9 +15,10 @@ import (
 // loader.
 const toyNetworkPath = "../../testdata/toy_network.geojson"
 
-// nycBounds is the expected-region box for the toy network: it contains every
-// coordinate (lon ∈ [-73.99,-73.95], lat ∈ [40.73,40.75]) and rejects a
-// [lat,lon] axis swap.
+// toyBounds is the expected-region guard for the toy network: a deliberately
+// loose [-74,-73]×[40,41] box that contains the data window (lon ∈
+// [-73.99,-73.95], lat ∈ [40.73,40.75]) yet still rejects a [lat,lon] axis swap
+// — a swapped coordinate like [40.73,-73.99] escapes the box and is caught.
 func toyBounds() graph.LoadOption { return graph.WithExpectedBounds(-74, -73, 40, 41) }
 
 // loadToy loads the toy fixture with the NYC bounds and fails the test on any
@@ -133,6 +134,48 @@ func TestToyNetworkCongestionOverlap(t *testing.T) {
 	}
 }
 
+// TestToyNetworkDerivedFields pins the exact §2-derived values for every edge so
+// the "derivations verified exact" property is machine-checked, not only stated
+// in the README. The #25 loader passes these numbers through verbatim (it does
+// NOT re-derive them, see loader.go), so a typo'd fixture value would otherwise
+// load silently green and corrupt every downstream #27 router test. Exact == is
+// valid because the fixture literal and the test literal parse to the identical
+// float64 (no arithmetic on the path). Derivation rules (§2, capacity_scale=1.0):
+// capacity_vph = lanes × 1800 × class_factor;
+// freeflow_time_s = length_m / (maxspeed_kmh / 3.6).
+func TestToyNetworkDerivedFields(t *testing.T) {
+	g, _ := loadToy(t)
+
+	want := map[domain.SegmentID]struct {
+		lengthM, freeFlowS, capacityVPH float64
+	}{
+		"9000001:0:F":  {900.0, 108.0, 900.0},  // residential, 1 lane, 30 km/h
+		"905512:0:F":   {500.0, 18.0, 5400.0},  // motorway, 3 lanes, 100 km/h
+		"905512:1:F":   {400.0, 14.4, 5400.0},  // motorway, 3 lanes, 100 km/h
+		"27583001:0:F": {240.0, 14.4, 2880.0},  // primary, 2 lanes, 60 km/h
+		"48800123:0:F": {180.0, 12.96, 2520.0}, // secondary, 2 lanes, 50 km/h
+		"48800123:0:R": {180.0, 12.96, 2520.0}, // secondary (reverse), 2 lanes, 50 km/h
+		"33112200:0:F": {400.0, 18.0, 3240.0},  // trunk, 2 lanes, 80 km/h
+	}
+
+	for seg, w := range want {
+		e, ok := segByID(g, seg)
+		if !ok {
+			t.Errorf("segment %q missing", seg)
+			continue
+		}
+		if e.LengthM != w.lengthM {
+			t.Errorf("%s: LengthM = %v, want %v", seg, e.LengthM, w.lengthM)
+		}
+		if e.FreeFlowS != w.freeFlowS {
+			t.Errorf("%s: FreeFlowS = %v, want %v", seg, e.FreeFlowS, w.freeFlowS)
+		}
+		if e.CapacityVPH != w.capacityVPH {
+			t.Errorf("%s: CapacityVPH = %v, want %v", seg, e.CapacityVPH, w.capacityVPH)
+		}
+	}
+}
+
 // TestToyNetworkCostNotHops pins the acceptance property #27 relies on: between
 // origin node 0 and destination node 2 the multi-hop alternative has strictly
 // MORE edges than the direct edge, yet a strictly LOWER summed freeflow_time_s.
@@ -179,15 +222,20 @@ func TestToyNetworkCostNotHops(t *testing.T) {
 		t.Errorf("hop2 edge %d not among node %d out-edges", hop2.ID, hop1.To)
 	}
 
-	// (a) The multi-hop alternative has strictly MORE edges.
-	const directHops = 1
-	const altHops = 2
-	if !(altHops > directHops) {
-		t.Fatalf("expected alternative (%d edges) to have more edges than direct (%d)", altHops, directHops)
+	// (a) The multi-hop alternative has strictly MORE edges. Count from the edges
+	// actually resolved by segment_id above, so the hop counts are derived from the
+	// loaded data and cannot drift from it (a constant 2 > 1 would prove nothing).
+	directPath := []graph.Edge{direct}
+	altPath := []graph.Edge{hop1, hop2}
+	if !(len(altPath) > len(directPath)) {
+		t.Fatalf("expected alternative (%d edges) to have more edges than direct (%d)", len(altPath), len(directPath))
 	}
 
 	// (b) Its summed freeflow_time_s is strictly LESS than the direct edge's.
-	altCost := hop1.FreeFlowS + hop2.FreeFlowS
+	var altCost float64
+	for _, e := range altPath {
+		altCost += e.FreeFlowS
+	}
 	if !(altCost < direct.FreeFlowS) {
 		t.Errorf("cost!=hops violated: alternative summed FreeFlowS = %v must be < direct FreeFlowS = %v", altCost, direct.FreeFlowS)
 	}
@@ -217,7 +265,9 @@ func TestToyNetworkInteriorShapePoint(t *testing.T) {
 	}
 	interior := ls[1]
 
-	// The interior coordinate must NOT have been promoted to a graph node.
+	// The interior coordinate must NOT have been promoted to a graph node. Exact
+	// == is valid here: the loader stores coordinates verbatim (no arithmetic on
+	// the path), so a promoted interior point would carry bit-identical coords.
 	for id := domain.NodeID(0); int(id) < g.NodeCount(); id++ {
 		n, _ := g.Node(id)
 		if n.Pos.Lon == interior[0] && n.Pos.Lat == interior[1] {
