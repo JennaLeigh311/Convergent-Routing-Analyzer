@@ -80,7 +80,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// Zero-edge result: From and To snapped to the same node. Not an error — a
 	// path to where you already are. (See NaiveRouter.Route doc comment.)
 	if len(rt.Edges) == 0 {
-		fmt.Fprintf(stdout, "origin == destination, 0 edges, cost %.2f s\n", rt.CostS)
+		fmt.Fprintf(stdout, "origin == destination, 0 edges, cost %.1f s\n", rt.CostS)
 		return 0
 	}
 

@@ -77,8 +77,8 @@ func TestRunSameNode(t *testing.T) {
 	if !strings.Contains(out, "0 edges") {
 		t.Errorf("stdout = %q, want a zero-edge result", out)
 	}
-	if !strings.Contains(out, "0.00") {
-		t.Errorf("stdout = %q, want cost 0.00", out)
+	if !strings.Contains(out, "0.0") {
+		t.Errorf("stdout = %q, want cost 0.0", out)
 	}
 }
 
