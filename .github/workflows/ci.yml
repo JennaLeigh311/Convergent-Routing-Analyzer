@@ -66,8 +66,44 @@ jobs:
         # edge_attributes (§2) golden-fixture tests, so a drifted fixture fails CI.
         run: go test -race ./...
 
-      - name: bench (toy graph; scaffold stub today)
-        run: go run ./cmd/benchmark
+      - name: route CLI smoke (asserts the canonical toy-graph route + cost)
+        # Run the real route binary on the toy fixture with its default flags and
+        # assert its output EXACTLY matches the golden — the single source of truth
+        # for the canonical route (cmd/route/main_test.go asserts the same file), so
+        # an A->B routing or free-flow cost regression fails the build, not just unit
+        # tests. Then assert the negative path: a malformed coordinate exits non-zero
+        # with a clear message. Build once and invoke the binary twice (no recompile).
+        run: |
+          bin="$(mktemp)"
+          go build -o "$bin" ./cmd/route
+          if ! "$bin" | diff -u testdata/canonical_route.golden -; then
+            echo "route CLI output drifted from testdata/canonical_route.golden"
+            exit 1
+          fi
+          echo "route CLI: canonical toy route + cost OK"
+          # Negative path: a malformed -from must exit non-zero and name the bad flag.
+          if err="$("$bin" -from foo -to 1,1 2>&1)"; then
+            echo "route CLI: expected non-zero exit on malformed -from, got success"
+            exit 1
+          fi
+          case "$err" in
+            *'route: invalid -from "foo"'*) echo "route CLI: malformed-coord error OK" ;;
+            *) echo "route CLI: unexpected error message: $err"; exit 1 ;;
+          esac
+
+      - name: bench (naive router over the toy graph; real run, not the six-algorithm harness)
+        # Real but minimal: loads the toy network, runs the naive free-flow router,
+        # and exits non-zero on any load/routing failure. We also assert the summary
+        # reports requests_routed=2, so the step gates that routing actually produced
+        # the expected batch — not merely that the process didn't crash. The full
+        # convergent-routing comparison lands in a later phase.
+        run: |
+          out="$(go run ./cmd/benchmark 2>&1)"
+          printf '%s\n' "$out"
+          case "$out" in
+            *requests_routed=2*) echo "bench: routed the expected batch OK" ;;
+            *) echo "bench: did not route the expected batch (want requests_routed=2)"; exit 1 ;;
+          esac
 
   lane-b:
     name: Lane B
