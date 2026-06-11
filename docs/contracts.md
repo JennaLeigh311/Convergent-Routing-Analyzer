@@ -140,8 +140,8 @@ One row per directed edge, with exactly these 12 columns:
 |-------------------|-----------------------|------------|
 | `segment_id`      | string                | The §1 canonical wire key `"{osm_way_id}:{seq}:{dir}"`. The durable, cross-system identity of this directed edge. Conforms to §1 exactly; see §1 for the scheme and strict-parsing rules. |
 | `edge_id`         | int32, `>= 0`         | The engine's compact dense edge index (§1 `EdgeID`), `0..EdgeCount-1`. Materialized in the export so the Parquet and the GeoJSON `/graph` agree on the *same* integer for a row (see "edge_id is the load-time assignment" below). |
-| `source_node`     | int32, `0..NodeCount-1` | The engine's compact `NodeID` (`engine/internal/domain`, `int32`) of this directed edge's tail (the `From` vertex). Dense and contiguous — see "node ids are a load-time assignment" below. |
-| `target_node`     | int32, `0..NodeCount-1` | The engine's compact `NodeID` of this directed edge's head (the `To` vertex). Same governance as `source_node`. |
+| `source_node`     | int32                 | An arbitrary `int32` vertex reference for this directed edge's tail (the `From` vertex), consistent **within** this export — edges sharing a vertex MUST use the same ref, so shared endpoints fuse. It is **not** dense in the export (it MAY be sparse) and is never a durable/cross-snapshot key; the engine compacts it to a dense `0..NodeCount-1` `NodeID` at load — see "node ids are a load-time assignment" below. |
+| `target_node`     | int32                 | An arbitrary `int32` vertex reference for the head (the `To`) vertex; same governance as `source_node`. |
 | `osm_way_id`      | int64, positive       | The OpenStreetMap way id this edge came from. MUST equal the `osm_way_id` embedded in `segment_id` (self-consistency rule below). |
 | `highway_class`   | string (enum)         | OSM `highway` tag, one of exactly: `motorway`, `trunk`, `primary`, `secondary`, `tertiary`, `residential`, `service`. Drives the default and `class_factor` tables below. The exporter MUST map every edge into one of these seven (collapsing OSM `*_link`/variant tags into their base class); a value outside the enum has no derivation rule, so a loader MAY reject it. |
 | `lanes_effective` | int, `>= 1`           | Lanes available **in this direction** (see derivation). |
@@ -175,15 +175,22 @@ cross-snapshot join key unless it is pairing the two files of one specific expor
 
 #### `source_node` / `target_node` are a load-time assignment too
 
-Node ids follow the same rule as `edge_id`. `NodeID` is the engine's compact node index
-(`engine/internal/domain`, `int32`), assigned **densely and contiguously `0..NodeCount-1`** at graph-build
-time so a loader can size a flat per-node slice directly. The export materializes `source_node`/`target_node`
-so the Parquet and the GeoJSON agree per edge, and `length_m`-based topology lines up. Like `edge_id`, node
+Node ids differ from `edge_id` in **who** assigns them. The export materializes `source_node`/`target_node`
+as **arbitrary `int32` vertex references**: they need only be self-consistent **within one export** — edges
+sharing a vertex MUST carry the same ref so shared endpoints fuse — and they MAY be **sparse** (e.g. raw
+pgRouting vertex ids). They are **not** required to be dense. The **engine** assigns the compact, dense,
+contiguous `0..NodeCount-1` `NodeID` (`engine/internal/domain`, `int32`) at **load** time, by deterministic
+compaction: grouping rows by export ref, then sorting by the export ref so the assignment is stable, and
+sizing a flat per-node slice directly (reference: `engine/internal/graph/loader.go`). Like `edge_id`, node
 ids are an **in-artifact/in-memory index, not a cross-system identity**: they are not stable across a
 re-export (a new build MAY renumber them) and MUST NOT be used as a durable or cross-snapshot key — the only
 durable identity remains `segment_id` (for edges) and the geometry endpoints (for node position). The OSM node
 id a vertex came from is not part of this contract; if a future consumer needs stable node identity it must be
 added here under a version bump.
+
+This is **different** from `edge_id` above: `edge_id` is **materialized-and-adopted** dense — the export
+writes the dense index and the engine adopts it for the within-snapshot Parquet↔GeoJSON pairing — whereas
+`source_node`/`target_node` carry arbitrary refs that the **engine** compacts to dense `NodeID`s at load.
 
 ### Derivation rules
 
