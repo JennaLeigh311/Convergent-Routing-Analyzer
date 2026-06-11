@@ -19,9 +19,10 @@ import (
 // one graph at startup and shares it read-only across all request handlers and
 // across an Assign's worker goroutines (the R5 concurrency model).
 //
-// NearestNode and NearestEdge are part of the port but are spatial queries: the
-// k-d tree backing NearestNode arrives in issue #24, and the map-matching
-// R-tree behind NearestEdge in Phase 7. Until then both report ok=false.
+// NearestNode and NearestEdge are part of the port but are spatial queries:
+// NearestNode is backed by a k-d tree over node positions, built once in New
+// (issue #24) and read-only thereafter. NearestEdge's map-matching R-tree
+// arrives in Phase 7; until then it reports ok=false.
 type AdjacencyGraph struct {
 	nodes []Node
 	edges []Edge
@@ -31,6 +32,13 @@ type AdjacencyGraph struct {
 	// len == NodeCount+1; its trailing entry is len(outEdgeIDs).
 	outOffsets []int
 	outEdgeIDs []domain.EdgeID
+
+	// kd is the immutable k-d tree over node positions backing NearestNode. It
+	// is built once in New and is read-only thereafter, so NearestNode is safe
+	// for unsynchronized concurrent queries (the R5 concurrency model). For the
+	// degenerate zero-node graph it is an empty tree whose search reports
+	// ok=false, so the field is never nil.
+	kd *kdTree
 }
 
 // New builds an immutable AdjacencyGraph from dense node and edge slices. The
@@ -84,6 +92,15 @@ func New(nodes []Node, edges []Edge) (*AdjacencyGraph, error) {
 		cursor[from]++
 	}
 
+	// Build the spatial index once, over a copy of node positions keyed by
+	// NodeID, so NearestNode is a pure read against immutable state. The k-d
+	// tree owns its own point slice and never reaches back into g.nodes.
+	kdPts := make([]kdPoint, len(g.nodes))
+	for i := range g.nodes {
+		kdPts[i] = kdPoint{pos: g.nodes[i].Pos, idx: int32(g.nodes[i].ID)}
+	}
+	g.kd = newKDTree(kdPts)
+
 	return g, nil
 }
 
@@ -131,15 +148,22 @@ func (g *AdjacencyGraph) NodeCount() int { return len(g.nodes) }
 // EdgeCount returns the number of directed edges.
 func (g *AdjacencyGraph) EdgeCount() int { return len(g.edges) }
 
-// NearestNode resolves a coordinate to the closest node. The k-d tree that
-// backs it is added in issue #24; until then it reports ok=false.
-func (g *AdjacencyGraph) NearestNode(_ domain.LatLon) (domain.NodeID, bool) {
-	return 0, false
+// NearestNode resolves a coordinate to the node closest to it by great-circle
+// (haversine) distance, using the immutable k-d tree built in New. ok is false
+// only for a graph with no nodes. The query reads shared immutable state and
+// allocates nothing shared, so it is safe to call concurrently from many
+// goroutines without synchronization.
+func (g *AdjacencyGraph) NearestNode(p domain.LatLon) (domain.NodeID, bool) {
+	idx, ok := g.kd.nearest(p)
+	if !ok {
+		return 0, false
+	}
+	return domain.NodeID(idx), true
 }
 
 // NearestEdge snaps a GPS observation to the closest directed edge for
-// map-matching. Its R-tree over edge geometry is built in Phase 7; until then
-// it reports ok=false.
+// map-matching. Its R-tree over edge geometry is built in Phase 7 (map-matching);
+// until then it reports ok=false.
 func (g *AdjacencyGraph) NearestEdge(_ domain.LatLon, _ float64) (domain.EdgeID, domain.LatLon, float64, bool) {
 	return 0, domain.LatLon{}, 0, false
 }

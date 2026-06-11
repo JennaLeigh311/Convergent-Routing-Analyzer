@@ -210,14 +210,12 @@ func TestAdjacencyGraphConcurrentReads(t *testing.T) {
 	wg.Wait()
 }
 
-// TestAdjacencyGraphSpatialStubs documents that the spatial queries are not yet
-// implemented (NearestNode → issue #24, NearestEdge → Phase 7): both report
-// ok=false rather than masquerading as implemented.
-func TestAdjacencyGraphSpatialStubs(t *testing.T) {
+// TestAdjacencyGraphNearestEdgeStub documents that NearestEdge is not yet
+// implemented (it lands in Phase 7, map-matching): it reports ok=false rather
+// than masquerading as implemented. NearestNode is exercised separately in
+// kdtree_test.go now that issue #24 wired it to a real k-d tree.
+func TestAdjacencyGraphNearestEdgeStub(t *testing.T) {
 	g := buildTestGraph(t)
-	if _, ok := g.NearestNode(domain.LatLon{Lat: 41.15, Lon: -8.61}); ok {
-		t.Error("NearestNode ok = true, want false (stub until #24)")
-	}
 	if _, _, _, ok := g.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90); ok {
 		t.Error("NearestEdge ok = true, want false (stub until Phase 7)")
 	}
