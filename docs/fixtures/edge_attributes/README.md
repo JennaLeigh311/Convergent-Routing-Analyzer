@@ -39,7 +39,10 @@ An array of directed-edge rows, each as an object with all 12 contract columns:
 - `segment_id` — the §1 canonical wire key. Valid under §1, and the `osm_way_id`
   embedded in it **equals** this row's `osm_way_id` field (self-consistency).
 - `edge_id` — the engine's dense int32 edge index for this snapshot (`>= 0`).
-- `source_node` / `target_node` — int32 §1 NodeIDs of the tail/head vertices.
+- `source_node` / `target_node` — arbitrary `int32` export vertex refs of the
+  tail/head vertices, self-consistent within this export (shared endpoints share
+  a ref). This fixture uses **sparse** refs (`10`..`81`) on purpose; per §2 the
+  engine compacts them to dense `0..NodeCount-1` `NodeID`s at load.
 - `osm_way_id` — int64 positive OSM way id this edge came from.
 - `highway_class` — OSM `highway` enum (`motorway`…`service`); drives the
   default and `class_factor` tables in §2.
@@ -75,7 +78,11 @@ deliberately differ from the class defaults (the second `primary` row) so a
 defaulting-vs-tagged exporter bug is caught, and a two-way pair tagged with a
 **bare both-directions `lanes` total** (way `8123456`, `lanes=6 → 3` per
 direction) so the lane-split rule is exercised — a row catching an exporter that
-applies a bare `lanes` whole or falls back to the class default.
+applies a bare `lanes` whole or falls back to the class default. The
+`source_node`/`target_node` refs are deliberately **sparse** (`10`..`81`, not
+dense `0..NodeCount-1`), so this fixture also exercises the engine's load-time
+**compaction** of arbitrary export vertex refs into dense `NodeID`s and the
+endpoint remap that goes with it (§2).
 
 These are the **logical row** vectors. The envelope-level `schema_version` (§2
 "Envelope `schema_version`") is a property of the serialized Parquet/GeoJSON
