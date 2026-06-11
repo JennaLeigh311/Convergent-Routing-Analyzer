@@ -118,8 +118,8 @@ func TestGeometryFidelity(t *testing.T) {
 
 	// The interior shape point must NOT have become a node. Its endpoints are
 	// node ids 40 (source) and 41 (target); the interior coord is neither. The
-	// total NodeCount (82) already excludes it; assert no node sits at the
-	// interior position.
+	// total NodeCount already excludes it; assert no node sits at the interior
+	// position.
 	for id := domain.NodeID(0); int(id) < g.NodeCount(); id++ {
 		n, _ := g.Node(id)
 		if n.Pos.Lon == wantInterior[0] && n.Pos.Lat == wantInterior[1] {
@@ -331,6 +331,137 @@ func TestExpectedBoundsRejectsNonsenseBox(t *testing.T) {
 	}
 	if g != nil {
 		t.Errorf("rejected load must return nil graph")
+	}
+}
+
+// infLengthEdge is a §2-valid single-edge FeatureCollection EXCEPT that length_m
+// is 1e400 — a huge-exponent JSON number encoding/json decodes to +Inf. +Inf
+// passes a bare > 0 check (Inf > 0 is true) and would silently poison downstream
+// BPR cost, so the loader must reject it. One metric (length_m) is exercised
+// here; the same isFinitePositive guard covers maxspeed_kmh, freeflow_time_s,
+// and capacity_vph identically.
+const infLengthEdge = `{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.70010, 35.68950], [139.70220, 35.69010]]
+      },
+      "properties": {
+        "segment_id": "4001234:0:F",
+        "edge_id": 0,
+        "source_node": 10,
+        "target_node": 11,
+        "osm_way_id": 4001234,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 1e400,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    }
+  ]
+}`
+
+// TestRejectNonFiniteMetric asserts a non-finite (+Inf) metric field is rejected
+// with a non-nil error and a nil graph, proving Inf cannot slip past the > 0
+// invariant and poison BPR cost.
+func TestRejectNonFiniteMetric(t *testing.T) {
+	g, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(infLengthEdge)))
+	if err == nil {
+		t.Fatalf("non-finite length_m (+Inf) must be rejected")
+	}
+	if g != nil || geom != nil {
+		t.Errorf("rejected load must return nil graph/map, got g=%v geom=%v", g, geom)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("length_m")) {
+		t.Errorf("error %q should name length_m", err.Error())
+	}
+}
+
+// contradictoryNodeEdges is a FeatureCollection with two edges that share
+// source_node id 10 but give it DIFFERENT geometry endpoints (lon 139.70010 vs
+// 139.80010 — ~8 km apart, far beyond nodePosEpsilonDeg). §2 makes the geometry
+// endpoint the durable node-position identity, so a re-used node id resolving to
+// two positions is a contradictory export the loader must reject loudly rather
+// than silently accept-first.
+const contradictoryNodeEdges = `{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.70010, 35.68950], [139.70220, 35.69010]]
+      },
+      "properties": {
+        "segment_id": "4001234:0:F",
+        "edge_id": 0,
+        "source_node": 10,
+        "target_node": 11,
+        "osm_way_id": 4001234,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 210.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.80010, 35.68950], [139.80220, 35.69010]]
+      },
+      "properties": {
+        "segment_id": "4005678:0:F",
+        "edge_id": 1,
+        "source_node": 10,
+        "target_node": 12,
+        "osm_way_id": 4005678,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 210.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    }
+  ]
+}`
+
+// TestRejectContradictoryNodeCoords asserts that two edges re-using a node id
+// with conflicting geometry endpoints are rejected (fail-closed), not silently
+// reconciled by accept-first.
+func TestRejectContradictoryNodeCoords(t *testing.T) {
+	g, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(contradictoryNodeEdges)))
+	if err == nil {
+		t.Fatalf("contradictory node-endpoint coords must be rejected")
+	}
+	if g != nil || geom != nil {
+		t.Errorf("rejected load must return nil graph/map, got g=%v geom=%v", g, geom)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("contradictory")) {
+		t.Errorf("error %q should name the contradictory endpoint coordinates", err.Error())
+	}
+}
+
+// TestRejectSyntacticallyBrokenJSON feeds syntactically invalid JSON and asserts
+// the loader returns a non-nil error and a nil graph — i.e. it errors cleanly
+// rather than panicking on malformed input.
+func TestRejectSyntacticallyBrokenJSON(t *testing.T) {
+	g, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte("{not json")))
+	if err == nil {
+		t.Fatalf("syntactically broken JSON must be rejected")
+	}
+	if g != nil || geom != nil {
+		t.Errorf("rejected load must return nil graph/map, got g=%v geom=%v", g, geom)
 	}
 }
 
