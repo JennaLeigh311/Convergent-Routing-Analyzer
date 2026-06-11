@@ -66,7 +66,35 @@ jobs:
         # edge_attributes (§2) golden-fixture tests, so a drifted fixture fails CI.
         run: go test -race ./...
 
-      - name: bench (toy graph; scaffold stub today)
+      - name: route CLI smoke (asserts the canonical toy-graph route + cost)
+        # Run the real route binary on the toy fixture with its default flags and
+        # assert the EXACT expected output, so A->B routing or a free-flow cost
+        # regression fails the build (not just unit tests). Then assert the
+        # negative path: a malformed coordinate exits non-zero with a clear message.
+        run: |
+          got="$(go run ./cmd/route)"
+          want="$(printf '905512:0:F -> 905512:1:F\ncost 32.4 s')"
+          if [ "$got" != "$want" ]; then
+            echo "route CLI output mismatch"
+            echo "--- want ---"; printf '%s\n' "$want"
+            echo "--- got ----"; printf '%s\n' "$got"
+            exit 1
+          fi
+          echo "route CLI: canonical toy route + cost OK"
+          # Negative path: a malformed -from must exit non-zero and name the bad flag.
+          if err="$(go run ./cmd/route -from foo -to 1,1 2>&1)"; then
+            echo "route CLI: expected non-zero exit on malformed -from, got success"
+            exit 1
+          fi
+          case "$err" in
+            *'route: invalid -from "foo"'*) echo "route CLI: malformed-coord error OK" ;;
+            *) echo "route CLI: unexpected error message: $err"; exit 1 ;;
+          esac
+
+      - name: bench (naive router over the toy graph; real run, not the six-algorithm harness)
+        # Real but minimal: loads the toy network, runs the naive free-flow router,
+        # and exits non-zero on any load/routing failure — so this step genuinely
+        # gates routing. The full convergent-routing comparison lands in a later phase.
         run: go run ./cmd/benchmark
 
   lane-b:
