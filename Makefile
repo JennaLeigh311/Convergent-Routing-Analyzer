@@ -11,7 +11,7 @@
 # Quick reference:
 #   make help         list targets
 #   make test         go test -race ./...     (no infra)
-#   make lint         gofmt + go vet          (no infra)
+#   make lint         gofmt + go vet + golangci-lint (no infra; lint required)
 #   make route        run the route CLI on the toy graph (flag passthrough)
 #   make bench        run the naive-router toy-graph bench
 #   make up-core      boot the core profile (engine + web)
@@ -46,7 +46,7 @@ help:
 	@echo "  route        cd engine && go run ./cmd/route (toy graph; flag passthrough)"
 	@echo "  bench        cd engine && go run ./cmd/benchmark (naive router over the toy graph)"
 	@echo "  replay       cd engine && go run ./cmd/replay (stub today)"
-	@echo "  lint         cd engine && gofmt check + go vet ./... (golangci-lint if present)"
+	@echo "  lint         cd engine && gofmt check + go vet ./... + golangci-lint (required)"
 	@echo "  integration  boot full, smoke (engine /healthz /readyz, web /), tear down"
 	@echo "  protect-main apply main's branch-protection rule (repo admin; post-CI)"
 
@@ -96,7 +96,15 @@ bench:
 replay:
 	cd engine && go run ./cmd/replay
 
-## lint: dependency-light formatting + vet; golangci-lint only if installed
+# Pinned golangci-lint version — keep in sync with .github/workflows/ci.yml
+# (the CI gate installs this exact version) and engine/.golangci.yml's header.
+# v2.12.2 is built with go1.26.2, so it parses the engine's go-1.26.4 source.
+GOLANGCI_LINT_VERSION := v2.12.2
+
+## lint: gofmt + go vet + golangci-lint (the same gate lane A runs). golangci-lint
+## is REQUIRED, not optional: if it isn't installed this target fails with an
+## install hint rather than silently skipping, so a degraded local gate can't
+## hide a violation that CI will then reject. Pin: $(GOLANGCI_LINT_VERSION).
 lint:
 	@echo ">> gofmt (must report no files)"
 	@cd engine && unformatted=$$(gofmt -l .); \
@@ -108,12 +116,15 @@ lint:
 		echo "gofmt: clean"
 	@echo ">> go vet ./..."
 	cd engine && go vet ./...
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		echo ">> golangci-lint run"; \
-		cd engine && golangci-lint run; \
-	else \
-		echo ">> golangci-lint not installed — skipping (optional)"; \
-	fi
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not found on PATH."; \
+		echo "install $(GOLANGCI_LINT_VERSION) (matches CI):"; \
+		echo "  curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b \$$(go env GOPATH)/bin $(GOLANGCI_LINT_VERSION)"; \
+		echo "  (see https://golangci-lint.run/welcome/install/)"; \
+		exit 1; \
+	}
+	@echo ">> golangci-lint run ($(GOLANGCI_LINT_VERSION) pinned in CI)"
+	cd engine && golangci-lint run
 
 # ---- integration smoke (what lane C runs) -----------------------------------
 
