@@ -6,7 +6,7 @@
 # the branch-protection rule (the required-check contract is one stable job name,
 # not each lane's name). See scripts/protect-main.sh.
 #
-#   Lane A — Go engine: gofmt + vet + govulncheck + race-enabled tests + the toy-graph bench.
+#   Lane A — Go engine: gofmt + vet + golangci-lint + govulncheck + race-enabled tests + the toy-graph bench.
 #   Lane B — web: validate the Phase-0 static placeholder (index.html + Dockerfile).
 #            web/ has no package.json/React yet (Phase 10); this expands to a real
 #            node build + lint (setup-node -> npm ci -> lint -> build, + hadolint)
@@ -61,6 +61,27 @@ jobs:
 
       - name: go vet
         run: go vet ./...
+
+      - name: golangci-lint (pinned; a lint violation FAILS the merge gate)
+        # The lint gate (issue #32). Previously the engine had no installed
+        # linter in CI, so once Phase 1 added a dependency, "lint" silently
+        # degraded to gofmt+vet. This step installs golangci-lint at a PINNED,
+        # fixed version and FAILS the build on any violation — no optional-skip
+        # path. The enabled linter SET is pinned separately in
+        # engine/.golangci.yml so the gate is reproducible across upgrades; this
+        # step pins the BINARY. Keep `version:` in sync with that file's header
+        # and the repo Makefile's GOLANGCI_LINT_VERSION.
+        #
+        # v2.12.2 is built with go1.26.2, so it parses the engine's go-1.26.4
+        # source tree. The official action reuses the Go set up above
+        # (actions/setup-go is a hard prerequisite for v4.0.0+) and caches the
+        # linter + analysis results. NOTE: this is a `uses:` step, so the job's
+        # `defaults.run.working-directory: engine` does NOT apply — the module
+        # dir is passed explicitly via `working-directory` below.
+        uses: golangci/golangci-lint-action@v9.2.1
+        with:
+          version: v2.12.2
+          working-directory: engine
 
       - name: govulncheck (dependency + stdlib vulnerability scan)
         # The engine now has external dependencies (prometheus/client_golang +
