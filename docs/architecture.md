@@ -50,8 +50,9 @@ isn't asked to run a 4-heavy-service stack by default. Profiles are additive: `c
 
 - **engine** — the routing-server. Hosts the simulator congestion adapter **in-process**; there is *no*
   separate simulator container. Exposes `/healthz` + `/readyz` (Phase 0: both 200 `ok`; `/readyz` gains real
-  readiness gating later). Distroless image; healthcheck is a bundled Go `healthcheck` binary (no shell in
-  the image).
+  readiness gating later) plus `/metrics` (Prometheus; Phase 0: default Go/process collectors only, real
+  routing counters land in Phase 1+). Distroless image; healthcheck is a bundled Go `healthcheck` binary
+  (no shell in the image).
 - **web** — Phase-0 placeholder (`nginx:1.27-alpine` serving a static page). The React app lands in Phase 10.
 - **postgis** — `pgrouting/pgrouting:16-3.5-3.7.3` (Postgres 16 / PostGIS 3.5 / pgRouting 3.7.3). Healthcheck:
   `pg_isready`.

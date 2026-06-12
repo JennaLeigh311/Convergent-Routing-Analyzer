@@ -2,11 +2,12 @@
 // engine.
 //
 // Phase 0 scope (issue #6, sanctioned by the lead): this binary exposes ONLY
-// the liveness/readiness endpoints that §R7 mandates on the routing-server, so
-// the container can report healthy under the docker-compose `core` profile. The
-// real routing/graph/API surface (the six algorithms, cost functions, the
-// simulator congestion adapter, WebSocket snapshots/deltas) lands in a later
-// phase on the routing-engine lane — do NOT add that logic here.
+// the liveness/readiness endpoints that §R7 mandates on the routing-server plus
+// the §R0 /metrics endpoint, so the container can report healthy and be scraped
+// under the docker-compose `core` profile. The real routing/graph/API surface
+// (the six algorithms, cost functions, the simulator congestion adapter,
+// WebSocket snapshots/deltas) lands in a later phase on the routing-engine
+// lane — do NOT add that logic here.
 package main
 
 import (
@@ -17,6 +18,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/logging"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/serveraddr"
@@ -35,6 +38,12 @@ func main() {
 	// gating (graph loaded, congestion source connected) in a later phase.
 	mux.HandleFunc("/healthz", healthHandler)
 	mux.HandleFunc("/readyz", healthHandler)
+	// /metrics — Prometheus scrape target (§R0 observability deliverable). For
+	// now this serves only the default Go runtime/process collectors
+	// (go_goroutines, process_*, etc.). Phase 1+ routing registers real request
+	// counters/histograms against the default registry, which this handler
+	// already exposes.
+	mux.Handle("/metrics", promhttp.Handler())
 
 	srv := &http.Server{
 		Addr:              addr,
@@ -51,7 +60,7 @@ func main() {
 	srvErr := make(chan error, 1)
 	go func() {
 		logger.Info("health server listening", "addr", addr,
-			"endpoints", "/healthz,/readyz")
+			"endpoints", "/healthz,/readyz,/metrics")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			srvErr <- err
 		}
