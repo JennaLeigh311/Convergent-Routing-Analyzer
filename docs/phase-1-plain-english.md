@@ -3,8 +3,6 @@
 > A companion to `where-we-are-plain-english.md`. That file explains **what has been built so far** (Phase 0).
 > This file explains **what Phase 1 is trying to accomplish**, what each piece of work does, how they fit
 > together, and ends with a **glossary** of the new jargon this phase introduces. Keep it open as a decoder ring.
->
-> *Untracked, like the other `*-plain-english.md` docs — a local reading aid, not part of the repo contract.*
 
 ---
 
