@@ -106,5 +106,7 @@ node positions, built once at construction) with a brute-force real-match test, 
 for a genuine empty/NaN case. `NearestEdge` remains unimplemented until Phase 7 (map-matching R-tree) and now
 **panics** per the convention — it has no production callers today, so panicking breaks nothing and fails
 loudly if someone wires map-matching prematurely. The Phase-7 map-matching issue, when filed, **must carry an
-acceptance item: assert a *real* map-match (a real edge, snapped point, and distance), replacing the panic** —
-so `NearestEdge` cannot ship while still effectively a stub. Surfaced by the PR #34 review.
+acceptance item: assert a *real* map-match (a real edge, snapped point, and distance), replacing the panic**
+(and removing the panic-convention wording from the four doc sites that carry it: this file, `graph/doc.go`,
+the `Graph.NearestEdge` port doc, and the `*AdjacencyGraph.NearestEdge` method/struct doc) — so `NearestEdge`
+cannot ship while still effectively a stub. Surfaced by the PR #34 review.

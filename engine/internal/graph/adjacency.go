@@ -182,7 +182,7 @@ func (g *AdjacencyGraph) NearestNode(p domain.LatLon) (domain.NodeID, bool) {
 // integration fail loudly rather than silently resolve every observation to "no
 // match". There are no production callers today, so this breaks nothing.
 func (g *AdjacencyGraph) NearestEdge(_ domain.LatLon, _ float64) (domain.EdgeID, domain.LatLon, float64, bool) {
-	panic("graph: NearestEdge not implemented (Phase 7 map-matching R-tree); see issue #36")
+	panic("graph.NearestEdge: not implemented (Phase 7 map-matching R-tree); see issue #36")
 }
 
 // Compile-time assertion: *AdjacencyGraph satisfies the Graph port.

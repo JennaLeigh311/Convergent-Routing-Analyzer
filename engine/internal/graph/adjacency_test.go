@@ -1,6 +1,7 @@
 package graph_test
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -227,10 +228,10 @@ func TestAdjacencyGraphNearestEdgeNotImplemented(t *testing.T) {
 		if r == nil {
 			t.Fatal("NearestEdge did not panic, want a not-implemented panic (Phase 7)")
 		}
-		msg, ok := r.(string)
-		if !ok {
-			t.Fatalf("NearestEdge panicked with %T (%v), want a string", r, r)
-		}
+		// Match on the message, not the panic carrier type: the contract is
+		// "panics with a not-implemented message", so a future refactor to
+		// panic(error) instead of panic(string) should still satisfy this test.
+		msg := fmt.Sprint(r)
 		if !strings.Contains(msg, "not implemented") || !strings.Contains(msg, "Phase 7") {
 			t.Errorf("NearestEdge panic = %q, want mention of %q and %q", msg, "not implemented", "Phase 7")
 		}
