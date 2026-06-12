@@ -43,8 +43,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Pinned to the engine's go.mod toolchain (go 1.25).
-          go-version: "1.25"
+          # Pinned to the engine's go.mod toolchain (go 1.26.4).
+          go-version: "1.26.4"
           # Cache keys off go.sum so the module cache invalidates when a
           # dependency version (not just go.mod) changes.
           cache-dependency-path: engine/go.sum
