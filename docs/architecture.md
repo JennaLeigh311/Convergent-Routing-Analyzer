@@ -97,12 +97,14 @@ itself without copying, preserving immutability *without* the per-call allocatio
 router exercises the hot path (#27) *and* a benchmark confirms `Neighbors` allocation is a measured hotspot
 (#31) — not before. Surfaced by the PR #34 review.
 
-**Honest deferral of the spatial-query stubs (issue #36).** `NearestNode` (k-d tree, #24) and `NearestEdge`
-(map-matching R-tree, Phase 7) are stubbed returning `ok=false` until their spatial indexes land. Because the
-`(value, ok)` contract already means "no match", a stub and a real "found nothing" are indistinguishable.
-That is harmless today (no production callers), but once `NearestNode` ships a half-wired integration could
-silently resolve *every* OD endpoint to "no node found" and never error. Two things are deferred to #36:
-(1) deciding whether the still-unimplemented method keeps `ok=false` or `panic`s with an issue reference so a
-premature integration fails loudly, and (2) requiring the #24 and Phase-7 PRs to add a test that asserts a
-*real* match — so neither method can ship while still effectively a stub. #24 carries the matching acceptance
-item. Surfaced by the PR #34 review.
+**Honest deferral of the spatial-query stubs (issue #36, decided).** The convention is: an unimplemented
+spatial query **panics with an issue reference**, while `ok=false` is reserved for a genuine runtime "no
+match". The `(value, ok)` contract already means "found nothing", so a stub that also returns `ok=false` is
+indistinguishable from a real no-match — a half-wired integration could silently resolve *every* observation
+to "no match" and never error. `NearestNode` is no longer a stub: it shipped for real in #24 (k-d tree over
+node positions, built once at construction) with a brute-force real-match test, so it returns `ok=false` only
+for a genuine empty/NaN case. `NearestEdge` remains unimplemented until Phase 7 (map-matching R-tree) and now
+**panics** per the convention — it has no production callers today, so panicking breaks nothing and fails
+loudly if someone wires map-matching prematurely. The Phase-7 map-matching issue, when filed, **must carry an
+acceptance item: assert a *real* map-match (a real edge, snapped point, and distance), replacing the panic** —
+so `NearestEdge` cannot ship while still effectively a stub. Surfaced by the PR #34 review.

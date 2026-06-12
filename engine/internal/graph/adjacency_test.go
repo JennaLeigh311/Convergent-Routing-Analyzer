@@ -1,6 +1,7 @@
 package graph_test
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -210,25 +211,30 @@ func TestAdjacencyGraphConcurrentReads(t *testing.T) {
 	wg.Wait()
 }
 
-// TestAdjacencyGraphNearestEdgeStub documents that NearestEdge is not yet
-// implemented (it lands in Phase 7, map-matching): it reports ok=false rather
-// than masquerading as implemented. NearestNode is exercised separately in
+// TestAdjacencyGraphNearestEdgeNotImplemented documents the convention for the
+// not-yet-implemented map-matching query (Phase 7): an unimplemented spatial
+// query panics with an issue reference rather than returning ok=false. ok=false
+// is a legitimate runtime answer ("no edge within range"), so overloading it to
+// also mean "not implemented" would make a stub indistinguishable from a real
+// no-match — the silent-degradation trap. Panicking makes a premature
+// integration fail loudly instead. NearestNode is exercised separately in
 // kdtree_test.go now that issue #24 wired it to a real k-d tree.
-func TestAdjacencyGraphNearestEdgeStub(t *testing.T) {
+func TestAdjacencyGraphNearestEdgeNotImplemented(t *testing.T) {
 	g := buildTestGraph(t)
-	eid, snapped, distM, ok := g.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90)
-	if ok {
-		t.Error("NearestEdge ok = true, want false (stub until Phase 7)")
-	}
-	// The stub must return a fully zero-valued tuple, not a partially-filled
-	// result that a caller could mistake for a real match.
-	if eid != 0 {
-		t.Errorf("NearestEdge EdgeID = %d, want 0 (zero-valued stub)", eid)
-	}
-	if snapped != (domain.LatLon{}) {
-		t.Errorf("NearestEdge snapped = %+v, want zero LatLon (zero-valued stub)", snapped)
-	}
-	if distM != 0 {
-		t.Errorf("NearestEdge distM = %v, want 0 (zero-valued stub)", distM)
-	}
+
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("NearestEdge did not panic, want a not-implemented panic (Phase 7)")
+		}
+		msg, ok := r.(string)
+		if !ok {
+			t.Fatalf("NearestEdge panicked with %T (%v), want a string", r, r)
+		}
+		if !strings.Contains(msg, "not implemented") || !strings.Contains(msg, "Phase 7") {
+			t.Errorf("NearestEdge panic = %q, want mention of %q and %q", msg, "not implemented", "Phase 7")
+		}
+	}()
+
+	g.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90)
 }
