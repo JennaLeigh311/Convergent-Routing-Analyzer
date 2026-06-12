@@ -6,7 +6,7 @@
 # the branch-protection rule (the required-check contract is one stable job name,
 # not each lane's name). See scripts/protect-main.sh.
 #
-#   Lane A — Go engine: gofmt + vet + race-enabled tests + the toy-graph bench.
+#   Lane A — Go engine: gofmt + vet + govulncheck + race-enabled tests + the toy-graph bench.
 #   Lane B — web: validate the Phase-0 static placeholder (index.html + Dockerfile).
 #            web/ has no package.json/React yet (Phase 10); this expands to a real
 #            node build + lint (setup-node -> npm ci -> lint -> build, + hadolint)
@@ -45,8 +45,9 @@ jobs:
         with:
           # Pinned to the engine's go.mod toolchain (go 1.25).
           go-version: "1.25"
-          # No go.sum yet (engine has no external deps); cache keys off go.mod.
-          cache-dependency-path: engine/go.mod
+          # Cache keys off go.sum so the module cache invalidates when a
+          # dependency version (not just go.mod) changes.
+          cache-dependency-path: engine/go.sum
 
       - name: gofmt (must report no files)
         run: |
@@ -60,6 +61,18 @@ jobs:
 
       - name: go vet
         run: go vet ./...
+
+      - name: govulncheck (dependency + stdlib vulnerability scan)
+        # The engine now has external dependencies (prometheus/client_golang +
+        # transitive closure), so scan the reachable module + stdlib graph against
+        # the Go vulnerability DB — a known-vulnerable, *actually-called* dependency
+        # then fails the merge gate. govulncheck reports only vulns on reachable
+        # paths, so it won't flag an unused transitive package. Uses the binary's
+        # latest release (the vuln DB is fetched fresh regardless of binary
+        # version); #32 may pin it alongside golangci-lint.
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
       - name: go test (race detector — the engine is a concurrent server)
         # Also the frozen-fixture conformance gate: runs the segment_id (§1) and

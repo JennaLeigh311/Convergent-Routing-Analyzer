@@ -2,11 +2,12 @@
 // engine.
 //
 // Phase 0 scope (issue #6, sanctioned by the lead): this binary exposes ONLY
-// the liveness/readiness endpoints that §R7 mandates on the routing-server, so
-// the container can report healthy under the docker-compose `core` profile. The
-// real routing/graph/API surface (the six algorithms, cost functions, the
-// simulator congestion adapter, WebSocket snapshots/deltas) lands in a later
-// phase on the routing-engine lane — do NOT add that logic here.
+// the liveness/readiness endpoints that §R7 mandates on the routing-server plus
+// the §R0 /metrics endpoint, so the container can report healthy and be scraped
+// under the docker-compose `core` profile. The real routing/graph/API surface
+// (the six algorithms, cost functions, the simulator congestion adapter,
+// WebSocket snapshots/deltas) lands in a later phase on the routing-engine
+// lane — do NOT add that logic here.
 package main
 
 import (
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/logging"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/metrics"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/serveraddr"
 )
 
@@ -28,18 +30,18 @@ func main() {
 
 	addr := serveraddr.Resolve()
 
-	mux := http.NewServeMux()
-	// /healthz — liveness: the process is up. /readyz — readiness: the process
-	// is ready to serve. In Phase 0 there is no graph or congestion source to
-	// wait on, so both return 200 unconditionally. /readyz gains real readiness
-	// gating (graph loaded, congestion source connected) in a later phase.
-	mux.HandleFunc("/healthz", healthHandler)
-	mux.HandleFunc("/readyz", healthHandler)
-
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
+		Addr:    addr,
+		Handler: newMux(),
+		// Bound every phase of a request so a slow or idle client can't pin a
+		// connection on the published port. ReadHeaderTimeout predates the other
+		// three; the rest landed alongside /metrics. These will need revisiting
+		// when WebSocket snapshots/deltas arrive in a later phase — long-lived
+		// connections don't want a WriteTimeout.
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// Shut down cleanly on SIGINT/SIGTERM so `docker compose down` is graceful.
@@ -51,7 +53,7 @@ func main() {
 	srvErr := make(chan error, 1)
 	go func() {
 		logger.Info("health server listening", "addr", addr,
-			"endpoints", "/healthz,/readyz")
+			"endpoints", "/healthz,/readyz,/metrics")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			srvErr <- err
 		}
@@ -70,6 +72,26 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "err", err)
 	}
+}
+
+// newMux builds the routing-server's HTTP route table. Extracted from main so
+// the routes — the server's entire public contract this phase — are assertable
+// in tests without binding a real listener (see main_test.go).
+func newMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	// /healthz — liveness: the process is up. /readyz — readiness: the process
+	// is ready to serve. In Phase 0 there is no graph or congestion source to
+	// wait on, so both return 200 unconditionally. /readyz gains real readiness
+	// gating (graph loaded, congestion source connected) in a later phase.
+	mux.HandleFunc("/healthz", healthHandler)
+	mux.HandleFunc("/readyz", healthHandler)
+	// /metrics — Prometheus scrape target (§R0 observability deliverable). For
+	// now this serves only the standard Go runtime/process collectors
+	// (go_goroutines, process_*, etc.) from a dedicated registry; Phase 1+
+	// routing registers real request counters/histograms against that same
+	// registry. See internal/metrics.
+	mux.Handle("/metrics", metrics.Handler())
+	return mux
 }
 
 // healthHandler reports liveness/readiness. Phase 0: always 200 "ok".
