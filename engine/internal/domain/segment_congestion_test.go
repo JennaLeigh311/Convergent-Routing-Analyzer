@@ -92,9 +92,16 @@ func loadCongestionStrict(t *testing.T) []congestionMsg {
 
 // decodeStrictRow re-marshals one note-stripped raw row and strict-decodes it
 // into a congestionMsg, failing if any field outside the 10-field §3 schema
-// remains. Shared by loadCongestionStrict and the negative test below.
+// remains. DisallowUnknownFields only catches EXTRA fields, so we also assert
+// the note-stripped row has exactly 10 keys — that pins the MISSING-field side
+// (a row dropping, say, is_final or producer would otherwise decode to a zero
+// value and pass silently), making "exactly the 10 §3 fields" enforced both ways.
 func decodeStrictRow(t *testing.T, idx int, raw map[string]json.RawMessage) congestionMsg {
 	t.Helper()
+	if len(raw) != 10 {
+		t.Fatalf("row %d: has %d fields after stripping `note`, want exactly 10 (§3 message shape); keys = %v",
+			idx, len(raw), rawKeys(raw))
+	}
 	reMarshaled, err := json.Marshal(raw)
 	if err != nil {
 		t.Fatalf("row %d: re-marshal: %v", idx, err)
@@ -173,14 +180,18 @@ func TestSegmentCongestionStrictSchema(t *testing.T) {
 // TestSegmentCongestionFieldInvariants asserts the §3 per-row invariants on the
 // real fixture rows: the canonical-RFC3339 timestamp form, the exactly-5-minute
 // half-open window, the schema_version pin, the non-negativity / positivity
-// bounds, sample_pings >= vehicle_count, and that segment_id parses under §1.
+// bounds, and that segment_id parses under §1 — plus one fixture-quality gate
+// (sample_pings >= vehicle_count) that is stricter than §3's "Typically".
 // Each violation is silent in production (a 6-minute window or a fractional
 // timestamp doesn't crash — it just corrupts the dedup ordering or the BPR
 // flow), which is why every one is gated here.
 func TestSegmentCongestionFieldInvariants(t *testing.T) {
 	msgs := loadCongestionStrict(t)
 	for _, m := range msgs {
-		t.Run(m.SegmentID+"@"+m.WindowStart, func(t *testing.T) {
+		// emit_time is appended so the rows that share a segment_id+window_start
+		// (the rows-1..3 revisions of one window) get distinct subtest names
+		// instead of Go's auto #01/#02 suffixes.
+		t.Run(m.SegmentID+"@"+m.WindowStart+"#"+m.EmitTime, func(t *testing.T) {
 			// schema_version is the frozen v2 envelope version (§3 "Why v2").
 			if m.SchemaVersion != 1 {
 				t.Errorf("schema_version = %d, want 1 (§3 frozen v2 envelope)", m.SchemaVersion)
@@ -206,9 +217,8 @@ func TestSegmentCongestionFieldInvariants(t *testing.T) {
 				t.Errorf("window_end - window_start = %v, want exactly 5m (§3 half-open window)", d)
 			}
 
-			// Numeric bounds (§3 field table). avg_speed_kmh is strictly > 0;
-			// counts are >= 0. sample_pings >= vehicle_count because one vehicle
-			// emits many pings over a 5-minute window.
+			// Hard §3 field-table bounds: avg_speed_kmh is strictly > 0 and the
+			// counts are >= 0.
 			if m.VehicleCount < 0 {
 				t.Errorf("vehicle_count = %d, want >= 0 (§3)", m.VehicleCount)
 			}
@@ -218,8 +228,15 @@ func TestSegmentCongestionFieldInvariants(t *testing.T) {
 			if m.AvgSpeedKmh <= 0 {
 				t.Errorf("avg_speed_kmh = %g, want > 0 (§3)", m.AvgSpeedKmh)
 			}
+			// sample_pings >= vehicle_count is asserted as a FIXTURE-QUALITY gate,
+			// NOT a §3 MUST: the §3 field table says sample_pings is "Typically >=
+			// vehicle_count" (deliberately soft language, unlike the hard >=0 / >0
+			// bounds above), so a row with fewer pings than vehicles would still be
+			// contract-conformant. We hold the curated, frozen fixture to the
+			// stronger relationship on purpose; because this is stricter than the
+			// contract, the failure is not labeled a §3 violation.
 			if m.SamplePings < m.VehicleCount {
-				t.Errorf("sample_pings (%d) < vehicle_count (%d), want sample_pings >= vehicle_count (§3)",
+				t.Errorf("sample_pings (%d) < vehicle_count (%d): fixture-quality gate wants sample_pings >= vehicle_count (stricter than §3's \"Typically\")",
 					m.SamplePings, m.VehicleCount)
 			}
 		})
@@ -379,6 +396,17 @@ func filterWindow(msgs []congestionMsg, segmentID, windowStart string) []congest
 
 // keysOf returns the sorted keys of a map, for legible failure messages.
 func keysOf(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// rawKeys returns the sorted keys of a raw row, for legible failure messages
+// when the field count is off.
+func rawKeys(m map[string]json.RawMessage) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
