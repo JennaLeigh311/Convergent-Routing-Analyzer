@@ -1,0 +1,43 @@
+# golangci-lint config — pinned, deterministic lint gate (issue #32).
+#
+# Why this file exists: golangci-lint's "default" linter set can change between
+# releases, so pinning the BINARY version (in .github/workflows/ci.yml and the
+# repo Makefile) is only half the job — we also pin the *enabled linter set*
+# here so the gate is reproducible across upgrades. CI installs the exact
+# version, this file fixes WHICH linters run; together they make a lint result
+# the same on every machine.
+#
+# Scope: this is a PIN-and-ENFORCE gate, not a style crusade. We run the
+# conservative golangci-lint v2 default set (errcheck, govet, ineffassign,
+# staticcheck, unused) — real-correctness linters, nothing opinionated about
+# formatting (gofmt is already its own CI step). The only tailoring is a short,
+# explicit errcheck allowlist for the handful of stdlib calls whose returned
+# error is unactionable by convention (see below). We do NOT blanket-disable a
+# linter; every exclusion is named and justified so the gate stays meaningful.
+#
+# Config schema is golangci-lint v2 (`version: "2"`). Keep the pinned binary
+# version (currently v2.12.2) in sync with CI + Makefile.
+version: "2"
+
+linters:
+  # Use the curated default set rather than `enable-all` so a new upstream
+  # linter can't silently start failing a merge on upgrade. The v2 default set
+  # is: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+
+  settings:
+    errcheck:
+      # Conventionally-ignored error returns. errcheck stays ON for everything
+      # else (real I/O, parsing, etc. must still be handled); we only exempt the
+      # calls whose error is, by long-standing Go convention, not actionable:
+      #   - fmt.Fprint* to an already-failing stderr path (we're erroring out
+      #     anyway; there's nowhere useful to report a failed diagnostic write).
+      #   - (io.Closer).Close in a deferred cleanup of a read-only handle, where
+      #     a Close error has no bearing on the already-read result.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (io.ReadCloser).Close

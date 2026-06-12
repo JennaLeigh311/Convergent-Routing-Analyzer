@@ -227,7 +227,7 @@ func TestToyNetworkCostNotHops(t *testing.T) {
 	// loaded data and cannot drift from it (a constant 2 > 1 would prove nothing).
 	directPath := []graph.Edge{direct}
 	altPath := []graph.Edge{hop1, hop2}
-	if !(len(altPath) > len(directPath)) {
+	if len(altPath) <= len(directPath) {
 		t.Fatalf("expected alternative (%d edges) to have more edges than direct (%d)", len(altPath), len(directPath))
 	}
 
