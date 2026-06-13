@@ -71,11 +71,18 @@ func dijkstra(roadGraph graph.Graph, src, dst domain.NodeID, weight weightFunc) 
 		if cur.node == dst {
 			break // dst settled; its distance can no longer improve
 		}
-		// g.Neighbors allocates a fresh []Edge per settled node (a Graph-port
-		// limitation, not a need of this loop, which reads only ID/To/weight). On
-		// the MSA/equilibrium hot path an allocation-free CSR neighbor view is a
-		// worthwhile follow-up — tracked in #35, gated on a profiler-confirmed hotspot.
-		for _, edge1 := range roadGraph.Neighbors(cur.node) {
+		// Zero-copy neighbor iteration (issue #35, resolved): OutEdgeIDs returns
+		// the graph's internal CSR sub-slice of out-edge ids directly — no fresh
+		// []Edge allocation per settled node — and we resolve each id to its Edge by
+		// flat index. A benchmark over a representative grid confirmed Neighbors'
+		// per-settle allocation was the hot-path bottleneck this removes. The CSR
+		// view is read-only; this loop only reads it. Neighbors stays on the port
+		// for callers wanting an owned, mutable copy.
+		for _, edgeID := range roadGraph.OutEdgeIDs(cur.node) {
+			edge1, ok := roadGraph.Edge(edgeID)
+			if !ok {
+				continue // defensive: CSR-stored ids are always in range, but never trust an id blindly
+			}
 			relaxed := dist[cur.node] + weight(edge1)
 			if relaxed < dist[edge1.To] {
 				dist[edge1.To] = relaxed

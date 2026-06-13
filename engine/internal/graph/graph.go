@@ -27,8 +27,25 @@ type Edge struct {
 // interface, never on a concrete loader. Implementations must be safe for
 // concurrent reads (the graph is immutable after load).
 type Graph interface {
-	// Neighbors returns the outgoing directed edges from node n.
+	// Neighbors returns the outgoing directed edges from node n as a freshly
+	// allocated, caller-owned slice. Use it when you want an isolated, mutable
+	// copy; use OutEdgeIDs on hot paths where that per-call allocation is the
+	// bottleneck.
 	Neighbors(nodeID1 domain.NodeID) []Edge
+
+	// OutEdgeIDs returns the ids of the outgoing directed edges from node n in
+	// increasing EdgeID order (same order as Neighbors), or nil if n is unknown or
+	// has no out-edges. It is the zero-copy, allocation-free counterpart to
+	// Neighbors for the router hot path (issue #35): the returned slice ALIASES the
+	// implementation's internal storage and MUST be treated as read-only — the
+	// caller must not mutate its elements nor append in place to it.
+	//
+	// This direct aliasing is safe because the graph is immutable after load: the
+	// underlying storage never changes, so the aliased slice is safe for
+	// unsynchronized concurrent reads by many goroutines (the same R5 concurrency
+	// model Neighbors preserves by copying). Callers resolve each id to its Edge via
+	// Edge(id). Prefer Neighbors when you need an owned, mutable copy.
+	OutEdgeIDs(nodeID3 domain.NodeID) []domain.EdgeID
 
 	// Edge returns the edge with the given id; ok is false if it is unknown.
 	Edge(edgeID1 domain.EdgeID) (edge Edge, found1 bool)

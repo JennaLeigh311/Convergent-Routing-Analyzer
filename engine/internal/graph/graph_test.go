@@ -24,6 +24,16 @@ func (fakeImpl *fakeGraph) Neighbors(nodeID domain.NodeID) []graph.Edge {
 	return out
 }
 
+func (fakeImpl *fakeGraph) OutEdgeIDs(nodeID domain.NodeID) []domain.EdgeID {
+	var out []domain.EdgeID
+	for _, edge := range fakeImpl.edges {
+		if edge.From == nodeID {
+			out = append(out, edge.ID)
+		}
+	}
+	return out
+}
+
 func (fakeImpl *fakeGraph) Edge(edgeID domain.EdgeID) (graph.Edge, bool) {
 	edge, found := fakeImpl.edges[edgeID]
 	return edge, found
