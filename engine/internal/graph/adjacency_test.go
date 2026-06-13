@@ -32,6 +32,46 @@ func buildTestGraph(test *testing.T) *graph.AdjacencyGraph {
 	return roadGraph
 }
 
+// TestOutEdgeIDs verifies the zero-copy CSR accessor (#35): it returns out-edge
+// ids in increasing EdgeID order matching Neighbors, nil for empty/out-of-range
+// nodes, and a view that aliases internal storage (so two calls share backing).
+func TestOutEdgeIDs(test *testing.T) {
+	roadGraph := buildTestGraph(test)
+
+	// Node 0 has out-edges 0 and 2, in increasing EdgeID order, and the ids must
+	// line up exactly with the edges Neighbors returns (same order, same set).
+	ids := roadGraph.OutEdgeIDs(0)
+	if len(ids) != 2 || ids[0] != 0 || ids[1] != 2 {
+		test.Fatalf("OutEdgeIDs(0) = %v, want [0 2]", ids)
+	}
+	neighbors := roadGraph.Neighbors(0)
+	for index := range neighbors {
+		if neighbors[index].ID != ids[index] {
+			test.Errorf("OutEdgeIDs(0)[%d] = %d, want %d to match Neighbors order", index, ids[index], neighbors[index].ID)
+		}
+	}
+
+	if got := roadGraph.OutEdgeIDs(1); len(got) != 1 || got[0] != 1 {
+		test.Errorf("OutEdgeIDs(1) = %v, want [1]", got)
+	}
+	if got := roadGraph.OutEdgeIDs(2); got != nil {
+		test.Errorf("OutEdgeIDs(2) = %v, want nil (no out-edges)", got)
+	}
+	if got := roadGraph.OutEdgeIDs(99); got != nil {
+		test.Errorf("OutEdgeIDs(99) = %v, want nil (out of range)", got)
+	}
+
+	// OutEdgeIDs is documented as a zero-copy view aliasing internal CSR storage:
+	// two calls for the same node must observe the same backing array. (Callers are
+	// contractually forbidden from mutating it; this only asserts it is a view, not
+	// a copy — the whole point of the optimization.)
+	first := roadGraph.OutEdgeIDs(0)
+	again := roadGraph.OutEdgeIDs(0)
+	if &first[0] != &again[0] {
+		test.Error("OutEdgeIDs(0) returned a fresh slice each call; want a zero-copy view aliasing shared CSR storage")
+	}
+}
+
 func TestAdjacencyGraphTopology(test *testing.T) {
 	roadGraph := buildTestGraph(test)
 

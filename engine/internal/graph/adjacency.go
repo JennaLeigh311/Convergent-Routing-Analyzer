@@ -13,11 +13,16 @@ import (
 // header or map.
 //
 // After New returns, an AdjacencyGraph is read-only: it exposes no mutators and
-// every accessor only reads its slices (Neighbors returns a freshly allocated
-// slice, so a caller cannot reach the internal CSR storage). It is therefore
-// safe for unsynchronized concurrent use by many goroutines — the engine loads
-// one graph at startup and shares it read-only across all request handlers and
-// across an Assign's worker goroutines (the R5 concurrency model).
+// every accessor only reads its slices. Neighbors returns a freshly allocated
+// slice (an isolated, mutable copy a caller may keep and modify), while
+// OutEdgeIDs deliberately returns the internal CSR sub-slice directly as a
+// read-only view for the allocation-free router hot path (issue #35). Exposing
+// that aliased slice is safe precisely because the graph is immutable after New:
+// the storage never changes, so an aliased read-only view cannot observe a torn
+// write. The AdjacencyGraph is therefore safe for unsynchronized concurrent use
+// by many goroutines — the engine loads one graph at startup and shares it
+// read-only across all request handlers and across an Assign's worker goroutines
+// (the R5 concurrency model).
 //
 // NearestNode and NearestEdge are part of the port but are spatial queries:
 // NearestNode is backed by a k-d tree over node positions, built once in New
@@ -127,6 +132,31 @@ func (graph *AdjacencyGraph) Neighbors(nodeID domain.NodeID) []Edge {
 		out[index2] = graph.edges[eid]
 	}
 	return out
+}
+
+// OutEdgeIDs returns the ids of the outgoing directed edges from node n in
+// increasing EdgeID order, or nil if n is unknown or has no out-edges. It is the
+// zero-copy counterpart to Neighbors for the router hot path (issue #35): rather
+// than allocating and struct-copying a fresh []Edge per call, it returns the
+// internal CSR sub-slice outEdgeIDs[low:high] DIRECTLY — no allocation, no copy.
+//
+// The returned slice ALIASES the graph's internal storage and MUST be treated as
+// read-only: the caller must not mutate its elements nor append in place to it
+// (an append that overran low:high would scribble into a neighboring node's run).
+// This aliasing is safe to expose because the graph is immutable after New: the
+// CSR storage is never written again, so the view is safe for unsynchronized
+// concurrent reads by many goroutines (the R5 concurrency model). Neighbors stays
+// for callers that want an owned, isolated, mutable copy.
+func (graph *AdjacencyGraph) OutEdgeIDs(nodeID domain.NodeID) []domain.EdgeID {
+	index := int(nodeID)
+	if index < 0 || index >= len(graph.nodes) {
+		return nil
+	}
+	low, high := graph.outOffsets[index], graph.outOffsets[index+1]
+	if low == high {
+		return nil
+	}
+	return graph.outEdgeIDs[low:high]
 }
 
 // Edge returns the edge with the given id; ok is false if id is out of range.
