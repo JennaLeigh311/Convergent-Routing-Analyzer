@@ -22,7 +22,8 @@ import (
 // NearestNode and NearestEdge are part of the port but are spatial queries:
 // NearestNode is backed by a k-d tree over node positions, built once in New
 // (issue #24) and read-only thereafter. NearestEdge's map-matching R-tree
-// arrives in Phase 7; until then it reports ok=false.
+// arrives in Phase 7; until then it panics with an issue reference rather than
+// returning ok=false (see its method doc for the convention).
 type AdjacencyGraph struct {
 	nodes []Node
 	edges []Edge
@@ -171,10 +172,17 @@ func (g *AdjacencyGraph) NearestNode(p domain.LatLon) (domain.NodeID, bool) {
 }
 
 // NearestEdge snaps a GPS observation to the closest directed edge for
-// map-matching. Its R-tree over edge geometry is built in Phase 7 (map-matching);
-// until then it reports ok=false.
+// map-matching. Its R-tree over edge geometry is built in Phase 7 (map-matching).
+//
+// By convention an unimplemented spatial query panics with an issue reference
+// rather than returning ok=false: ok=false is a legitimate runtime answer ("the
+// observation is outside every edge's range"), so overloading it to also mean
+// "not implemented yet" makes a stub indistinguishable from a real no-match —
+// the silent-degradation trap. Panicking instead makes a premature Phase-7
+// integration fail loudly rather than silently resolve every observation to "no
+// match". There are no production callers today, so this breaks nothing.
 func (g *AdjacencyGraph) NearestEdge(_ domain.LatLon, _ float64) (domain.EdgeID, domain.LatLon, float64, bool) {
-	return 0, domain.LatLon{}, 0, false
+	panic("graph.NearestEdge: not implemented (Phase 7 map-matching R-tree); see issue #36")
 }
 
 // Compile-time assertion: *AdjacencyGraph satisfies the Graph port.

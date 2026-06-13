@@ -56,5 +56,9 @@ type Graph interface {
 	// edge geometries) — distinct from NearestNode, which snaps to vertices.
 	// Returns the matched edge id, the snapped point, and the perpendicular
 	// distance in meters; ok is false if nothing is within range.
+	//
+	// By convention the current *AdjacencyGraph implementation panics with an
+	// issue reference until the Phase-7 R-tree lands, rather than overloading
+	// ok=false (a genuine "no match") to also mean "not implemented".
 	NearestEdge(p domain.LatLon, headingDeg float64) (id domain.EdgeID, snapped domain.LatLon, distM float64, ok bool)
 }
