@@ -28,13 +28,13 @@ type Edge struct {
 // concurrent reads (the graph is immutable after load).
 type Graph interface {
 	// Neighbors returns the outgoing directed edges from node n.
-	Neighbors(n domain.NodeID) []Edge
+	Neighbors(nodeID1 domain.NodeID) []Edge
 
 	// Edge returns the edge with the given id; ok is false if it is unknown.
-	Edge(id domain.EdgeID) (e Edge, ok bool)
+	Edge(edgeID1 domain.EdgeID) (edge Edge, found1 bool)
 
 	// Node returns the node with the given id; ok is false if it is unknown.
-	Node(id domain.NodeID) (n Node, ok bool)
+	Node(nodeID2 domain.NodeID) (node Node, found2 bool)
 
 	// NodeCount returns the number of nodes in the graph.
 	NodeCount() int
@@ -48,7 +48,7 @@ type Graph interface {
 
 	// NearestNode returns the closest node to a coordinate. Used to resolve
 	// route origin/destination endpoints (backed by a k-d tree over nodes).
-	NearestNode(p domain.LatLon) (domain.NodeID, bool)
+	NearestNode(point1 domain.LatLon) (domain.NodeID, bool)
 
 	// NearestEdge snaps a GPS observation to the closest directed edge, using
 	// heading (degrees clockwise from north) to disambiguate the two directed
@@ -60,5 +60,5 @@ type Graph interface {
 	// By convention the current *AdjacencyGraph implementation panics with an
 	// issue reference until the Phase-7 R-tree lands, rather than overloading
 	// ok=false (a genuine "no match") to also mean "not implemented".
-	NearestEdge(p domain.LatLon, headingDeg float64) (id domain.EdgeID, snapped domain.LatLon, distM float64, ok bool)
+	NearestEdge(point2 domain.LatLon, headingDeg float64) (edgeID2 domain.EdgeID, snapped domain.LatLon, distM float64, found3 bool)
 }

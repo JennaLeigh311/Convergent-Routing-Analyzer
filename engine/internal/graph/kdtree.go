@@ -92,66 +92,66 @@ type kdNode struct {
 // startup cost and acceptable at city scale; a quickselect partition could make
 // it O(n log n) if startup latency ever matters.
 func newKDTree(pts []kdPoint) *kdTree {
-	t := &kdTree{pts: pts, root: -1}
+	tree := &kdTree{pts: pts, root: -1}
 	if len(pts) == 0 {
-		return t
+		return tree
 	}
 
 	// maxAbsLat bounds the tree latitudes; combined with the query latitude it
 	// yields the conservative longitude-cosine factor (see the type doc's
 	// pruning-admissibility note).
-	for i := range pts {
-		if a := math.Abs(pts[i].pos.Lat); a > t.maxAbsLat {
-			t.maxAbsLat = a
+	for index1 := range pts {
+		if valueA := math.Abs(pts[index1].pos.Lat); valueA > tree.maxAbsLat {
+			tree.maxAbsLat = valueA
 		}
 	}
 
-	t.nodes = make([]kdNode, 0, len(pts))
+	tree.nodes = make([]kdNode, 0, len(pts))
 	idxs := make([]int32, len(pts))
-	for i := range idxs {
-		idxs[i] = int32(i)
+	for index2 := range idxs {
+		idxs[index2] = int32(index2)
 	}
-	t.root = t.build(idxs, 0)
-	return t
+	tree.root = tree.build(idxs, 0)
+	return tree
 }
 
 // build recursively partitions the point indices idxs by the median on the
 // current axis, appends a kdNode for that median, and returns its node index (or
 // -1 for an empty range). depth selects the splitting axis (lat/lon alternate).
-func (t *kdTree) build(idxs []int32, depth int) int32 {
+func (tree *kdTree) build(idxs []int32, depth int) int32 {
 	if len(idxs) == 0 {
 		return -1
 	}
 	axis := uint8(depth % 2)
-	sort.Slice(idxs, func(a, b int) bool {
-		return t.coord(idxs[a], axis) < t.coord(idxs[b], axis)
+	sort.Slice(idxs, func(valueA, valueB int) bool {
+		return tree.coord(idxs[valueA], axis) < tree.coord(idxs[valueB], axis)
 	})
 	mid := len(idxs) / 2
 
 	// Reserve this node's slot before recursing so child indices stay stable.
-	self := int32(len(t.nodes))
-	t.nodes = append(t.nodes, kdNode{point: idxs[mid], axis: axis})
-	left := t.build(idxs[:mid], depth+1)
-	right := t.build(idxs[mid+1:], depth+1)
-	t.nodes[self].left = left
-	t.nodes[self].right = right
+	self := int32(len(tree.nodes))
+	tree.nodes = append(tree.nodes, kdNode{point: idxs[mid], axis: axis})
+	left := tree.build(idxs[:mid], depth+1)
+	right := tree.build(idxs[mid+1:], depth+1)
+	tree.nodes[self].left = left
+	tree.nodes[self].right = right
 	return self
 }
 
 // coord returns the splitting coordinate (degrees) of point pi on the given axis.
-func (t *kdTree) coord(pi int32, axis uint8) float64 {
+func (tree *kdTree) coord(pointIndex int32, axis uint8) float64 {
 	if axis == 0 {
-		return t.pts[pi].pos.Lat
+		return tree.pts[pointIndex].pos.Lat
 	}
-	return t.pts[pi].pos.Lon
+	return tree.pts[pointIndex].pos.Lon
 }
 
 // nearest returns the indexed point closest to q by haversine distance, and
 // ok=false for an empty tree. The result equals brute-force-haversine-nearest
 // for any query provided the indexed point set does not span the ±180°
 // antimeridian (see the type doc on pruning admissibility and its precondition).
-func (t *kdTree) nearest(q domain.LatLon) (idx int32, ok bool) {
-	if t.root < 0 {
+func (tree *kdTree) nearest(queryPoint domain.LatLon) (idx int32, found bool) {
+	if tree.root < 0 {
 		return 0, false
 	}
 	bestIdx := int32(-1)
@@ -159,53 +159,53 @@ func (t *kdTree) nearest(q domain.LatLon) (idx int32, ok bool) {
 	// lonCos = cos(max(maxAbsLat, |q.Lat|)) ≤ cosφ_q and ≤ cosφ_p for every tree
 	// point, so the longitude lower bound never over-estimates (see type doc).
 	// Computed once per query (O(1)) and threaded into the longitude bound.
-	lonCos := math.Cos(degToRad(math.Max(t.maxAbsLat, math.Abs(q.Lat))))
-	t.search(t.root, q, lonCos, &bestIdx, &bestDist)
+	lonCos := math.Cos(degToRad(math.Max(tree.maxAbsLat, math.Abs(queryPoint.Lat))))
+	tree.search(tree.root, queryPoint, lonCos, &bestIdx, &bestDist)
 	// A NaN in q makes every haversine NaN, so no comparison ever beats the
 	// initial best and bestIdx stays -1; report a miss rather than indexing
 	// t.pts[-1]. Also defends any future path that finds nothing.
 	if bestIdx < 0 {
 		return 0, false
 	}
-	return t.pts[bestIdx].idx, true
+	return tree.pts[bestIdx].idx, true
 }
 
 // search is the recursive branch-and-bound nearest-neighbor walk: descend toward
 // the query, update the best, then visit the far child only if its splitting
 // plane is within the current best distance (the admissible lower bound).
-func (t *kdTree) search(n int32, q domain.LatLon, lonCos float64, bestIdx *int32, bestDist *float64) {
-	if n < 0 {
+func (tree *kdTree) search(count int32, queryPoint domain.LatLon, lonCos float64, bestIdx *int32, bestDist *float64) {
+	if count < 0 {
 		return
 	}
-	nd := t.nodes[n]
-	p := t.pts[nd.point]
+	treeNode := tree.nodes[count]
+	point := tree.pts[treeNode.point]
 
-	if d := haversine(q, p.pos); d < *bestDist {
-		*bestDist = d
-		*bestIdx = nd.point
+	if distance := haversine(queryPoint, point.pos); distance < *bestDist {
+		*bestDist = distance
+		*bestIdx = treeNode.point
 	}
 
 	// Per-axis signed gap from the query to this node's splitting plane, in
 	// degrees. Negative ⇒ query is on the "left" (smaller-coordinate) side.
 	var gap float64
-	if nd.axis == 0 {
-		gap = q.Lat - p.pos.Lat
+	if treeNode.axis == 0 {
+		gap = queryPoint.Lat - point.pos.Lat
 	} else {
-		gap = q.Lon - p.pos.Lon
+		gap = queryPoint.Lon - point.pos.Lon
 	}
 
-	near, far := nd.left, nd.right
+	near, far := treeNode.left, treeNode.right
 	if gap > 0 {
-		near, far = nd.right, nd.left
+		near, far = treeNode.right, treeNode.left
 	}
 
-	t.search(near, q, lonCos, bestIdx, bestDist)
+	tree.search(near, queryPoint, lonCos, bestIdx, bestDist)
 
 	// Visit the far side only if its plane could hold something nearer than the
 	// current best. planeDist is the admissible lower bound on the haversine
 	// distance to anything beyond the plane.
-	if planeDist := t.axisLowerBound(nd.axis, gap, lonCos); planeDist < *bestDist {
-		t.search(far, q, lonCos, bestIdx, bestDist)
+	if planeDist := tree.axisLowerBound(treeNode.axis, gap, lonCos); planeDist < *bestDist {
+		tree.search(far, queryPoint, lonCos, bestIdx, bestDist)
 	}
 }
 
@@ -215,7 +215,7 @@ func (t *kdTree) search(n int32, q domain.LatLon, lonCos float64, bestIdx *int32
 // latitude uses the exact R·|Δφ|; longitude uses the exact small-circle bound
 // 2R·asin(lonCos·sin(|Δλ|/2)), where lonCos = cos(max(maxAbsLat, |query lat|)) is
 // the per-query cosine factor ≤ both cosφ_q and cosφ_p, so it never over-estimates.
-func (t *kdTree) axisLowerBound(axis uint8, gapDeg, lonCos float64) float64 {
+func (tree *kdTree) axisLowerBound(axis uint8, gapDeg, lonCos float64) float64 {
 	gapRad := math.Abs(degToRad(gapDeg))
 	if axis == 0 {
 		return earthRadiusM * gapRad

@@ -49,109 +49,109 @@ type AdjacencyGraph struct {
 // and every edge endpoint references a node in range. It copies the inputs, so
 // the returned graph cannot be mutated through the caller's slices.
 func New(nodes []Node, edges []Edge) (*AdjacencyGraph, error) {
-	for i := range nodes {
-		if int(nodes[i].ID) != i {
-			return nil, fmt.Errorf("graph.New: nodes not dense: nodes[%d].ID = %d, want %d", i, nodes[i].ID, i)
+	for index1 := range nodes {
+		if int(nodes[index1].ID) != index1 {
+			return nil, fmt.Errorf("graph.New: nodes not dense: nodes[%d].ID = %d, want %d", index1, nodes[index1].ID, index1)
 		}
 	}
-	for i := range edges {
-		if int(edges[i].ID) != i {
-			return nil, fmt.Errorf("graph.New: edges not dense: edges[%d].ID = %d, want %d", i, edges[i].ID, i)
+	for index2 := range edges {
+		if int(edges[index2].ID) != index2 {
+			return nil, fmt.Errorf("graph.New: edges not dense: edges[%d].ID = %d, want %d", index2, edges[index2].ID, index2)
 		}
-		if int(edges[i].From) < 0 || int(edges[i].From) >= len(nodes) {
-			return nil, fmt.Errorf("graph.New: edge %d From = %d out of range [0,%d)", i, edges[i].From, len(nodes))
+		if int(edges[index2].From) < 0 || int(edges[index2].From) >= len(nodes) {
+			return nil, fmt.Errorf("graph.New: edge %d From = %d out of range [0,%d)", index2, edges[index2].From, len(nodes))
 		}
-		if int(edges[i].To) < 0 || int(edges[i].To) >= len(nodes) {
-			return nil, fmt.Errorf("graph.New: edge %d To = %d out of range [0,%d)", i, edges[i].To, len(nodes))
+		if int(edges[index2].To) < 0 || int(edges[index2].To) >= len(nodes) {
+			return nil, fmt.Errorf("graph.New: edge %d To = %d out of range [0,%d)", index2, edges[index2].To, len(nodes))
 		}
 	}
 
-	g := &AdjacencyGraph{
+	graph := &AdjacencyGraph{
 		nodes:      make([]Node, len(nodes)),
 		edges:      make([]Edge, len(edges)),
 		outOffsets: make([]int, len(nodes)+1),
 		outEdgeIDs: make([]domain.EdgeID, len(edges)),
 	}
-	copy(g.nodes, nodes)
-	copy(g.edges, edges)
+	copy(graph.nodes, nodes)
+	copy(graph.edges, edges)
 
 	// CSR build: count out-degree per node into the shifted offset slot, prefix-
 	// sum to turn counts into start offsets, then scatter edge ids. Iterating
 	// edges in id order keeps each node's neighbor run in increasing EdgeID
 	// order, which makes Neighbors deterministic.
-	for i := range edges {
-		g.outOffsets[int(edges[i].From)+1]++
+	for index3 := range edges {
+		graph.outOffsets[int(edges[index3].From)+1]++
 	}
-	for i := 1; i < len(g.outOffsets); i++ {
-		g.outOffsets[i] += g.outOffsets[i-1]
+	for index4 := 1; index4 < len(graph.outOffsets); index4++ {
+		graph.outOffsets[index4] += graph.outOffsets[index4-1]
 	}
 	cursor := make([]int, len(nodes))
-	copy(cursor, g.outOffsets[:len(nodes)])
-	for i := range edges {
-		from := int(edges[i].From)
-		g.outEdgeIDs[cursor[from]] = edges[i].ID
+	copy(cursor, graph.outOffsets[:len(nodes)])
+	for index5 := range edges {
+		from := int(edges[index5].From)
+		graph.outEdgeIDs[cursor[from]] = edges[index5].ID
 		cursor[from]++
 	}
 
 	// Build the spatial index once, over a copy of node positions keyed by
 	// NodeID, so NearestNode is a pure read against immutable state. The k-d
 	// tree owns its own point slice and never reaches back into g.nodes.
-	kdPts := make([]kdPoint, len(g.nodes))
-	for i := range g.nodes {
+	kdPts := make([]kdPoint, len(graph.nodes))
+	for index6 := range graph.nodes {
 		// idx round-trips back to a NodeID in NearestNode. Dense ids (enforced
 		// above: nodes[i].ID == i) guarantee the int32(NodeID)→...→NodeID(idx)
 		// round-trip is exact. A future edge-sample reuse of kdPoint must NOT
 		// blindly cast idx back to a NodeID — it would carry an edge index.
-		kdPts[i] = kdPoint{pos: g.nodes[i].Pos, idx: int32(g.nodes[i].ID)}
+		kdPts[index6] = kdPoint{pos: graph.nodes[index6].Pos, idx: int32(graph.nodes[index6].ID)}
 	}
-	g.kd = newKDTree(kdPts)
+	graph.kd = newKDTree(kdPts)
 
-	return g, nil
+	return graph, nil
 }
 
 // Neighbors returns the outgoing directed edges from node n in increasing
 // EdgeID order, or nil if n is unknown or has no out-edges. The returned slice
 // is freshly allocated and owned by the caller; mutating it does not affect the
 // graph.
-func (g *AdjacencyGraph) Neighbors(n domain.NodeID) []Edge {
-	i := int(n)
-	if i < 0 || i >= len(g.nodes) {
+func (graph *AdjacencyGraph) Neighbors(nodeID domain.NodeID) []Edge {
+	index1 := int(nodeID)
+	if index1 < 0 || index1 >= len(graph.nodes) {
 		return nil
 	}
-	lo, hi := g.outOffsets[i], g.outOffsets[i+1]
-	if lo == hi {
+	low, high := graph.outOffsets[index1], graph.outOffsets[index1+1]
+	if low == high {
 		return nil
 	}
-	out := make([]Edge, hi-lo)
-	for k, eid := range g.outEdgeIDs[lo:hi] {
-		out[k] = g.edges[eid]
+	out := make([]Edge, high-low)
+	for index2, eid := range graph.outEdgeIDs[low:high] {
+		out[index2] = graph.edges[eid]
 	}
 	return out
 }
 
 // Edge returns the edge with the given id; ok is false if id is out of range.
-func (g *AdjacencyGraph) Edge(id domain.EdgeID) (Edge, bool) {
-	i := int(id)
-	if i < 0 || i >= len(g.edges) {
+func (graph *AdjacencyGraph) Edge(edgeID domain.EdgeID) (Edge, bool) {
+	index := int(edgeID)
+	if index < 0 || index >= len(graph.edges) {
 		return Edge{}, false
 	}
-	return g.edges[i], true
+	return graph.edges[index], true
 }
 
 // Node returns the node with the given id; ok is false if id is out of range.
-func (g *AdjacencyGraph) Node(id domain.NodeID) (Node, bool) {
-	i := int(id)
-	if i < 0 || i >= len(g.nodes) {
+func (graph *AdjacencyGraph) Node(nodeID domain.NodeID) (Node, bool) {
+	index := int(nodeID)
+	if index < 0 || index >= len(graph.nodes) {
 		return Node{}, false
 	}
-	return g.nodes[i], true
+	return graph.nodes[index], true
 }
 
 // NodeCount returns the number of nodes.
-func (g *AdjacencyGraph) NodeCount() int { return len(g.nodes) }
+func (graph *AdjacencyGraph) NodeCount() int { return len(graph.nodes) }
 
 // EdgeCount returns the number of directed edges.
-func (g *AdjacencyGraph) EdgeCount() int { return len(g.edges) }
+func (graph *AdjacencyGraph) EdgeCount() int { return len(graph.edges) }
 
 // NearestNode resolves a coordinate to the node closest to it by great-circle
 // (haversine) distance, using the immutable k-d tree built in New. ok is false
@@ -162,9 +162,9 @@ func (g *AdjacencyGraph) EdgeCount() int { return len(g.edges) }
 // The result is exact provided the node set does not span the ±180° antimeridian
 // (it lies within a <180°-wide longitude band), which holds for any single-region
 // road network; see the kdTree pruning-admissibility doc for the seam caveat.
-func (g *AdjacencyGraph) NearestNode(p domain.LatLon) (domain.NodeID, bool) {
-	idx, ok := g.kd.nearest(p)
-	if !ok {
+func (graph *AdjacencyGraph) NearestNode(point domain.LatLon) (domain.NodeID, bool) {
+	idx, found := graph.kd.nearest(point)
+	if !found {
 		return 0, false
 	}
 	// idx is the dense NodeID packed in New; the round-trip is exact (see New).
@@ -181,7 +181,7 @@ func (g *AdjacencyGraph) NearestNode(p domain.LatLon) (domain.NodeID, bool) {
 // the silent-degradation trap. Panicking instead makes a premature Phase-7
 // integration fail loudly rather than silently resolve every observation to "no
 // match". There are no production callers today, so this breaks nothing.
-func (g *AdjacencyGraph) NearestEdge(_ domain.LatLon, _ float64) (domain.EdgeID, domain.LatLon, float64, bool) {
+func (graph *AdjacencyGraph) NearestEdge(_ domain.LatLon, _ float64) (domain.EdgeID, domain.LatLon, float64, bool) {
 	panic("graph.NearestEdge: not implemented (Phase 7 map-matching R-tree); see issue #36")
 }
 

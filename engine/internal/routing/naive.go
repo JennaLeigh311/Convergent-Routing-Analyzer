@@ -21,19 +21,19 @@ type NaiveRouter struct {
 }
 
 // NewNaiveRouter returns a NaiveRouter over the (immutable, already-loaded) graph.
-func NewNaiveRouter(g graph.Graph) *NaiveRouter {
-	return &NaiveRouter{g: g}
+func NewNaiveRouter(roadGraph graph.Graph) *NaiveRouter {
+	return &NaiveRouter{g: roadGraph}
 }
 
 // Compile-time assertion: *NaiveRouter satisfies the Router port.
 var _ Router = (*NaiveRouter)(nil)
 
 // Name identifies this strategy in benchmark output and the API.
-func (r *NaiveRouter) Name() string { return "naive" }
+func (router *NaiveRouter) Name() string { return "naive" }
 
 // freeFlowWeight is the naive cost of an edge: its free-flow traversal time in
 // seconds, with no congestion term. This is the weight that makes "naive" naive.
-func freeFlowWeight(e graph.Edge) float64 { return e.FreeFlowS }
+func freeFlowWeight(edge graph.Edge) float64 { return edge.FreeFlowS }
 
 // Route answers a single request: snap From/To to the nearest graph nodes, then
 // run Dijkstra on free-flow time. The returned Route.CostS is the summed
@@ -45,22 +45,22 @@ func freeFlowWeight(e graph.Edge) float64 { return e.FreeFlowS }
 // When From and To snap to the same node the result is a clean zero-edge,
 // zero-cost Route (not an error): a path to where you already are. Downstream
 // flow accumulation must therefore tolerate an empty Edges slice.
-func (r *NaiveRouter) Route(ctx context.Context, req RouteRequest) (Route, error) {
+func (router *NaiveRouter) Route(ctx context.Context, req RouteRequest) (Route, error) {
 	if err := ctx.Err(); err != nil {
 		return Route{}, err
 	}
 
-	src, ok := r.g.NearestNode(req.From)
-	if !ok {
+	src, found := router.g.NearestNode(req.From)
+	if !found {
 		return Route{}, fmt.Errorf("naive: request %q: no graph node near origin %+v", req.ID, req.From)
 	}
-	dst, ok := r.g.NearestNode(req.To)
-	if !ok {
+	dst, found := router.g.NearestNode(req.To)
+	if !found {
 		return Route{}, fmt.Errorf("naive: request %q: no graph node near destination %+v", req.ID, req.To)
 	}
 
-	path, cost, ok := dijkstra(r.g, src, dst, freeFlowWeight)
-	if !ok {
+	path, cost, found := dijkstra(router.g, src, dst, freeFlowWeight)
+	if !found {
 		return Route{}, fmt.Errorf("naive: request %q: no path from node %d to node %d", req.ID, src, dst)
 	}
 	return Route{RequestID: req.ID, Edges: path, CostS: cost}, nil
@@ -77,17 +77,17 @@ func (r *NaiveRouter) Route(ctx context.Context, req RouteRequest) (Route, error
 // same requests over many equilibrium iterations should instead snap every
 // endpoint to its NodeID once up front and feed node ids into the inner loop,
 // rather than copying this per-call snap into its hot path.
-func (r *NaiveRouter) Assign(ctx context.Context, reqs []RouteRequest) ([]Route, error) {
+func (router *NaiveRouter) Assign(ctx context.Context, reqs []RouteRequest) ([]Route, error) {
 	out := make([]Route, len(reqs))
-	for i, req := range reqs {
+	for index, req := range reqs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		rt, err := r.Route(ctx, req)
+		route, err := router.Route(ctx, req)
 		if err != nil {
 			return nil, err
 		}
-		out[i] = rt
+		out[index] = route
 	}
 	return out, nil
 }

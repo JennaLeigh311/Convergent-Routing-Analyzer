@@ -44,20 +44,20 @@ func FromEnv() Config {
 // New builds a *slog.Logger from cfg. A zero Config yields info-level text logs
 // to stderr.
 func New(cfg Config) *slog.Logger {
-	w := cfg.Writer
-	if w == nil {
-		w = os.Stderr
+	writer := cfg.Writer
+	if writer == nil {
+		writer = os.Stderr
 	}
 	opts := &slog.HandlerOptions{Level: cfg.Level}
 
-	var h slog.Handler
+	var handler slog.Handler
 	switch cfg.Format {
 	case FormatJSON:
-		h = slog.NewJSONHandler(w, opts)
+		handler = slog.NewJSONHandler(writer, opts)
 	default:
-		h = slog.NewTextHandler(w, opts)
+		handler = slog.NewTextHandler(writer, opts)
 	}
-	return slog.New(h)
+	return slog.New(handler)
 }
 
 // Setup builds a logger from the environment, installs it as the slog default,
@@ -69,8 +69,8 @@ func Setup() *slog.Logger {
 }
 
 // parseLevel maps a LOG_LEVEL string to a slog.Level, defaulting to Info.
-func parseLevel(s string) slog.Level {
-	switch strings.ToLower(strings.TrimSpace(s)) {
+func parseLevel(text string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(text)) {
 	case "debug":
 		return slog.LevelDebug
 	case "warn", "warning":
@@ -83,8 +83,8 @@ func parseLevel(s string) slog.Level {
 }
 
 // parseFormat maps a LOG_FORMAT string to a Format, defaulting to FormatText.
-func parseFormat(s string) Format {
-	if strings.ToLower(strings.TrimSpace(s)) == "json" {
+func parseFormat(text string) Format {
+	if strings.ToLower(strings.TrimSpace(text)) == "json" {
 		return FormatJSON
 	}
 	return FormatText

@@ -49,34 +49,34 @@ func FormatSegmentID(osmWayID int64, seq int, dir Direction) SegmentID {
 // Every string listed in docs/fixtures/segment_id/parse_invalid.json must return
 // an error here; every segment_id in format_cases.json must parse back to its
 // source fields.
-func ParseSegmentID(id SegmentID) (osmWayID int64, seq int, dir Direction, err error) {
-	s := string(id)
+func ParseSegmentID(segmentID SegmentID) (osmWayID int64, seq int, dir Direction, err error) {
+	text := string(segmentID)
 
 	// Exactly two colons → exactly three fields. SplitN with a cap of 4 lets us
 	// detect "too many colons" instead of silently swallowing extras.
-	fields := strings.SplitN(s, ":", 4)
+	fields := strings.SplitN(text, ":", 4)
 	if len(fields) != 3 {
-		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: want exactly 3 colon-separated fields, got %d", s, len(fields))
+		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: want exactly 3 colon-separated fields, got %d", text, len(fields))
 	}
 	wayField, seqField, dirField := fields[0], fields[1], fields[2]
 
 	osmWayID, err = parseNonNegInt64(wayField)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: osm_way_id: %w", s, err)
+		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: osm_way_id: %w", text, err)
 	}
 	if osmWayID < 1 {
-		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: osm_way_id must be positive (>= 1)", s)
+		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: osm_way_id must be positive (>= 1)", text)
 	}
 
 	seq64, err := parseNonNegInt64(seqField)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: seq: %w", s, err)
+		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: seq: %w", text, err)
 	}
 	// This guard only fires on 32-bit builds; on 64-bit, math.MaxInt == the
 	// int64 max, so ParseInt's 64-bit bound already rejects anything larger.
 	// Keep it so a future reader doesn't delete it as unreachable.
 	if seq64 > int64(math.MaxInt) {
-		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: seq %d overflows int", s, seq64)
+		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: seq %d overflows int", text, seq64)
 	}
 	seq = int(seq64)
 
@@ -86,7 +86,7 @@ func ParseSegmentID(id SegmentID) (osmWayID int64, seq int, dir Direction, err e
 	case "R":
 		dir = Reverse
 	default:
-		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: dir: want %q or %q, got %q", s, "F", "R", dirField)
+		return 0, 0, 0, fmt.Errorf("invalid segment_id %q: dir: want %q or %q, got %q", text, "F", "R", dirField)
 	}
 
 	return osmWayID, seq, dir, nil
@@ -107,15 +107,15 @@ func parseNonNegInt64(field string) (int64, error) {
 	if field[0] == '+' || field[0] == '-' {
 		return 0, fmt.Errorf("must be a non-negative integer, got %q", field)
 	}
-	v, err := strconv.ParseInt(field, 10, 64)
+	value, err := strconv.ParseInt(field, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("must be a non-negative integer, got %q", field)
 	}
 	// Reject non-canonical renderings (e.g. leading zeros: "007" -> 7). A
 	// segment_id is a string key; "007:0:F" and "7:0:F" must not both parse to
 	// the same fields and alias each other on the wire.
-	if strconv.FormatInt(v, 10) != field {
+	if strconv.FormatInt(value, 10) != field {
 		return 0, fmt.Errorf("non-canonical integer (leading zeros not allowed), got %q", field)
 	}
-	return v, nil
+	return value, nil
 }

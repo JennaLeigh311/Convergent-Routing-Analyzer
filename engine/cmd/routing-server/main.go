@@ -95,8 +95,8 @@ func newMux() *http.ServeMux {
 }
 
 // healthHandler reports liveness/readiness. Phase 0: always 200 "ok".
-func healthHandler(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
+func healthHandler(responseWriter http.ResponseWriter, _ *http.Request) {
+	responseWriter.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	responseWriter.WriteHeader(http.StatusOK)
+	_, _ = responseWriter.Write([]byte("ok"))
 }

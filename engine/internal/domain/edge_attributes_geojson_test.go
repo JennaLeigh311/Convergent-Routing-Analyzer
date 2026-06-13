@@ -82,18 +82,18 @@ var contractPropertyKeys = map[string]bool{
 // loadGeoJSON reads and unmarshals the FeatureCollection. Unlike loadFixture
 // (segmentid_test.go) the GeoJSON top level is an object, not an array, so this
 // is a focused bespoke loader in the same spirit.
-func loadGeoJSON(t *testing.T, dir, name string) geojsonFeatureCollection {
-	t.Helper()
+func loadGeoJSON(test *testing.T, dir, name string) geojsonFeatureCollection {
+	test.Helper()
 	path := filepath.Join(dir, name)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read fixture %s: %v", path, err)
+		test.Fatalf("read fixture %s: %v", path, err)
 	}
-	var fc geojsonFeatureCollection
-	if err := json.Unmarshal(data, &fc); err != nil {
-		t.Fatalf("unmarshal fixture %s: %v", path, err)
+	var featureCollection geojsonFeatureCollection
+	if err := json.Unmarshal(data, &featureCollection); err != nil {
+		test.Fatalf("unmarshal fixture %s: %v", path, err)
 	}
-	return fc
+	return featureCollection
 }
 
 // assertExactPropertyKeys re-decodes the FeatureCollection with each Feature's
@@ -101,12 +101,12 @@ func loadGeoJSON(t *testing.T, dir, name string) geojsonFeatureCollection {
 // §2 contract columns (contractPropertyKeys) and no others. This catches the one
 // thing a typed decode cannot: an unexpected EXTRA property silently ignored by
 // json.Unmarshal.
-func assertExactPropertyKeys(t *testing.T, dir, name string) {
-	t.Helper()
+func assertExactPropertyKeys(test *testing.T, dir, name string) {
+	test.Helper()
 	path := filepath.Join(dir, name)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read fixture %s: %v", path, err)
+		test.Fatalf("read fixture %s: %v", path, err)
 	}
 	var rawFC struct {
 		Features []struct {
@@ -114,31 +114,31 @@ func assertExactPropertyKeys(t *testing.T, dir, name string) {
 		} `json:"features"`
 	}
 	if err := json.Unmarshal(data, &rawFC); err != nil {
-		t.Fatalf("unmarshal fixture %s: %v", path, err)
+		test.Fatalf("unmarshal fixture %s: %v", path, err)
 	}
-	for i, f := range rawFC.Features {
-		if len(f.Properties) != len(contractPropertyKeys) {
-			t.Errorf("feature %d: properties has %d keys, want exactly %d (the §2 contract columns)",
-				i, len(f.Properties), len(contractPropertyKeys))
+	for index, feature := range rawFC.Features {
+		if len(feature.Properties) != len(contractPropertyKeys) {
+			test.Errorf("feature %d: properties has %d keys, want exactly %d (the §2 contract columns)",
+				index, len(feature.Properties), len(contractPropertyKeys))
 		}
-		for k := range f.Properties {
-			if !contractPropertyKeys[k] {
-				t.Errorf("feature %d: unexpected property key %q — properties must be exactly the 11 §2 contract columns", i, k)
+		for key := range feature.Properties {
+			if !contractPropertyKeys[key] {
+				test.Errorf("feature %d: unexpected property key %q — properties must be exactly the 11 §2 contract columns", index, key)
 			}
 		}
 	}
 }
 
-func coordsEqual(a, b [][]float64) bool {
-	if len(a) != len(b) {
+func coordsEqual(matrixA, matrix [][]float64) bool {
+	if len(matrixA) != len(matrix) {
 		return false
 	}
-	for i := range a {
-		if len(a[i]) != len(b[i]) {
+	for index := range matrixA {
+		if len(matrixA[index]) != len(matrix[index]) {
 			return false
 		}
-		for j := range a[i] {
-			if a[i][j] != b[i][j] {
+		for innerIndex := range matrixA[index] {
+			if matrixA[index][innerIndex] != matrix[index][innerIndex] {
 				return false
 			}
 		}
@@ -151,19 +151,19 @@ func coordsEqual(a, b [][]float64) bool {
 // logical-row example_export.json: every segment_id's 11 contract properties and
 // geometry coordinates must match the source row exactly, with no missing/extra
 // rows. It also checks the named must-survive rows are present.
-func TestEdgeAttributesGeoJSONConformance(t *testing.T) {
-	fc := loadGeoJSON(t, edgeAttributesFixtureDir, "example_export.geojson")
+func TestEdgeAttributesGeoJSONConformance(test *testing.T) {
+	featureCollection := loadGeoJSON(test, edgeAttributesFixtureDir, "example_export.geojson")
 
 	// (1) envelope type.
-	if fc.Type != "FeatureCollection" {
-		t.Errorf("top-level type = %q, want %q", fc.Type, "FeatureCollection")
+	if featureCollection.Type != "FeatureCollection" {
+		test.Errorf("top-level type = %q, want %q", featureCollection.Type, "FeatureCollection")
 	}
 
 	// (2) schema_version is the JSON integer 1, NOT the stringified "1". Compare
 	// the raw bytes: any surrounding quotes (the Parquet-footer form) fail here.
-	raw := bytes.TrimSpace(fc.SchemaVersion)
+	raw := bytes.TrimSpace(featureCollection.SchemaVersion)
 	if !bytes.Equal(raw, []byte("1")) {
-		t.Errorf("top-level schema_version raw bytes = %q, want integer 1 (no quotes; \"1\" is the Parquet footer form)", string(raw))
+		test.Errorf("top-level schema_version raw bytes = %q, want integer 1 (no quotes; \"1\" is the Parquet footer form)", string(raw))
 	}
 
 	// (2b) properties must be EXACTLY the 11 contract columns — no extras. The
@@ -173,58 +173,58 @@ func TestEdgeAttributesGeoJSONConformance(t *testing.T) {
 	// break the frontend's "properties.segment_id is a pure §1 join, no extras"
 	// guarantee. Re-reads the file once into a raw shape (the typed loader can't
 	// also surface the raw key set).
-	assertExactPropertyKeys(t, edgeAttributesFixtureDir, "example_export.geojson")
+	assertExactPropertyKeys(test, edgeAttributesFixtureDir, "example_export.geojson")
 
 	// (3) row-equivalence against the logical-row fixture. Build the source map
 	// keyed by segment_id, then match each GeoJSON feature against it. Equivalence
 	// is asserted as a SET keyed by segment_id, deliberately NOT positionally:
 	// feature order is not part of the contract, so re-ordering the GeoJSON must
 	// not fail this test (the README is worded to match — "same set of rows").
-	srcRows := loadFixture[sourceRow](t, edgeAttributesFixtureDir, "example_export.json")
+	srcRows := loadFixture[sourceRow](test, edgeAttributesFixtureDir, "example_export.json")
 	srcByID := make(map[string]sourceRow, len(srcRows))
-	for _, r := range srcRows {
-		srcByID[r.SegmentID] = r
+	for _, row1 := range srcRows {
+		srcByID[row1.SegmentID] = row1
 	}
 
-	if len(fc.Features) != len(srcRows) {
-		t.Errorf("geojson has %d features, source has %d rows", len(fc.Features), len(srcRows))
+	if len(featureCollection.Features) != len(srcRows) {
+		test.Errorf("geojson has %d features, source has %d rows", len(featureCollection.Features), len(srcRows))
 	}
 
-	seenGeo := make(map[string]bool, len(fc.Features))
-	for i, f := range fc.Features {
-		if f.Type != "Feature" {
-			t.Errorf("feature %d type = %q, want %q", i, f.Type, "Feature")
+	seenGeo := make(map[string]bool, len(featureCollection.Features))
+	for index, feature1 := range featureCollection.Features {
+		if feature1.Type != "Feature" {
+			test.Errorf("feature %d type = %q, want %q", index, feature1.Type, "Feature")
 		}
-		id := f.Properties.SegmentID
-		if seenGeo[id] {
-			t.Errorf("duplicate segment_id %q in geojson features", id)
+		identifier1 := feature1.Properties.SegmentID
+		if seenGeo[identifier1] {
+			test.Errorf("duplicate segment_id %q in geojson features", identifier1)
 		}
-		seenGeo[id] = true
+		seenGeo[identifier1] = true
 
-		src, ok := srcByID[id]
-		if !ok {
-			t.Errorf("geojson feature segment_id %q has no matching source row", id)
+		src, found1 := srcByID[identifier1]
+		if !found1 {
+			test.Errorf("geojson feature segment_id %q has no matching source row", identifier1)
 			continue
 		}
 
 		// all 11 contract properties, including source_node/target_node (the
 		// reversed F/R pairs differ only in those two).
-		if f.Properties != src.edgeProps {
-			t.Errorf("segment_id %q: geojson properties %+v != source %+v", id, f.Properties, src.edgeProps)
+		if feature1.Properties != src.edgeProps {
+			test.Errorf("segment_id %q: geojson properties %+v != source %+v", identifier1, feature1.Properties, src.edgeProps)
 		}
 
 		// the non-contract `note` must survive verbatim (README documentation
 		// parity), even though it is a foreign member, not a contract property.
-		if f.Note != src.Note {
-			t.Errorf("segment_id %q: geojson note %q != source note %q", id, f.Note, src.Note)
+		if feature1.Note != src.Note {
+			test.Errorf("segment_id %q: geojson note %q != source note %q", identifier1, feature1.Note, src.Note)
 		}
 
 		// geometry coordinates must match exactly.
-		if f.Geometry.Type != src.Geometry.Type {
-			t.Errorf("segment_id %q: geometry type %q != source %q", id, f.Geometry.Type, src.Geometry.Type)
+		if feature1.Geometry.Type != src.Geometry.Type {
+			test.Errorf("segment_id %q: geometry type %q != source %q", identifier1, feature1.Geometry.Type, src.Geometry.Type)
 		}
-		if !coordsEqual(f.Geometry.Coordinates, src.Geometry.Coordinates) {
-			t.Errorf("segment_id %q: geometry coordinates %v != source %v", id, f.Geometry.Coordinates, src.Geometry.Coordinates)
+		if !coordsEqual(feature1.Geometry.Coordinates, src.Geometry.Coordinates) {
+			test.Errorf("segment_id %q: geometry coordinates %v != source %v", identifier1, feature1.Geometry.Coordinates, src.Geometry.Coordinates)
 		}
 
 		// [lon, lat] axis order (§2). Cross-checking coords against
@@ -233,24 +233,24 @@ func TestEdgeAttributesGeoJSONConformance(t *testing.T) {
 		// (lon ≈ -73.9, lat ≈ 40.7). A [lat, lon] swap puts ~40 in the lon slot
 		// and ~-73 in the lat slot, both out of these bounds — the classic
 		// transposition bug fails loudly instead of shipping green.
-		for _, c := range f.Geometry.Coordinates {
-			if len(c) != 2 {
-				t.Errorf("segment_id %q: coordinate %v is not a [lon, lat] pair", id, c)
+		for _, coeffs := range feature1.Geometry.Coordinates {
+			if len(coeffs) != 2 {
+				test.Errorf("segment_id %q: coordinate %v is not a [lon, lat] pair", identifier1, coeffs)
 				continue
 			}
-			if lon := c[0]; lon < -75 || lon > -73 {
-				t.Errorf("segment_id %q: lon %v outside NYC bounds [-75,-73] — [lat,lon] axis swap?", id, lon)
+			if lon := coeffs[0]; lon < -75 || lon > -73 {
+				test.Errorf("segment_id %q: lon %v outside NYC bounds [-75,-73] — [lat,lon] axis swap?", identifier1, lon)
 			}
-			if lat := c[1]; lat < 40 || lat > 41 {
-				t.Errorf("segment_id %q: lat %v outside NYC bounds [40,41] — [lat,lon] axis swap?", id, lat)
+			if lat := coeffs[1]; lat < 40 || lat > 41 {
+				test.Errorf("segment_id %q: lat %v outside NYC bounds [40,41] — [lat,lon] axis swap?", identifier1, lat)
 			}
 		}
 	}
 
 	// every source row must be present in the geojson too (no missing rows).
-	for _, r := range srcRows {
-		if !seenGeo[r.SegmentID] {
-			t.Errorf("source segment_id %q missing from geojson", r.SegmentID)
+	for _, row2 := range srcRows {
+		if !seenGeo[row2.SegmentID] {
+			test.Errorf("source segment_id %q missing from geojson", row2.SegmentID)
 		}
 	}
 
@@ -261,22 +261,22 @@ func TestEdgeAttributesGeoJSONConformance(t *testing.T) {
 		"8123456:0:F", "8123456:0:R", // F/R pair
 		"27583001:0:F", // congestion overlap
 	}
-	for _, id := range mustSurvive {
-		f, ok := findFeature(fc, id)
-		if !ok {
-			t.Errorf("must-survive segment_id %q missing from geojson", id)
+	for _, identifier2 := range mustSurvive {
+		feature2, found2 := findFeature(featureCollection, identifier2)
+		if !found2 {
+			test.Errorf("must-survive segment_id %q missing from geojson", identifier2)
 			continue
 		}
-		if id == "33112200:0:F" && len(f.Geometry.Coordinates) != 3 {
-			t.Errorf("segment_id %q must be a 3-coordinate LineString, got %d coords", id, len(f.Geometry.Coordinates))
+		if identifier2 == "33112200:0:F" && len(feature2.Geometry.Coordinates) != 3 {
+			test.Errorf("segment_id %q must be a 3-coordinate LineString, got %d coords", identifier2, len(feature2.Geometry.Coordinates))
 		}
 	}
 }
 
-func findFeature(fc geojsonFeatureCollection, id string) (geojsonFeature, bool) {
-	for _, f := range fc.Features {
-		if f.Properties.SegmentID == id {
-			return f, true
+func findFeature(featureCollection geojsonFeatureCollection, identifier string) (geojsonFeature, bool) {
+	for _, feature := range featureCollection.Features {
+		if feature.Properties.SegmentID == identifier {
+			return feature, true
 		}
 	}
 	return geojsonFeature{}, false
@@ -296,16 +296,16 @@ type malformedExport struct {
 // invariant categories are each represented (matched by substring on the
 // normalized `violates` labels). The actual rejection logic is #25's; here we
 // only assert the corpus exists, is annotated, and covers the invariants.
-func TestMalformedExportsCorpus(t *testing.T) {
-	corpus := loadFixture[malformedExport](t, edgeAttributesFixtureDir, "malformed_exports.json")
+func TestMalformedExportsCorpus(test *testing.T) {
+	corpus := loadFixture[malformedExport](test, edgeAttributesFixtureDir, "malformed_exports.json")
 
-	for i, m := range corpus {
-		if strings.TrimSpace(m.Violates) == "" {
-			t.Errorf("corpus entry %d has an empty `violates` string", i)
+	for index, export1 := range corpus {
+		if strings.TrimSpace(export1.Violates) == "" {
+			test.Errorf("corpus entry %d has an empty `violates` string", index)
 		}
-		if m.FeatureCollection.Type != "FeatureCollection" {
-			t.Errorf("corpus entry %d (%q): feature_collection type = %q, want %q",
-				i, m.Violates, m.FeatureCollection.Type, "FeatureCollection")
+		if export1.FeatureCollection.Type != "FeatureCollection" {
+			test.Errorf("corpus entry %d (%q): feature_collection type = %q, want %q",
+				index, export1.Violates, export1.FeatureCollection.Type, "FeatureCollection")
 		}
 	}
 
@@ -332,14 +332,14 @@ func TestMalformedExportsCorpus(t *testing.T) {
 	}
 	for name, needle := range mandated {
 		found := false
-		for _, m := range corpus {
-			if strings.Contains(strings.ToLower(m.Violates), needle) {
+		for _, export2 := range corpus {
+			if strings.Contains(strings.ToLower(export2.Violates), needle) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Errorf("mandated malformed case %q not represented in corpus (no `violates` contains %q)", name, needle)
+			test.Errorf("mandated malformed case %q not represented in corpus (no `violates` contains %q)", name, needle)
 		}
 	}
 }

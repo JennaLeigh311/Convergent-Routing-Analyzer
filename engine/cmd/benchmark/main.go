@@ -32,7 +32,7 @@ func main() {
 
 	// Load the toy network. A failure here is fatal: the bench cannot route
 	// without a graph, and CI must see a non-zero exit.
-	g, _, err := graph.LoadEdgeAttributesGeoJSONFile(toyNetworkPath)
+	roadGraph, _, err := graph.LoadEdgeAttributesGeoJSONFile(toyNetworkPath)
 	if err != nil {
 		logger.Error("load toy network failed", "component", "benchmark", "path", toyNetworkPath, "err", err)
 		os.Exit(1)
@@ -46,7 +46,7 @@ func main() {
 	// bench-1 is node 3 -> node 4 over the two-way secondary pair. These are this
 	// harness's own batch inputs — it asserts nothing about the resulting paths, so
 	// they are deliberately independent of the canonical-route golden.
-	router := routing.NewNaiveRouter(g)
+	router := routing.NewNaiveRouter(roadGraph)
 	reqs := []routing.RouteRequest{
 		{ID: "bench-0", From: domain.LatLon{Lat: 40.73, Lon: -73.99}, To: domain.LatLon{Lat: 40.74, Lon: -73.97}},
 		{ID: "bench-1", From: domain.LatLon{Lat: 40.742, Lon: -73.965}, To: domain.LatLon{Lat: 40.745, Lon: -73.96}},
@@ -65,8 +65,8 @@ func main() {
 	logger.Info("phase-1 naive-router toy-graph bench",
 		"component", "benchmark",
 		"router", router.Name(),
-		"nodes", g.NodeCount(),
-		"edges", g.EdgeCount(),
+		"nodes", roadGraph.NodeCount(),
+		"edges", roadGraph.EdgeCount(),
 		"requests_routed", len(routes),
 		"elapsed", elapsed.String(),
 	)

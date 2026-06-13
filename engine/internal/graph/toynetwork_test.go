@@ -23,21 +23,21 @@ func toyBounds() graph.LoadOption { return graph.WithExpectedBounds(-74, -73, 40
 
 // loadToy loads the toy fixture with the NYC bounds and fails the test on any
 // load error (the fixture MUST load with zero error).
-func loadToy(t *testing.T) (*graph.AdjacencyGraph, map[domain.SegmentID]graph.LineString) {
-	t.Helper()
-	g, geom, err := graph.LoadEdgeAttributesGeoJSONFile(toyNetworkPath, toyBounds())
+func loadToy(test *testing.T) (*graph.AdjacencyGraph, map[domain.SegmentID]graph.LineString) {
+	test.Helper()
+	roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSONFile(toyNetworkPath, toyBounds())
 	if err != nil {
-		t.Fatalf("toy_network.geojson must load with zero error, got: %v", err)
+		test.Fatalf("toy_network.geojson must load with zero error, got: %v", err)
 	}
-	return g, geom
+	return roadGraph, geom
 }
 
 // segByID walks the graph and returns the edge whose Segment == seg, plus ok.
-func segByID(g *graph.AdjacencyGraph, seg domain.SegmentID) (graph.Edge, bool) {
-	for id := domain.EdgeID(0); int(id) < g.EdgeCount(); id++ {
-		e, _ := g.Edge(id)
-		if e.Segment == seg {
-			return e, true
+func segByID(roadGraph *graph.AdjacencyGraph, seg domain.SegmentID) (graph.Edge, bool) {
+	for edgeID := domain.EdgeID(0); int(edgeID) < roadGraph.EdgeCount(); edgeID++ {
+		edge, _ := roadGraph.Edge(edgeID)
+		if edge.Segment == seg {
+			return edge, true
 		}
 	}
 	return graph.Edge{}, false
@@ -45,46 +45,46 @@ func segByID(g *graph.AdjacencyGraph, seg domain.SegmentID) (graph.Edge, bool) {
 
 // TestToyNetworkLoads asserts the fixture loads cleanly with the expected
 // edge/node counts, dense edge ids, and a geometry-map entry per segment_id.
-func TestToyNetworkLoads(t *testing.T) {
-	g, geom := loadToy(t)
+func TestToyNetworkLoads(test *testing.T) {
+	roadGraph, geom := loadToy(test)
 
 	const wantEdges = 7
 	const wantNodes = 6
-	if g.EdgeCount() != wantEdges {
-		t.Errorf("EdgeCount = %d, want %d", g.EdgeCount(), wantEdges)
+	if roadGraph.EdgeCount() != wantEdges {
+		test.Errorf("EdgeCount = %d, want %d", roadGraph.EdgeCount(), wantEdges)
 	}
-	if g.NodeCount() != wantNodes {
-		t.Errorf("NodeCount = %d, want %d", g.NodeCount(), wantNodes)
+	if roadGraph.NodeCount() != wantNodes {
+		test.Errorf("NodeCount = %d, want %d", roadGraph.NodeCount(), wantNodes)
 	}
 	if len(geom) != wantEdges {
-		t.Errorf("geometry map has %d entries, want %d", len(geom), wantEdges)
+		test.Errorf("geometry map has %d entries, want %d", len(geom), wantEdges)
 	}
 
 	// Dense, contiguous edge ids 0..EdgeCount-1, each present, with a geometry
 	// entry for its segment_id.
-	for id := domain.EdgeID(0); int(id) < g.EdgeCount(); id++ {
-		e, ok := g.Edge(id)
-		if !ok {
-			t.Errorf("edge id %d missing — edge ids must be dense 0..%d", id, wantEdges-1)
+	for edgeID := domain.EdgeID(0); int(edgeID) < roadGraph.EdgeCount(); edgeID++ {
+		edge, found1 := roadGraph.Edge(edgeID)
+		if !found1 {
+			test.Errorf("edge id %d missing — edge ids must be dense 0..%d", edgeID, wantEdges-1)
 			continue
 		}
-		if e.ID != id {
-			t.Errorf("edge at id %d has ID %d (in-memory EdgeID must equal export edge_id)", id, e.ID)
+		if edge.ID != edgeID {
+			test.Errorf("edge at id %d has ID %d (in-memory EdgeID must equal export edge_id)", edgeID, edge.ID)
 		}
-		if _, ok := geom[e.Segment]; !ok {
-			t.Errorf("edge id %d segment %q missing from geometry map", id, e.Segment)
+		if _, found2 := geom[edge.Segment]; !found2 {
+			test.Errorf("edge id %d segment %q missing from geometry map", edgeID, edge.Segment)
 		}
 	}
 
 	// Dense, contiguous node ids 0..NodeCount-1.
-	for id := domain.NodeID(0); int(id) < g.NodeCount(); id++ {
-		n, ok := g.Node(id)
-		if !ok {
-			t.Errorf("node id %d missing — nodes must be dense 0..%d", id, wantNodes-1)
+	for nodeID := domain.NodeID(0); int(nodeID) < roadGraph.NodeCount(); nodeID++ {
+		node, found3 := roadGraph.Node(nodeID)
+		if !found3 {
+			test.Errorf("node id %d missing — nodes must be dense 0..%d", nodeID, wantNodes-1)
 			continue
 		}
-		if n.ID != id {
-			t.Errorf("node at id %d has ID %d", id, n.ID)
+		if node.ID != nodeID {
+			test.Errorf("node at id %d has ID %d", nodeID, node.ID)
 		}
 	}
 }
@@ -92,44 +92,44 @@ func TestToyNetworkLoads(t *testing.T) {
 // TestToyNetworkFRPair asserts the 48800123 two-way pair: both directions
 // present, endpoints swapped (F.From == R.To and F.To == R.From), and geometry
 // reversed (R's coords are F's reversed).
-func TestToyNetworkFRPair(t *testing.T) {
-	g, geom := loadToy(t)
+func TestToyNetworkFRPair(test *testing.T) {
+	roadGraph, geom := loadToy(test)
 
-	f, okF := segByID(g, "48800123:0:F")
-	r, okR := segByID(g, "48800123:0:R")
+	edge1, okF := segByID(roadGraph, "48800123:0:F")
+	edge2, okR := segByID(roadGraph, "48800123:0:R")
 	if !okF || !okR {
-		t.Fatalf("F/R pair must both be present: F present=%v, R present=%v", okF, okR)
+		test.Fatalf("F/R pair must both be present: F present=%v, R present=%v", okF, okR)
 	}
 
-	if f.From != r.To {
-		t.Errorf("F.From (%d) must equal R.To (%d)", f.From, r.To)
+	if edge1.From != edge2.To {
+		test.Errorf("F.From (%d) must equal R.To (%d)", edge1.From, edge2.To)
 	}
-	if f.To != r.From {
-		t.Errorf("F.To (%d) must equal R.From (%d)", f.To, r.From)
+	if edge1.To != edge2.From {
+		test.Errorf("F.To (%d) must equal R.From (%d)", edge1.To, edge2.From)
 	}
 
 	fGeom := geom["48800123:0:F"]
 	rGeom := geom["48800123:0:R"]
 	if len(fGeom) != len(rGeom) {
-		t.Fatalf("F/R geometries differ in length: %d vs %d", len(fGeom), len(rGeom))
+		test.Fatalf("F/R geometries differ in length: %d vs %d", len(fGeom), len(rGeom))
 	}
 	reversed := make(graph.LineString, len(fGeom))
-	for i := range fGeom {
-		reversed[i] = fGeom[len(fGeom)-1-i]
+	for index := range fGeom {
+		reversed[index] = fGeom[len(fGeom)-1-index]
 	}
 	if !reflect.DeepEqual(rGeom, reversed) {
-		t.Errorf("R geometry %v is not the reverse of F geometry %v", rGeom, fGeom)
+		test.Errorf("R geometry %v is not the reverse of F geometry %v", rGeom, fGeom)
 	}
 }
 
 // TestToyNetworkCongestionOverlap asserts the three segment_ids shared with the
 // segment_congestion fixture are all present, so a congestion overlay is
 // demoable later via a pure segment_id join.
-func TestToyNetworkCongestionOverlap(t *testing.T) {
-	g, _ := loadToy(t)
+func TestToyNetworkCongestionOverlap(test *testing.T) {
+	roadGraph, _ := loadToy(test)
 	for _, seg := range []domain.SegmentID{"27583001:0:F", "48800123:0:F", "48800123:0:R"} {
-		if _, ok := segByID(g, seg); !ok {
-			t.Errorf("congestion-overlapping segment %q must be present", seg)
+		if _, found := segByID(roadGraph, seg); !found {
+			test.Errorf("congestion-overlapping segment %q must be present", seg)
 		}
 	}
 }
@@ -143,8 +143,8 @@ func TestToyNetworkCongestionOverlap(t *testing.T) {
 // float64 (no arithmetic on the path). Derivation rules (§2, capacity_scale=1.0):
 // capacity_vph = lanes × 1800 × class_factor;
 // freeflow_time_s = length_m / (maxspeed_kmh / 3.6).
-func TestToyNetworkDerivedFields(t *testing.T) {
-	g, _ := loadToy(t)
+func TestToyNetworkDerivedFields(test *testing.T) {
+	roadGraph, _ := loadToy(test)
 
 	want := map[domain.SegmentID]struct {
 		lengthM, freeFlowS, capacityVPH float64
@@ -158,20 +158,20 @@ func TestToyNetworkDerivedFields(t *testing.T) {
 		"33112200:0:F": {400.0, 18.0, 3240.0},  // trunk, 2 lanes, 80 km/h
 	}
 
-	for seg, w := range want {
-		e, ok := segByID(g, seg)
-		if !ok {
-			t.Errorf("segment %q missing", seg)
+	for seg, attrs := range want {
+		edge, found := segByID(roadGraph, seg)
+		if !found {
+			test.Errorf("segment %q missing", seg)
 			continue
 		}
-		if e.LengthM != w.lengthM {
-			t.Errorf("%s: LengthM = %v, want %v", seg, e.LengthM, w.lengthM)
+		if edge.LengthM != attrs.lengthM {
+			test.Errorf("%s: LengthM = %v, want %v", seg, edge.LengthM, attrs.lengthM)
 		}
-		if e.FreeFlowS != w.freeFlowS {
-			t.Errorf("%s: FreeFlowS = %v, want %v", seg, e.FreeFlowS, w.freeFlowS)
+		if edge.FreeFlowS != attrs.freeFlowS {
+			test.Errorf("%s: FreeFlowS = %v, want %v", seg, edge.FreeFlowS, attrs.freeFlowS)
 		}
-		if e.CapacityVPH != w.capacityVPH {
-			t.Errorf("%s: CapacityVPH = %v, want %v", seg, e.CapacityVPH, w.capacityVPH)
+		if edge.CapacityVPH != attrs.capacityVPH {
+			test.Errorf("%s: CapacityVPH = %v, want %v", seg, edge.CapacityVPH, attrs.capacityVPH)
 		}
 	}
 }
@@ -182,44 +182,44 @@ func TestToyNetworkDerivedFields(t *testing.T) {
 // We resolve the path edges by segment_id (no router yet) and confirm both halves
 // of the property at the data level, also sanity-checking endpoints via the
 // graph's Neighbors accessor.
-func TestToyNetworkCostNotHops(t *testing.T) {
-	g, _ := loadToy(t)
+func TestToyNetworkCostNotHops(test *testing.T) {
+	roadGraph, _ := loadToy(test)
 
 	// Direct 1-hop edge: 9000001:0:F, node 0 -> node 2.
-	direct, ok := segByID(g, "9000001:0:F")
-	if !ok {
-		t.Fatal("direct edge 9000001:0:F missing")
+	direct, found := segByID(roadGraph, "9000001:0:F")
+	if !found {
+		test.Fatal("direct edge 9000001:0:F missing")
 	}
 
 	// Multi-hop alternative: 905512:0:F (node0->node1) then 905512:1:F (node1->node2).
-	hop1, ok1 := segByID(g, "905512:0:F")
-	hop2, ok2 := segByID(g, "905512:1:F")
+	hop1, ok1 := segByID(roadGraph, "905512:0:F")
+	hop2, ok2 := segByID(roadGraph, "905512:1:F")
 	if !ok1 || !ok2 {
-		t.Fatalf("alternative edges missing: 905512:0:F present=%v, 905512:1:F present=%v", ok1, ok2)
+		test.Fatalf("alternative edges missing: 905512:0:F present=%v, 905512:1:F present=%v", ok1, ok2)
 	}
 
 	// Origin/destination agree across both routes.
 	origin, dest := direct.From, direct.To
 	if hop1.From != origin {
-		t.Errorf("alternative hop1.From (%d) must equal origin (%d)", hop1.From, origin)
+		test.Errorf("alternative hop1.From (%d) must equal origin (%d)", hop1.From, origin)
 	}
 	if hop2.To != dest {
-		t.Errorf("alternative hop2.To (%d) must equal destination (%d)", hop2.To, dest)
+		test.Errorf("alternative hop2.To (%d) must equal destination (%d)", hop2.To, dest)
 	}
 	if hop1.To != hop2.From {
-		t.Errorf("alternative is not connected: hop1.To (%d) != hop2.From (%d)", hop1.To, hop2.From)
+		test.Errorf("alternative is not connected: hop1.To (%d) != hop2.From (%d)", hop1.To, hop2.From)
 	}
 
 	// Sanity via Neighbors: the direct edge and hop1 both leave the origin; hop2
 	// leaves the intermediate node.
-	if !neighborHas(g, origin, direct.ID) {
-		t.Errorf("direct edge %d not among origin (%d) out-edges", direct.ID, origin)
+	if !neighborHas(roadGraph, origin, direct.ID) {
+		test.Errorf("direct edge %d not among origin (%d) out-edges", direct.ID, origin)
 	}
-	if !neighborHas(g, origin, hop1.ID) {
-		t.Errorf("hop1 edge %d not among origin (%d) out-edges", hop1.ID, origin)
+	if !neighborHas(roadGraph, origin, hop1.ID) {
+		test.Errorf("hop1 edge %d not among origin (%d) out-edges", hop1.ID, origin)
 	}
-	if !neighborHas(g, hop1.To, hop2.ID) {
-		t.Errorf("hop2 edge %d not among node %d out-edges", hop2.ID, hop1.To)
+	if !neighborHas(roadGraph, hop1.To, hop2.ID) {
+		test.Errorf("hop2 edge %d not among node %d out-edges", hop2.ID, hop1.To)
 	}
 
 	// (a) The multi-hop alternative has strictly MORE edges. Count from the edges
@@ -228,24 +228,24 @@ func TestToyNetworkCostNotHops(t *testing.T) {
 	directPath := []graph.Edge{direct}
 	altPath := []graph.Edge{hop1, hop2}
 	if len(altPath) <= len(directPath) {
-		t.Fatalf("expected alternative (%d edges) to have more edges than direct (%d)", len(altPath), len(directPath))
+		test.Fatalf("expected alternative (%d edges) to have more edges than direct (%d)", len(altPath), len(directPath))
 	}
 
 	// (b) Its summed freeflow_time_s is strictly LESS than the direct edge's.
 	var altCost float64
-	for _, e := range altPath {
-		altCost += e.FreeFlowS
+	for _, edge := range altPath {
+		altCost += edge.FreeFlowS
 	}
 	if !(altCost < direct.FreeFlowS) {
-		t.Errorf("cost!=hops violated: alternative summed FreeFlowS = %v must be < direct FreeFlowS = %v", altCost, direct.FreeFlowS)
+		test.Errorf("cost!=hops violated: alternative summed FreeFlowS = %v must be < direct FreeFlowS = %v", altCost, direct.FreeFlowS)
 	}
-	t.Logf("cost!=hops: direct 1-hop FreeFlowS = %v s; alternative 2-hop FreeFlowS = %v s", direct.FreeFlowS, altCost)
+	test.Logf("cost!=hops: direct 1-hop FreeFlowS = %v s; alternative 2-hop FreeFlowS = %v s", direct.FreeFlowS, altCost)
 }
 
 // neighborHas reports whether edge id is among node n's outgoing edges.
-func neighborHas(g *graph.AdjacencyGraph, n domain.NodeID, id domain.EdgeID) bool {
-	for _, e := range g.Neighbors(n) {
-		if e.ID == id {
+func neighborHas(roadGraph *graph.AdjacencyGraph, nodeID domain.NodeID, edgeID domain.EdgeID) bool {
+	for _, edge := range roadGraph.Neighbors(nodeID) {
+		if edge.ID == edgeID {
 			return true
 		}
 	}
@@ -255,29 +255,29 @@ func neighborHas(g *graph.AdjacencyGraph, n domain.NodeID, id domain.EdgeID) boo
 // TestToyNetworkInteriorShapePoint confirms an interior shape point is retained
 // (an edge whose LineString has 3 coords) and that NodeCount counts only
 // endpoints, not interior points.
-func TestToyNetworkInteriorShapePoint(t *testing.T) {
-	g, geom := loadToy(t)
+func TestToyNetworkInteriorShapePoint(test *testing.T) {
+	roadGraph, geom := loadToy(test)
 
 	// 33112200:0:F has a 3-coordinate LineString with an interior shape point.
-	ls := geom["33112200:0:F"]
-	if len(ls) != 3 {
-		t.Fatalf("33112200:0:F geometry has %d coords, want 3 (interior shape point retained)", len(ls))
+	lineString := geom["33112200:0:F"]
+	if len(lineString) != 3 {
+		test.Fatalf("33112200:0:F geometry has %d coords, want 3 (interior shape point retained)", len(lineString))
 	}
-	interior := ls[1]
+	interior := lineString[1]
 
 	// The interior coordinate must NOT have been promoted to a graph node. Exact
 	// == is valid here: the loader stores coordinates verbatim (no arithmetic on
 	// the path), so a promoted interior point would carry bit-identical coords.
-	for id := domain.NodeID(0); int(id) < g.NodeCount(); id++ {
-		n, _ := g.Node(id)
-		if n.Pos.Lon == interior[0] && n.Pos.Lat == interior[1] {
-			t.Errorf("interior shape point %v was promoted to node %d", interior, id)
+	for nodeID := domain.NodeID(0); int(nodeID) < roadGraph.NodeCount(); nodeID++ {
+		node, _ := roadGraph.Node(nodeID)
+		if node.Pos.Lon == interior[0] && node.Pos.Lat == interior[1] {
+			test.Errorf("interior shape point %v was promoted to node %d", interior, nodeID)
 		}
 	}
 
 	// NodeCount counts only the 6 endpoints, not the 2 interior shape points
 	// (edge 0 and edge 6 each carry one).
-	if g.NodeCount() != 6 {
-		t.Errorf("NodeCount = %d, want 6 (endpoints only, interior shape points excluded)", g.NodeCount())
+	if roadGraph.NodeCount() != 6 {
+		test.Errorf("NodeCount = %d, want 6 (endpoints only, interior shape points excluded)", roadGraph.NodeCount())
 	}
 }

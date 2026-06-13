@@ -70,8 +70,8 @@ type edgeAttrRow struct {
 // it confirms edge_id is a dense 0..N-1 set and that every one of the seven
 // highway classes is exercised. The fixture loads via the shared loadFixture
 // helper (segmentid_test.go), pointed at the edge_attributes directory.
-func TestEdgeAttributesConformance(t *testing.T) {
-	rows := loadFixture[edgeAttrRow](t, edgeAttributesFixtureDir, "example_export.json")
+func TestEdgeAttributesConformance(test1 *testing.T) {
+	rows := loadFixture[edgeAttrRow](test1, edgeAttributesFixtureDir, "example_export.json")
 
 	// Accumulators for the two whole-file invariants asserted after the loop.
 	// Both are cross-row bookkeeping, so both are written here in the loop body
@@ -82,14 +82,14 @@ func TestEdgeAttributesConformance(t *testing.T) {
 	seenClasses := make(map[string]bool, len(classFactor))
 
 	for _, row := range rows {
-		t.Run(row.SegmentID, func(t *testing.T) {
+		test1.Run(row.SegmentID, func(test2 *testing.T) {
 			// (4) enum — highway_class must be one of the exactly-seven §2
 			// values. We look it up in classFactor (whose keys ARE that enum)
 			// and reuse the factor for the capacity check below. A value
 			// outside the enum has no derivation rule, so we stop here.
-			cf, ok := classFactor[row.HighwayClass]
-			if !ok {
-				t.Fatalf("highway_class %q is not one of the 7 contract classes", row.HighwayClass)
+			costFactor, found := classFactor[row.HighwayClass]
+			if !found {
+				test2.Fatalf("highway_class %q is not one of the 7 contract classes", row.HighwayClass)
 			}
 
 			// (0) column invariants — §2 freezes hard per-row lower bounds that
@@ -100,28 +100,28 @@ func TestEdgeAttributesConformance(t *testing.T) {
 			// explicitly. (Asserting maxspeed_kmh > 0 here also keeps the
 			// free-flow division below from producing a misleading Inf/NaN.)
 			if row.LanesEffective < 1 {
-				t.Errorf("lanes_effective = %d, want >= 1 (§2)", row.LanesEffective)
+				test2.Errorf("lanes_effective = %d, want >= 1 (§2)", row.LanesEffective)
 			}
 			if row.LengthM <= 0 {
-				t.Errorf("length_m = %g, want > 0 (§2)", row.LengthM)
+				test2.Errorf("length_m = %g, want > 0 (§2)", row.LengthM)
 			}
 			if row.MaxspeedKmh <= 0 {
-				t.Errorf("maxspeed_kmh = %g, want > 0 (§2)", row.MaxspeedKmh)
+				test2.Errorf("maxspeed_kmh = %g, want > 0 (§2)", row.MaxspeedKmh)
 			}
 			if row.CapacityVPH <= 0 {
-				t.Errorf("capacity_vph = %g, want > 0 (§2)", row.CapacityVPH)
+				test2.Errorf("capacity_vph = %g, want > 0 (§2)", row.CapacityVPH)
 			}
 			if row.FreeflowTimeS <= 0 {
-				t.Errorf("freeflow_time_s = %g, want > 0 (§2)", row.FreeflowTimeS)
+				test2.Errorf("freeflow_time_s = %g, want > 0 (§2)", row.FreeflowTimeS)
 			}
 
 			// (1) capacity — §2: capacity_vph = lanes_effective × 1800 ×
 			// class_factor (at the export's capacity_scale = 1.0). e.g. row 0
 			// primary lanes=2 → 2×1800×0.8 = 2880.
-			wantCapacity := float64(row.LanesEffective) * saturationFlowVPHPerLane * cf
+			wantCapacity := float64(row.LanesEffective) * saturationFlowVPHPerLane * costFactor
 			if math.Abs(row.CapacityVPH-wantCapacity) > floatTol {
-				t.Errorf("capacity_vph = %g, want %g (= %d lanes × %g × %g class_factor)",
-					row.CapacityVPH, wantCapacity, row.LanesEffective, saturationFlowVPHPerLane, cf)
+				test2.Errorf("capacity_vph = %g, want %g (= %d lanes × %g × %g class_factor)",
+					row.CapacityVPH, wantCapacity, row.LanesEffective, saturationFlowVPHPerLane, costFactor)
 			}
 
 			// (2) freeflow — §2: freeflow_time_s = length_m / (maxspeed_kmh ×
@@ -132,7 +132,7 @@ func TestEdgeAttributesConformance(t *testing.T) {
 			if row.MaxspeedKmh > 0 {
 				wantFreeflow := row.LengthM / (row.MaxspeedKmh * 1000.0 / 3600.0)
 				if math.Abs(row.FreeflowTimeS-wantFreeflow) > floatTol {
-					t.Errorf("freeflow_time_s = %g, want %g (= %g m / (%g km/h → m/s))",
+					test2.Errorf("freeflow_time_s = %g, want %g (= %g m / (%g km/h → m/s))",
 						row.FreeflowTimeS, wantFreeflow, row.LengthM, row.MaxspeedKmh)
 				}
 			}
@@ -143,10 +143,10 @@ func TestEdgeAttributesConformance(t *testing.T) {
 			// segment_id would land on a different way than the engine's edge.
 			gotWay, _, _, err := ParseSegmentID(SegmentID(row.SegmentID))
 			if err != nil {
-				t.Fatalf("ParseSegmentID(%q) unexpected error: %v", row.SegmentID, err)
+				test2.Fatalf("ParseSegmentID(%q) unexpected error: %v", row.SegmentID, err)
 			}
 			if gotWay != row.OSMWayID {
-				t.Errorf("segment_id %q decodes osm_way_id %d, but osm_way_id column is %d",
+				test2.Errorf("segment_id %q decodes osm_way_id %d, but osm_way_id column is %d",
 					row.SegmentID, gotWay, row.OSMWayID)
 			}
 		})
@@ -155,7 +155,7 @@ func TestEdgeAttributesConformance(t *testing.T) {
 		// both here (rejecting duplicate edge_ids as we go). Done outside the
 		// subtest so a failing subtest above doesn't skip the bookkeeping.
 		if seenEdgeIDs[row.EdgeID] {
-			t.Errorf("duplicate edge_id %d (segment_id %q)", row.EdgeID, row.SegmentID)
+			test1.Errorf("duplicate edge_id %d (segment_id %q)", row.EdgeID, row.SegmentID)
 		}
 		seenEdgeIDs[row.EdgeID] = true
 		seenClasses[row.HighwayClass] = true
@@ -167,9 +167,9 @@ func TestEdgeAttributesConformance(t *testing.T) {
 	// after it. Duplicates are caught above; here we confirm every index in the
 	// 0..N-1 range is present (which, combined with the no-dupe check and the
 	// count, forces exact contiguity).
-	for i := 0; i < len(rows); i++ {
-		if !seenEdgeIDs[i] {
-			t.Errorf("edge_id %d missing: edge_id set is not dense 0..%d", i, len(rows)-1)
+	for index := 0; index < len(rows); index++ {
+		if !seenEdgeIDs[index] {
+			test1.Errorf("edge_id %d missing: edge_id set is not dense 0..%d", index, len(rows)-1)
 		}
 	}
 
@@ -179,7 +179,7 @@ func TestEdgeAttributesConformance(t *testing.T) {
 	// so we fail CI if any class is missing from the fixture.
 	for class := range classFactor {
 		if !seenClasses[class] {
-			t.Errorf("highway_class %q is not exercised by the fixture (coverage gap)", class)
+			test1.Errorf("highway_class %q is not exercised by the fixture (coverage gap)", class)
 		}
 	}
 }

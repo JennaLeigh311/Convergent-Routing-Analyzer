@@ -2,7 +2,7 @@ package domain
 
 import "testing"
 
-func TestDirectionString(t *testing.T) {
+func TestDirectionString(test1 *testing.T) {
 	tests := []struct {
 		name string
 		dir  Direction
@@ -12,10 +12,10 @@ func TestDirectionString(t *testing.T) {
 		{"reverse", Reverse, "R"},
 		{"out of range surfaces, not silently forward", Direction(7), "Direction(7)"},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.dir.String(); got != tt.want {
-				t.Errorf("Direction(%d).String() = %q, want %q", tt.dir, got, tt.want)
+	for _, testCase := range tests {
+		test1.Run(testCase.name, func(test2 *testing.T) {
+			if got := testCase.dir.String(); got != testCase.want {
+				test2.Errorf("Direction(%d).String() = %q, want %q", testCase.dir, got, testCase.want)
 			}
 		})
 	}

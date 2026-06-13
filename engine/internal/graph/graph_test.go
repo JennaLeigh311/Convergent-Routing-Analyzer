@@ -14,35 +14,41 @@ type fakeGraph struct {
 	edges map[domain.EdgeID]graph.Edge
 }
 
-func (g *fakeGraph) Neighbors(n domain.NodeID) []graph.Edge {
+func (fakeImpl *fakeGraph) Neighbors(nodeID domain.NodeID) []graph.Edge {
 	var out []graph.Edge
-	for _, e := range g.edges {
-		if e.From == n {
-			out = append(out, e)
+	for _, edge := range fakeImpl.edges {
+		if edge.From == nodeID {
+			out = append(out, edge)
 		}
 	}
 	return out
 }
 
-func (g *fakeGraph) Edge(id domain.EdgeID) (graph.Edge, bool) { e, ok := g.edges[id]; return e, ok }
-func (g *fakeGraph) Node(id domain.NodeID) (graph.Node, bool) { n, ok := g.nodes[id]; return n, ok }
-func (g *fakeGraph) NodeCount() int                           { return len(g.nodes) }
-func (g *fakeGraph) EdgeCount() int                           { return len(g.edges) }
+func (fakeImpl *fakeGraph) Edge(edgeID domain.EdgeID) (graph.Edge, bool) {
+	edge, found := fakeImpl.edges[edgeID]
+	return edge, found
+}
+func (fakeImpl *fakeGraph) Node(nodeID domain.NodeID) (graph.Node, bool) {
+	node, found := fakeImpl.nodes[nodeID]
+	return node, found
+}
+func (fakeImpl *fakeGraph) NodeCount() int { return len(fakeImpl.nodes) }
+func (fakeImpl *fakeGraph) EdgeCount() int { return len(fakeImpl.edges) }
 
-func (g *fakeGraph) NearestNode(_ domain.LatLon) (domain.NodeID, bool) {
-	for id := range g.nodes {
-		return id, true
+func (fakeImpl *fakeGraph) NearestNode(_ domain.LatLon) (domain.NodeID, bool) {
+	for nodeID := range fakeImpl.nodes {
+		return nodeID, true
 	}
 	return 0, false
 }
 
-func (g *fakeGraph) NearestEdge(_ domain.LatLon, _ float64) (domain.EdgeID, domain.LatLon, float64, bool) {
-	for id, e := range g.edges {
+func (fakeImpl *fakeGraph) NearestEdge(_ domain.LatLon, _ float64) (domain.EdgeID, domain.LatLon, float64, bool) {
+	for edgeID, edge := range fakeImpl.edges {
 		var snapped domain.LatLon
-		if n, ok := g.nodes[e.From]; ok {
-			snapped = n.Pos
+		if node, found := fakeImpl.nodes[edge.From]; found {
+			snapped = node.Pos
 		}
-		return id, snapped, 0, true
+		return edgeID, snapped, 0, true
 	}
 	return 0, domain.LatLon{}, 0, false
 }
@@ -50,8 +56,8 @@ func (g *fakeGraph) NearestEdge(_ domain.LatLon, _ float64) (domain.EdgeID, doma
 // Compile-time assertion: *fakeGraph satisfies the Graph port.
 var _ graph.Graph = (*fakeGraph)(nil)
 
-func TestFakeGraphSatisfiesPort(t *testing.T) {
-	g := &fakeGraph{
+func TestFakeGraphSatisfiesPort(test *testing.T) {
+	fakeImpl := &fakeGraph{
 		// Dense, contiguous ids per the port contract: NodeIDs 0..NodeCount-1
 		// and EdgeIDs 0..EdgeCount-1, so NodeCount()/EdgeCount() == max id + 1
 		// and the double models the invariant real loaders must honor.
@@ -64,22 +70,22 @@ func TestFakeGraphSatisfiesPort(t *testing.T) {
 		},
 	}
 
-	if got := g.NodeCount(); got != 2 {
-		t.Fatalf("NodeCount() = %d, want 2", got)
+	if got := fakeImpl.NodeCount(); got != 2 {
+		test.Fatalf("NodeCount() = %d, want 2", got)
 	}
-	if got := g.EdgeCount(); got != 1 {
-		t.Fatalf("EdgeCount() = %d, want 1", got)
+	if got := fakeImpl.EdgeCount(); got != 1 {
+		test.Fatalf("EdgeCount() = %d, want 1", got)
 	}
-	if got := g.Neighbors(0); len(got) != 1 || got[0].ID != 0 {
-		t.Fatalf("Neighbors(0) = %+v, want one edge id 0", got)
+	if got := fakeImpl.Neighbors(0); len(got) != 1 || got[0].ID != 0 {
+		test.Fatalf("Neighbors(0) = %+v, want one edge id 0", got)
 	}
-	if _, ok := g.Edge(0); !ok {
-		t.Fatal("Edge(0) ok = false, want true")
+	if _, found1 := fakeImpl.Edge(0); !found1 {
+		test.Fatal("Edge(0) ok = false, want true")
 	}
-	if _, ok := g.Edge(999); ok {
-		t.Fatal("Edge(999) ok = true, want false")
+	if _, found2 := fakeImpl.Edge(999); found2 {
+		test.Fatal("Edge(999) ok = true, want false")
 	}
-	if id, _, _, ok := g.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90); !ok || id != 0 {
-		t.Fatalf("NearestEdge() = (%d, ok=%v), want (0, true)", id, ok)
+	if edgeID, _, _, found3 := fakeImpl.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90); !found3 || edgeID != 0 {
+		test.Fatalf("NearestEdge() = (%d, ok=%v), want (0, true)", edgeID, found3)
 	}
 }
