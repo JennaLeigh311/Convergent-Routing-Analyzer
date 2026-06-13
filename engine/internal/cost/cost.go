@@ -13,5 +13,5 @@ import "github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/gra
 // The system-optimal router instead routes on the marginal cost
 // t(v) + v*t'(v); implementations that support that expose it separately.
 type CostFunction interface {
-	Cost(e graph.Edge, loadVPH float64) float64
+	Cost(edge graph.Edge, loadVPH float64) float64
 }

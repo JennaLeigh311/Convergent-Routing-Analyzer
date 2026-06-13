@@ -23,16 +23,16 @@ func degToRad(deg float64) float64 { return deg * math.Pi / 180.0 }
 // separations typical of intersections in one city, where law-of-cosines loses
 // precision to catastrophic cancellation. Distance is symmetric and returns 0
 // for identical points.
-func haversine(a, b domain.LatLon) float64 {
-	lat1 := degToRad(a.Lat)
-	lat2 := degToRad(b.Lat)
-	dLat := degToRad(b.Lat - a.Lat)
-	dLon := degToRad(b.Lon - a.Lon)
+func haversine(pointA, pointB domain.LatLon) float64 {
+	lat1 := degToRad(pointA.Lat)
+	lat2 := degToRad(pointB.Lat)
+	dLat := degToRad(pointB.Lat - pointA.Lat)
+	dLon := degToRad(pointB.Lon - pointA.Lon)
 
 	sinDLat := math.Sin(dLat / 2)
 	sinDLon := math.Sin(dLon / 2)
-	h := sinDLat*sinDLat + math.Cos(lat1)*math.Cos(lat2)*sinDLon*sinDLon
+	value := sinDLat*sinDLat + math.Cos(lat1)*math.Cos(lat2)*sinDLon*sinDLon
 	// 2*asin(sqrt(h)) == 2*atan2(sqrt(h), sqrt(1-h)); atan2 is robust at h→1.
-	c := 2 * math.Atan2(math.Sqrt(h), math.Sqrt(1-h))
-	return earthRadiusM * c
+	costValue := 2 * math.Atan2(math.Sqrt(value), math.Sqrt(1-value))
+	return earthRadiusM * costValue
 }

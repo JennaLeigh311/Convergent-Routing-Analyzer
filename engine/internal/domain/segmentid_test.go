@@ -32,63 +32,63 @@ type invalidCase struct {
 // of T. dir is passed explicitly (rather than hardcoding fixtureDir) so the
 // edge_attributes conformance test in this package can share this loader against
 // its own fixture directory; see edge_attributes_test.go.
-func loadFixture[T any](t *testing.T, dir, name string) []T {
-	t.Helper()
+func loadFixture[T any](test *testing.T, dir, name string) []T {
+	test.Helper()
 	path := filepath.Join(dir, name)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read fixture %s: %v", path, err)
+		test.Fatalf("read fixture %s: %v", path, err)
 	}
 	var out []T
 	if err := json.Unmarshal(data, &out); err != nil {
-		t.Fatalf("unmarshal fixture %s: %v", path, err)
+		test.Fatalf("unmarshal fixture %s: %v", path, err)
 	}
 	if len(out) == 0 {
-		t.Fatalf("fixture %s is empty", path)
+		test.Fatalf("fixture %s is empty", path)
 	}
 	return out
 }
 
-func dirToken(t *testing.T, tok string) Direction {
-	t.Helper()
+func dirToken(test *testing.T, tok string) Direction {
+	test.Helper()
 	switch tok {
 	case "F":
 		return Forward
 	case "R":
 		return Reverse
 	default:
-		t.Fatalf("fixture uses unknown dir token %q", tok)
+		test.Fatalf("fixture uses unknown dir token %q", tok)
 		return 0 // unreachable
 	}
 }
 
 // TestFormatCasesRoundTrip asserts that every valid fixture row both formats to
 // its expected segment_id and parses back to its source fields.
-func TestFormatCasesRoundTrip(t *testing.T) {
-	cases := loadFixture[formatCase](t, fixtureDir, "format_cases.json")
-	for _, tc := range cases {
-		t.Run(tc.SegmentID, func(t *testing.T) {
-			wantDir := dirToken(t, tc.Dir)
+func TestFormatCasesRoundTrip(test1 *testing.T) {
+	cases := loadFixture[formatCase](test1, fixtureDir, "format_cases.json")
+	for _, testCase := range cases {
+		test1.Run(testCase.SegmentID, func(test2 *testing.T) {
+			wantDir := dirToken(test2, testCase.Dir)
 
 			// Format: fields -> string.
-			if got := FormatSegmentID(tc.OSMWayID, tc.Seq, wantDir); string(got) != tc.SegmentID {
-				t.Errorf("FormatSegmentID(%d, %d, %s) = %q, want %q",
-					tc.OSMWayID, tc.Seq, tc.Dir, got, tc.SegmentID)
+			if got := FormatSegmentID(testCase.OSMWayID, testCase.Seq, wantDir); string(got) != testCase.SegmentID {
+				test2.Errorf("FormatSegmentID(%d, %d, %s) = %q, want %q",
+					testCase.OSMWayID, testCase.Seq, testCase.Dir, got, testCase.SegmentID)
 			}
 
 			// Parse: string -> fields.
-			gotWay, gotSeq, gotDir, err := ParseSegmentID(SegmentID(tc.SegmentID))
+			gotWay, gotSeq, gotDir, err := ParseSegmentID(SegmentID(testCase.SegmentID))
 			if err != nil {
-				t.Fatalf("ParseSegmentID(%q) unexpected error: %v", tc.SegmentID, err)
+				test2.Fatalf("ParseSegmentID(%q) unexpected error: %v", testCase.SegmentID, err)
 			}
-			if gotWay != tc.OSMWayID {
-				t.Errorf("ParseSegmentID(%q) osm_way_id = %d, want %d", tc.SegmentID, gotWay, tc.OSMWayID)
+			if gotWay != testCase.OSMWayID {
+				test2.Errorf("ParseSegmentID(%q) osm_way_id = %d, want %d", testCase.SegmentID, gotWay, testCase.OSMWayID)
 			}
-			if gotSeq != tc.Seq {
-				t.Errorf("ParseSegmentID(%q) seq = %d, want %d", tc.SegmentID, gotSeq, tc.Seq)
+			if gotSeq != testCase.Seq {
+				test2.Errorf("ParseSegmentID(%q) seq = %d, want %d", testCase.SegmentID, gotSeq, testCase.Seq)
 			}
 			if gotDir != wantDir {
-				t.Errorf("ParseSegmentID(%q) dir = %s, want %s", tc.SegmentID, gotDir, tc.Dir)
+				test2.Errorf("ParseSegmentID(%q) dir = %s, want %s", testCase.SegmentID, gotDir, testCase.Dir)
 			}
 		})
 	}
@@ -96,13 +96,13 @@ func TestFormatCasesRoundTrip(t *testing.T) {
 
 // TestParseInvalidRejected asserts that every malformed fixture string is
 // rejected with an error and never panics.
-func TestParseInvalidRejected(t *testing.T) {
-	cases := loadFixture[invalidCase](t, fixtureDir, "parse_invalid.json")
-	for _, tc := range cases {
-		t.Run(tc.Reason, func(t *testing.T) {
-			_, _, _, err := ParseSegmentID(SegmentID(tc.SegmentID))
+func TestParseInvalidRejected(test1 *testing.T) {
+	cases := loadFixture[invalidCase](test1, fixtureDir, "parse_invalid.json")
+	for _, testCase := range cases {
+		test1.Run(testCase.Reason, func(test2 *testing.T) {
+			_, _, _, err := ParseSegmentID(SegmentID(testCase.SegmentID))
 			if err == nil {
-				t.Errorf("ParseSegmentID(%q) = nil error, want rejection (%s)", tc.SegmentID, tc.Reason)
+				test2.Errorf("ParseSegmentID(%q) = nil error, want rejection (%s)", testCase.SegmentID, testCase.Reason)
 			}
 		})
 	}

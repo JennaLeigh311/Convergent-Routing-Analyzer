@@ -12,53 +12,53 @@ import (
 // land in Phase 3.
 type fakeRouter struct{ name string }
 
-func (r fakeRouter) Route(_ context.Context, req routing.RouteRequest) (routing.Route, error) {
+func (router fakeRouter) Route(_ context.Context, req routing.RouteRequest) (routing.Route, error) {
 	return routing.Route{RequestID: req.ID}, nil
 }
 
-func (r fakeRouter) Assign(_ context.Context, reqs []routing.RouteRequest) ([]routing.Route, error) {
+func (router fakeRouter) Assign(_ context.Context, reqs []routing.RouteRequest) ([]routing.Route, error) {
 	out := make([]routing.Route, len(reqs))
-	for i, req := range reqs {
-		out[i] = routing.Route{RequestID: req.ID}
+	for index, req := range reqs {
+		out[index] = routing.Route{RequestID: req.ID}
 	}
 	return out, nil
 }
 
-func (r fakeRouter) Name() string { return r.name }
+func (router fakeRouter) Name() string { return router.name }
 
 // Compile-time assertion: fakeRouter satisfies the Router port.
 var _ routing.Router = fakeRouter{}
 
-func TestFakeRouterSatisfiesPort(t *testing.T) {
+func TestFakeRouterSatisfiesPort(test *testing.T) {
 	ctx := context.Background()
-	r := fakeRouter{name: "fake"}
+	router := fakeRouter{name: "fake"}
 
-	if r.Name() != "fake" {
-		t.Errorf("Name() = %q, want %q", r.Name(), "fake")
+	if router.Name() != "fake" {
+		test.Errorf("Name() = %q, want %q", router.Name(), "fake")
 	}
 
 	// Single-request Route propagates the request ID.
-	if rt, err := r.Route(ctx, routing.RouteRequest{ID: "x"}); err != nil || rt.RequestID != "x" {
-		t.Fatalf("Route() = (%+v, %v), want RequestID=x, nil", rt, err)
+	if route, err := router.Route(ctx, routing.RouteRequest{ID: "x"}); err != nil || route.RequestID != "x" {
+		test.Fatalf("Route() = (%+v, %v), want RequestID=x, nil", route, err)
 	}
 
 	// Batch Assign preserves order and length.
 	reqs := []routing.RouteRequest{{ID: "a"}, {ID: "b"}}
-	routes, err := r.Assign(ctx, reqs)
+	routes, err := router.Assign(ctx, reqs)
 	if err != nil {
-		t.Fatalf("Assign() error = %v", err)
+		test.Fatalf("Assign() error = %v", err)
 	}
 	if len(routes) != len(reqs) {
-		t.Fatalf("Assign() returned %d routes, want %d", len(routes), len(reqs))
+		test.Fatalf("Assign() returned %d routes, want %d", len(routes), len(reqs))
 	}
-	for i, want := range []string{"a", "b"} {
-		if routes[i].RequestID != want {
-			t.Errorf("routes[%d].RequestID = %q, want %q", i, routes[i].RequestID, want)
+	for index, want := range []string{"a", "b"} {
+		if routes[index].RequestID != want {
+			test.Errorf("routes[%d].RequestID = %q, want %q", index, routes[index].RequestID, want)
 		}
 	}
 
 	// Empty input yields an empty (non-error) result.
-	if routes, err := r.Assign(ctx, nil); err != nil || len(routes) != 0 {
-		t.Errorf("Assign(nil) = (%v, %v), want empty, nil", routes, err)
+	if routes, err := router.Assign(ctx, nil); err != nil || len(routes) != 0 {
+		test.Errorf("Assign(nil) = (%v, %v), want empty, nil", routes, err)
 	}
 }

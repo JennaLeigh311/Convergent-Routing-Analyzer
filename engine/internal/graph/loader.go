@@ -75,9 +75,9 @@ type LoadOption func(*loadConfig)
 // only), preserving the data/engine decoupling — the engine is not baked to any
 // one hemisphere or city.
 func WithExpectedBounds(lonMin, lonMax, latMin, latMax float64) LoadOption {
-	return func(c *loadConfig) {
-		c.hasBounds = true
-		c.lonMin, c.lonMax, c.latMin, c.latMax = lonMin, lonMax, latMin, latMax
+	return func(config *loadConfig) {
+		config.hasBounds = true
+		config.lonMin, config.lonMax, config.latMin, config.latMax = lonMin, lonMax, latMin, latMax
 	}
 }
 
@@ -161,7 +161,7 @@ type geoProps struct {
 // expected region, supplied per-call via WithExpectedBounds. Baking a hemisphere
 // into the engine would break the data/engine decoupling, so the region is a
 // caller option, never a constant.
-func LoadEdgeAttributesGeoJSON(r io.Reader, opts ...LoadOption) (g *AdjacencyGraph, geom map[domain.SegmentID]LineString, err error) {
+func LoadEdgeAttributesGeoJSON(reader io.Reader, opts ...LoadOption) (graph *AdjacencyGraph, geom map[domain.SegmentID]LineString, err error) {
 	var cfg loadConfig
 	for _, opt := range opts {
 		opt(&cfg)
@@ -178,7 +178,7 @@ func LoadEdgeAttributesGeoJSON(r io.Reader, opts ...LoadOption) (g *AdjacencyGra
 	// Bound the read so a hostile or runaway artifact cannot exhaust memory.
 	// Read up to maxArtifactBytes+1: if we actually got that extra byte the input
 	// exceeds the cap, so reject it rather than silently truncate-and-parse.
-	data, err := io.ReadAll(io.LimitReader(r, maxArtifactBytes+1))
+	data, err := io.ReadAll(io.LimitReader(reader, maxArtifactBytes+1))
 	if err != nil {
 		return nil, nil, fmt.Errorf("edge_attributes: read input: %w", err)
 	}
@@ -186,38 +186,38 @@ func LoadEdgeAttributesGeoJSON(r io.Reader, opts ...LoadOption) (g *AdjacencyGra
 		return nil, nil, fmt.Errorf("edge_attributes: artifact exceeds %d MiB limit (this loader bounds input size; raise maxArtifactBytes only for a trusted larger export)", maxArtifactBytes>>20)
 	}
 
-	var fc geoFeatureCollection
-	if err := json.Unmarshal(data, &fc); err != nil {
+	var featureCollection geoFeatureCollection
+	if err := json.Unmarshal(data, &featureCollection); err != nil {
 		return nil, nil, fmt.Errorf("edge_attributes: invalid GeoJSON: %w", err)
 	}
 
 	// (1) Envelope: type and integer schema_version.
-	if fc.Type != "FeatureCollection" {
-		return nil, nil, fmt.Errorf("edge_attributes: top-level type = %q, want %q", fc.Type, "FeatureCollection")
+	if featureCollection.Type != "FeatureCollection" {
+		return nil, nil, fmt.Errorf("edge_attributes: top-level type = %q, want %q", featureCollection.Type, "FeatureCollection")
 	}
-	if len(fc.SchemaVersion) == 0 {
+	if len(featureCollection.SchemaVersion) == 0 {
 		return nil, nil, fmt.Errorf("edge_attributes: missing top-level schema_version (§2 requires the integer %d)", schemaVersion)
 	}
-	rawSV := bytes.TrimSpace(fc.SchemaVersion)
+	rawSV := bytes.TrimSpace(featureCollection.SchemaVersion)
 	// Reject the stringified form ("1"): GeoJSON requires the integer 1, and the
 	// quoted "1" is the Parquet-footer form. A quote in the raw token gives it away.
 	if len(rawSV) > 0 && rawSV[0] == '"' {
 		return nil, nil, fmt.Errorf("edge_attributes: schema_version is the JSON string %s, not the integer %d (the quoted form is the Parquet-footer form, not GeoJSON)", string(rawSV), schemaVersion)
 	}
-	var sv json.Number
-	if err := json.Unmarshal(rawSV, &sv); err != nil {
+	var stringValue json.Number
+	if err := json.Unmarshal(rawSV, &stringValue); err != nil {
 		return nil, nil, fmt.Errorf("edge_attributes: schema_version %s is not a JSON number: %w", string(rawSV), err)
 	}
-	v, convErr := sv.Int64()
+	value, convErr := stringValue.Int64()
 	if convErr != nil {
 		return nil, nil, fmt.Errorf("edge_attributes: schema_version %s is not the JSON integer %d", string(rawSV), schemaVersion)
 	}
-	if v != schemaVersion {
-		return nil, nil, fmt.Errorf("edge_attributes: schema_version = %d, this loader understands only %d", v, schemaVersion)
+	if value != schemaVersion {
+		return nil, nil, fmt.Errorf("edge_attributes: schema_version = %d, this loader understands only %d", value, schemaVersion)
 	}
 
-	n := len(fc.Features)
-	if n == 0 {
+	count := len(featureCollection.Features)
+	if count == 0 {
 		return nil, nil, fmt.Errorf("edge_attributes: FeatureCollection has no features")
 	}
 
@@ -231,38 +231,38 @@ func LoadEdgeAttributesGeoJSON(r io.Reader, opts ...LoadOption) (g *AdjacencyGra
 	// golden fixture (sparse ids) to fail to load, so we compact instead. The
 	// retained identity that survives a re-export is segment_id (edges) and the
 	// geometry endpoints (node position), per §2.
-	edges := make([]Edge, n)
-	edgeIDSeen := make([]bool, n)
-	geom = make(map[domain.SegmentID]LineString, n)
-	segSeen := make(map[domain.SegmentID]bool, n)
+	edges := make([]Edge, count)
+	edgeIDSeen := make([]bool, count)
+	geom = make(map[domain.SegmentID]LineString, count)
+	segSeen := make(map[domain.SegmentID]bool, count)
 	nodePos := make(map[int64]domain.LatLon)
 	// pending records, per edge_id, the export source/target node ids so we can
 	// remap them to dense NodeIDs after the full pass.
 	type pending struct {
 		src, dst int64
 	}
-	endpoints := make([]pending, n)
+	endpoints := make([]pending, count)
 
-	for i := range fc.Features {
-		e, ls, srcNode, dstNode, verr := validateFeature(i, &fc.Features[i], cfg, n)
+	for index1 := range featureCollection.Features {
+		edge, lineString, srcNode, dstNode, verr := validateFeature(index1, &featureCollection.Features[index1], cfg, count)
 		if verr != nil {
 			return nil, nil, verr
 		}
-		p := fc.Features[i].Properties
+		props := featureCollection.Features[index1].Properties
 
 		// (4) Adopt the export's edge_id: dense 0..n-1, no gaps or duplicates.
 		// (The range check 0 <= edge_id < n lives in validateFeature.)
-		if edgeIDSeen[p.EdgeID] {
-			return nil, nil, fmt.Errorf("edge_attributes: edge_id %d is duplicated — edge_id set must be dense 0..%d with no duplicates", p.EdgeID, n-1)
+		if edgeIDSeen[props.EdgeID] {
+			return nil, nil, fmt.Errorf("edge_attributes: edge_id %d is duplicated — edge_id set must be dense 0..%d with no duplicates", props.EdgeID, count-1)
 		}
-		edgeIDSeen[p.EdgeID] = true
+		edgeIDSeen[props.EdgeID] = true
 
 		// (6) Duplicate segment_id rejected. (Also catches the interior-shape-
 		// point-promoted-to-node case, which manifests as a duplicate segment_id.)
-		if segSeen[p.SegmentID] {
-			return nil, nil, fmt.Errorf("edge_attributes: duplicate segment_id %q", p.SegmentID)
+		if segSeen[props.SegmentID] {
+			return nil, nil, fmt.Errorf("edge_attributes: duplicate segment_id %q", props.SegmentID)
 		}
-		segSeen[p.SegmentID] = true
+		segSeen[props.SegmentID] = true
 
 		// Node positions come from geometry endpoints: source_node ← first
 		// coordinate, target_node ← last coordinate (§4). When a node id recurs,
@@ -271,7 +271,7 @@ func LoadEdgeAttributesGeoJSON(r io.Reader, opts ...LoadOption) (g *AdjacencyGra
 		// well-formed export repeats identical coords for the same id. A genuine
 		// disagreement beyond nodePosEpsilonDeg is a contradictory export and is
 		// rejected loudly rather than silently accept-first'd.
-		first, last := ls[0], ls[len(ls)-1]
+		first, last := lineString[0], lineString[len(lineString)-1]
 		srcPos := domain.LatLon{Lat: first[1], Lon: first[0]}
 		dstPos := domain.LatLon{Lat: last[1], Lon: last[0]}
 		if err := recordNodePos(nodePos, srcNode, srcPos); err != nil {
@@ -280,10 +280,10 @@ func LoadEdgeAttributesGeoJSON(r io.Reader, opts ...LoadOption) (g *AdjacencyGra
 		if err := recordNodePos(nodePos, dstNode, dstPos); err != nil {
 			return nil, nil, err
 		}
-		endpoints[p.EdgeID] = pending{src: srcNode, dst: dstNode}
+		endpoints[props.EdgeID] = pending{src: srcNode, dst: dstNode}
 
-		edges[p.EdgeID] = e
-		geom[p.SegmentID] = ls
+		edges[props.EdgeID] = edge
+		geom[props.SegmentID] = lineString
 	}
 
 	// (4) Build the dense node space. Collect the distinct export node ids, sort
@@ -292,43 +292,43 @@ func LoadEdgeAttributesGeoJSON(r io.Reader, opts ...LoadOption) (g *AdjacencyGra
 	// the remap. Build []Node with NodeID i at index i so graph.New's dense
 	// contract holds.
 	exportNodeIDs := make([]int64, 0, len(nodePos))
-	for id := range nodePos {
-		exportNodeIDs = append(exportNodeIDs, id)
+	for identifier := range nodePos {
+		exportNodeIDs = append(exportNodeIDs, identifier)
 	}
-	sort.Slice(exportNodeIDs, func(i, j int) bool { return exportNodeIDs[i] < exportNodeIDs[j] })
+	sort.Slice(exportNodeIDs, func(index2, innerIndex int) bool { return exportNodeIDs[index2] < exportNodeIDs[innerIndex] })
 	remap := make(map[int64]domain.NodeID, len(exportNodeIDs))
 	nodes := make([]Node, len(exportNodeIDs))
-	for i, exportID := range exportNodeIDs {
-		nid := domain.NodeID(i)
+	for index3, exportID := range exportNodeIDs {
+		nid := domain.NodeID(index3)
 		remap[exportID] = nid
-		nodes[i] = Node{ID: nid, Pos: nodePos[exportID]}
+		nodes[index3] = Node{ID: nid, Pos: nodePos[exportID]}
 	}
-	for i := range edges {
-		edges[i].From = remap[endpoints[i].src]
-		edges[i].To = remap[endpoints[i].dst]
+	for index4 := range edges {
+		edges[index4].From = remap[endpoints[index4].src]
+		edges[index4].To = remap[endpoints[index4].dst]
 	}
 
 	// No gap re-scan needed: n features whose edge_ids each pass the per-row
 	// range check (0 <= edge_id < n) AND the duplicate check are forced by
 	// pigeonhole to be a permutation of 0..n-1, so every slot is filled.
 
-	g, err = New(nodes, edges)
+	graph, err = New(nodes, edges)
 	if err != nil {
 		return nil, nil, fmt.Errorf("edge_attributes: build graph: %w", err)
 	}
-	return g, geom, nil
+	return graph, geom, nil
 }
 
 // LoadEdgeAttributesGeoJSONFile is a convenience wrapper around
 // LoadEdgeAttributesGeoJSON that opens and loads the file at path. It forwards
 // any LoadOptions (e.g. WithExpectedBounds) to the underlying load.
 func LoadEdgeAttributesGeoJSONFile(path string, opts ...LoadOption) (*AdjacencyGraph, map[domain.SegmentID]LineString, error) {
-	f, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("edge_attributes: open %s: %w", path, err)
 	}
-	defer f.Close()
-	return LoadEdgeAttributesGeoJSON(f, opts...)
+	defer file.Close()
+	return LoadEdgeAttributesGeoJSON(file, opts...)
 }
 
 // validateFeature checks every per-row §2 (and §1, via domain.ParseSegmentID)
@@ -340,35 +340,35 @@ func LoadEdgeAttributesGeoJSONFile(path string, opts ...LoadOption) (*AdjacencyG
 // passed for the dense-edge_id range check and for messages. On ANY violation
 // it returns a zero Edge/LineString, zero node ids, and a descriptive,
 // invariant-specific error.
-func validateFeature(i int, f *geoFeature, cfg loadConfig, n int) (e Edge, ls LineString, srcNode, dstNode int64, err error) {
-	p := f.Properties
+func validateFeature(index int, feature *geoFeature, cfg loadConfig, count int) (edge Edge, lineString LineString, srcNode, dstNode int64, err error) {
+	props := feature.Properties
 
 	// (2) Geometry type.
-	if f.Type != "Feature" {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: feature %d (segment_id %q): type = %q, want %q", i, p.SegmentID, f.Type, "Feature")
+	if feature.Type != "Feature" {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: feature %d (segment_id %q): type = %q, want %q", index, props.SegmentID, feature.Type, "Feature")
 	}
-	if f.Geometry.Type != "LineString" {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: geometry.type = %q, want %q", p.SegmentID, f.Geometry.Type, "LineString")
+	if feature.Geometry.Type != "LineString" {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: geometry.type = %q, want %q", props.SegmentID, feature.Geometry.Type, "LineString")
 	}
 
 	// (3a) segment_id strict §1 parse + self-consistency with osm_way_id.
-	wayID, _, _, perr := domain.ParseSegmentID(p.SegmentID)
+	wayID, _, _, perr := domain.ParseSegmentID(props.SegmentID)
 	if perr != nil {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q invalid under §1: %w", p.SegmentID, perr)
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q invalid under §1: %w", props.SegmentID, perr)
 	}
-	if wayID != p.OSMWayID {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q embeds osm_way_id %d but the osm_way_id property is %d — they must match (§2 self-consistency)", p.SegmentID, wayID, p.OSMWayID)
+	if wayID != props.OSMWayID {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q embeds osm_way_id %d but the osm_way_id property is %d — they must match (§2 self-consistency)", props.SegmentID, wayID, props.OSMWayID)
 	}
 
 	// (3b) osm_way_id positive. (ParseSegmentID already rejects a way < 1,
 	// but check the property explicitly for a clear message.)
-	if p.OSMWayID < 1 {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: osm_way_id %d is non-positive — §2/§1 require >= 1", p.SegmentID, p.OSMWayID)
+	if props.OSMWayID < 1 {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: osm_way_id %d is non-positive — §2/§1 require >= 1", props.SegmentID, props.OSMWayID)
 	}
 
 	// (3c) highway_class enum.
-	if !highwayClasses[p.HighwayClass] {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: highway_class %q is outside the seven legal §2 enum values", p.SegmentID, p.HighwayClass)
+	if !highwayClasses[props.HighwayClass] {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: highway_class %q is outside the seven legal §2 enum values", props.SegmentID, props.HighwayClass)
 	}
 
 	// (3d) positive-field invariants. The four metric fields must be finite and
@@ -376,45 +376,45 @@ func validateFeature(i int, f *geoFeature, cfg loadConfig, n int) (e Edge, ls Li
 	// like 1e400) would pass a bare > 0 check (Inf > 0 is true) and silently poison
 	// the downstream BPR cost, so require finiteness explicitly. (NaN cannot reach
 	// here through encoding/json, but the !IsNaN guard documents the intent.)
-	if p.LanesEffective < 1 {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: lanes_effective = %d, §2 requires >= 1", p.SegmentID, p.LanesEffective)
+	if props.LanesEffective < 1 {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: lanes_effective = %d, §2 requires >= 1", props.SegmentID, props.LanesEffective)
 	}
-	if !isFinitePositive(p.LengthM) {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: length_m = %v is not a finite positive number, §2 requires a finite value > 0", p.SegmentID, p.LengthM)
+	if !isFinitePositive(props.LengthM) {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: length_m = %v is not a finite positive number, §2 requires a finite value > 0", props.SegmentID, props.LengthM)
 	}
-	if !isFinitePositive(p.MaxspeedKMH) {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: maxspeed_kmh = %v is not a finite positive number, §2 requires a finite value > 0", p.SegmentID, p.MaxspeedKMH)
+	if !isFinitePositive(props.MaxspeedKMH) {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: maxspeed_kmh = %v is not a finite positive number, §2 requires a finite value > 0", props.SegmentID, props.MaxspeedKMH)
 	}
-	if !isFinitePositive(p.FreeFlowS) {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: freeflow_time_s = %v is not a finite positive number, §2 requires a finite value > 0", p.SegmentID, p.FreeFlowS)
+	if !isFinitePositive(props.FreeFlowS) {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: freeflow_time_s = %v is not a finite positive number, §2 requires a finite value > 0", props.SegmentID, props.FreeFlowS)
 	}
-	if !isFinitePositive(p.CapacityVPH) {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: capacity_vph = %v is not a finite positive number, §2 requires a finite value > 0", p.SegmentID, p.CapacityVPH)
+	if !isFinitePositive(props.CapacityVPH) {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: capacity_vph = %v is not a finite positive number, §2 requires a finite value > 0", props.SegmentID, props.CapacityVPH)
 	}
 
 	// (5) Geometry: >= 2 coords, [lon,lat] axis fidelity, preserve verbatim.
-	coords := f.Geometry.Coordinates
+	coords := feature.Geometry.Coordinates
 	if len(coords) < 2 {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: LineString has %d coordinate(s), need >= 2", p.SegmentID, len(coords))
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: LineString has %d coordinate(s), need >= 2", props.SegmentID, len(coords))
 	}
-	ls = make(LineString, len(coords))
-	for j, coord := range coords {
+	lineString = make(LineString, len(coords))
+	for innerIndex, coord := range coords {
 		// Exactly two ordinates: §2 pins 2D [lon,lat]. A 3D GeoJSON position
 		// [lon,lat,elevation] is intentionally rejected here — the §2 contract is
 		// 2D, so dropping/keeping an elevation is deliberately out of scope, not an
 		// oversight.
 		if len(coord) != 2 {
-			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d is not a [lon,lat] pair (got %d values)", p.SegmentID, j, len(coord))
+			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d is not a [lon,lat] pair (got %d values)", props.SegmentID, innerIndex, len(coord))
 		}
 		lon, lat := coord[0], coord[1]
 		// WGS84 hard bounds (§2 / GeoJSON x,y). A [lat,lon] swap whose values
 		// exceed these (e.g. a latitude > 90 landing in the lat slot, or a
 		// longitude > 180) is rejected here outright.
 		if lon < -180 || lon > 180 {
-			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d lon %v outside [-180,180] (a [lat,lon] axis swap puts a latitude here)", p.SegmentID, j, lon)
+			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d lon %v outside [-180,180] (a [lat,lon] axis swap puts a latitude here)", props.SegmentID, innerIndex, lon)
 		}
 		if lat < -90 || lat > 90 {
-			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d lat %v outside [-90,90] (a [lat,lon] axis swap puts a longitude here)", p.SegmentID, j, lat)
+			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d lat %v outside [-90,90] (a [lat,lon] axis swap puts a longitude here)", props.SegmentID, innerIndex, lat)
 		}
 		// Optional axis-swap guard. The WGS84 bounds above do NOT catch every
 		// swap: a mid-latitude Western-hemisphere coordinate like [-73.99, 40.73]
@@ -426,41 +426,41 @@ func validateFeature(i int, f *geoFeature, cfg loadConfig, n int) (e Edge, ls Li
 		// region-agnostic (any WGS84-valid city loads); with bounds, a coordinate
 		// that escapes the box is flagged as a likely [lat,lon] axis swap.
 		if cfg.hasBounds && (lon < cfg.lonMin || lon > cfg.lonMax || lat < cfg.latMin || lat > cfg.latMax) {
-			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d [lon=%v,lat=%v] is outside the supplied expected bounds [lon %v..%v, lat %v..%v] — this indicates a [lat,lon] axis swap (§2 requires [lon,lat])", p.SegmentID, j, lon, lat, cfg.lonMin, cfg.lonMax, cfg.latMin, cfg.latMax)
+			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d [lon=%v,lat=%v] is outside the supplied expected bounds [lon %v..%v, lat %v..%v] — this indicates a [lat,lon] axis swap (§2 requires [lon,lat])", props.SegmentID, innerIndex, lon, lat, cfg.lonMin, cfg.lonMax, cfg.latMin, cfg.latMax)
 		}
-		ls[j] = [2]float64{lon, lat}
+		lineString[innerIndex] = [2]float64{lon, lat}
 	}
 
 	// (4) Dense edge_id range. (The duplicate check stays in the main loop, which
 	// owns the cross-row edgeIDSeen tracking.)
-	if p.EdgeID < 0 || p.EdgeID >= int64(n) {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: edge_id %d out of dense range [0,%d)", p.SegmentID, p.EdgeID, n)
+	if props.EdgeID < 0 || props.EdgeID >= int64(count) {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: edge_id %d out of dense range [0,%d)", props.SegmentID, props.EdgeID, count)
 	}
 
 	// Node ids must be non-negative; positions come from geometry endpoints.
-	if p.SourceNode < 0 {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: source_node %d is negative", p.SegmentID, p.SourceNode)
+	if props.SourceNode < 0 {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: source_node %d is negative", props.SegmentID, props.SourceNode)
 	}
-	if p.TargetNode < 0 {
-		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: target_node %d is negative", p.SegmentID, p.TargetNode)
+	if props.TargetNode < 0 {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: target_node %d is negative", props.SegmentID, props.TargetNode)
 	}
 
-	e = Edge{
-		ID:          domain.EdgeID(p.EdgeID),
-		Segment:     p.SegmentID,
-		LengthM:     p.LengthM,
-		FreeFlowS:   p.FreeFlowS,
-		CapacityVPH: p.CapacityVPH,
+	edge = Edge{
+		ID:          domain.EdgeID(props.EdgeID),
+		Segment:     props.SegmentID,
+		LengthM:     props.LengthM,
+		FreeFlowS:   props.FreeFlowS,
+		CapacityVPH: props.CapacityVPH,
 	}
-	return e, ls, p.SourceNode, p.TargetNode, nil
+	return edge, lineString, props.SourceNode, props.TargetNode, nil
 }
 
 // isFinitePositive reports whether v is a finite (non-Inf, non-NaN) number
 // strictly greater than zero — the guard for the four §2 metric fields that
 // feed downstream BPR cost. A bare v > 0 would admit +Inf (Inf > 0 is true);
 // this does not.
-func isFinitePositive(v float64) bool {
-	return v > 0 && !math.IsInf(v, 1) && !math.IsNaN(v)
+func isFinitePositive(value float64) bool {
+	return value > 0 && !math.IsInf(value, 1) && !math.IsNaN(value)
 }
 
 // recordNodePos reconciles a node id's geometry-endpoint position against any
@@ -469,14 +469,14 @@ func isFinitePositive(v float64) bool {
 // EXACTLY-equal coords for a re-used node id; nodePosEpsilonDeg absorbs only
 // trivial float noise. A genuine disagreement beyond it is a contradictory
 // export and is rejected loudly (fail-closed) rather than silently accept-first.
-func recordNodePos(nodePos map[int64]domain.LatLon, id int64, pos domain.LatLon) error {
-	prev, ok := nodePos[id]
-	if !ok {
-		nodePos[id] = pos
+func recordNodePos(nodePos map[int64]domain.LatLon, identifier int64, pos domain.LatLon) error {
+	prev, found := nodePos[identifier]
+	if !found {
+		nodePos[identifier] = pos
 		return nil
 	}
 	if math.Abs(prev.Lon-pos.Lon) > nodePosEpsilonDeg || math.Abs(prev.Lat-pos.Lat) > nodePosEpsilonDeg {
-		return fmt.Errorf("edge_attributes: node id %d has contradictory endpoint coordinates [lon=%v,lat=%v] vs [lon=%v,lat=%v] — a re-used node id must resolve to the same geometry endpoint (§2)", id, prev.Lon, prev.Lat, pos.Lon, pos.Lat)
+		return fmt.Errorf("edge_attributes: node id %d has contradictory endpoint coordinates [lon=%v,lat=%v] vs [lon=%v,lat=%v] — a re-used node id must resolve to the same geometry endpoint (§2)", identifier, prev.Lon, prev.Lat, pos.Lon, pos.Lat)
 	}
 	return nil
 }

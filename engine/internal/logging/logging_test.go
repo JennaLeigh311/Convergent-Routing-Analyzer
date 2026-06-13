@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestParseLevel(t *testing.T) {
+func TestParseLevel(test1 *testing.T) {
 	tests := []struct {
 		in   string
 		want slog.Level
@@ -23,16 +23,16 @@ func TestParseLevel(t *testing.T) {
 		{"", slog.LevelInfo},         // default
 		{"nonsense", slog.LevelInfo}, // default on unrecognized
 	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			if got := parseLevel(tt.in); got != tt.want {
-				t.Errorf("parseLevel(%q) = %v, want %v", tt.in, got, tt.want)
+	for _, testCase := range tests {
+		test1.Run(testCase.in, func(test2 *testing.T) {
+			if got := parseLevel(testCase.in); got != testCase.want {
+				test2.Errorf("parseLevel(%q) = %v, want %v", testCase.in, got, testCase.want)
 			}
 		})
 	}
 }
 
-func TestParseFormat(t *testing.T) {
+func TestParseFormat(test1 *testing.T) {
 	tests := []struct {
 		in   string
 		want Format
@@ -43,29 +43,29 @@ func TestParseFormat(t *testing.T) {
 		{"", FormatText},     // default
 		{"yaml", FormatText}, // default on unrecognized
 	}
-	for _, tt := range tests {
-		t.Run(tt.in, func(t *testing.T) {
-			if got := parseFormat(tt.in); got != tt.want {
-				t.Errorf("parseFormat(%q) = %q, want %q", tt.in, got, tt.want)
+	for _, testCase := range tests {
+		test1.Run(testCase.in, func(test2 *testing.T) {
+			if got := parseFormat(testCase.in); got != testCase.want {
+				test2.Errorf("parseFormat(%q) = %q, want %q", testCase.in, got, testCase.want)
 			}
 		})
 	}
 }
 
-func TestFromEnv(t *testing.T) {
-	t.Setenv("LOG_LEVEL", "warn")
-	t.Setenv("LOG_FORMAT", "json")
+func TestFromEnv(test *testing.T) {
+	test.Setenv("LOG_LEVEL", "warn")
+	test.Setenv("LOG_FORMAT", "json")
 
 	cfg := FromEnv()
 	if cfg.Level != slog.LevelWarn {
-		t.Errorf("Level = %v, want %v", cfg.Level, slog.LevelWarn)
+		test.Errorf("Level = %v, want %v", cfg.Level, slog.LevelWarn)
 	}
 	if cfg.Format != FormatJSON {
-		t.Errorf("Format = %q, want %q", cfg.Format, FormatJSON)
+		test.Errorf("Format = %q, want %q", cfg.Format, FormatJSON)
 	}
 }
 
-func TestNewTextHandlerWritesStructured(t *testing.T) {
+func TestNewTextHandlerWritesStructured(test *testing.T) {
 	var buf bytes.Buffer
 	logger := New(Config{Level: slog.LevelInfo, Format: FormatText, Writer: &buf})
 
@@ -73,14 +73,14 @@ func TestNewTextHandlerWritesStructured(t *testing.T) {
 
 	out := buf.String()
 	if !strings.Contains(out, "msg=starting") {
-		t.Errorf("text output missing message: %q", out)
+		test.Errorf("text output missing message: %q", out)
 	}
 	if !strings.Contains(out, "component=routing-server") {
-		t.Errorf("text output missing structured field: %q", out)
+		test.Errorf("text output missing structured field: %q", out)
 	}
 }
 
-func TestNewJSONHandlerWritesStructured(t *testing.T) {
+func TestNewJSONHandlerWritesStructured(test *testing.T) {
 	var buf bytes.Buffer
 	logger := New(Config{Level: slog.LevelInfo, Format: FormatJSON, Writer: &buf})
 
@@ -88,62 +88,62 @@ func TestNewJSONHandlerWritesStructured(t *testing.T) {
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
-		t.Fatalf("JSON output is not valid JSON: %v\n%s", err, buf.String())
+		test.Fatalf("JSON output is not valid JSON: %v\n%s", err, buf.String())
 	}
 	if rec["msg"] != "starting" {
-		t.Errorf("msg = %v, want starting", rec["msg"])
+		test.Errorf("msg = %v, want starting", rec["msg"])
 	}
 	if rec["component"] != "benchmark" {
-		t.Errorf("component = %v, want benchmark", rec["component"])
+		test.Errorf("component = %v, want benchmark", rec["component"])
 	}
 }
 
-func TestLevelFiltering(t *testing.T) {
+func TestLevelFiltering(test *testing.T) {
 	var buf bytes.Buffer
 	logger := New(Config{Level: slog.LevelInfo, Writer: &buf})
 
 	logger.Debug("suppressed below threshold")
 	if buf.Len() != 0 {
-		t.Errorf("debug log emitted at info level: %q", buf.String())
+		test.Errorf("debug log emitted at info level: %q", buf.String())
 	}
 
 	logger.Warn("kept at or above threshold")
 	if !strings.Contains(buf.String(), "kept at or above threshold") {
-		t.Errorf("warn log dropped at info level: %q", buf.String())
+		test.Errorf("warn log dropped at info level: %q", buf.String())
 	}
 }
 
-func TestNewZeroConfigIsUsable(t *testing.T) {
+func TestNewZeroConfigIsUsable(test *testing.T) {
 	// A zero Config must not panic and must produce a usable logger
 	// (info-level text to stderr). We assert it is non-nil without emitting,
 	// to avoid writing to the real stderr during the test run.
 	if logger := New(Config{}); logger == nil {
-		t.Fatal("New(Config{}) returned nil")
+		test.Fatal("New(Config{}) returned nil")
 	}
 }
 
-func TestSetupConfiguresDefaultFromEnv(t *testing.T) {
+func TestSetupConfiguresDefaultFromEnv(test *testing.T) {
 	// Setup mutates slog's process-global default; restore it afterward.
 	// (t.Setenv already forbids t.Parallel here.)
 	prev := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	test.Cleanup(func() { slog.SetDefault(prev) })
 
-	t.Setenv("LOG_LEVEL", "error")
-	t.Setenv("LOG_FORMAT", "json")
+	test.Setenv("LOG_LEVEL", "error")
+	test.Setenv("LOG_FORMAT", "json")
 
 	logger := Setup()
 	if logger == nil {
-		t.Fatal("Setup() returned nil")
+		test.Fatal("Setup() returned nil")
 	}
 
 	ctx := context.Background()
 	if logger.Enabled(ctx, slog.LevelInfo) {
-		t.Error("info should be disabled when LOG_LEVEL=error")
+		test.Error("info should be disabled when LOG_LEVEL=error")
 	}
 	if !logger.Enabled(ctx, slog.LevelError) {
-		t.Error("error should be enabled when LOG_LEVEL=error")
+		test.Error("error should be enabled when LOG_LEVEL=error")
 	}
 	if !slog.Default().Enabled(ctx, slog.LevelError) {
-		t.Error("Setup did not install the configured logger as the slog default")
+		test.Error("Setup did not install the configured logger as the slog default")
 	}
 }

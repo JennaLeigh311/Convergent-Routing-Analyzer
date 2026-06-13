@@ -10,7 +10,7 @@ import (
 // TestHaversineKnownDistances pins haversine against analytically-known
 // great-circle distances. haversine is unexported, so this lives in an internal
 // package graph test rather than the external graph_test package.
-func TestHaversineKnownDistances(t *testing.T) {
+func TestHaversineKnownDistances(test1 *testing.T) {
 	cases := []struct {
 		name  string
 		a, b  domain.LatLon
@@ -46,15 +46,15 @@ func TestHaversineKnownDistances(t *testing.T) {
 			tolM:  20,
 		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := haversine(tc.a, tc.b)
-			if math.Abs(got-tc.wantM) > tc.tolM {
-				t.Errorf("haversine(%v, %v) = %.3f m, want %.0f ± %.0f m", tc.a, tc.b, got, tc.wantM, tc.tolM)
+	for _, testCase := range cases {
+		test1.Run(testCase.name, func(test2 *testing.T) {
+			got := haversine(testCase.a, testCase.b)
+			if math.Abs(got-testCase.wantM) > testCase.tolM {
+				test2.Errorf("haversine(%v, %v) = %.3f m, want %.0f ± %.0f m", testCase.a, testCase.b, got, testCase.wantM, testCase.tolM)
 			}
 			// Symmetry: distance is direction-independent.
-			if rev := haversine(tc.b, tc.a); math.Abs(rev-got) > 1e-6 {
-				t.Errorf("haversine not symmetric: a→b = %.6f, b→a = %.6f", got, rev)
+			if rev := haversine(testCase.b, testCase.a); math.Abs(rev-got) > 1e-6 {
+				test2.Errorf("haversine not symmetric: a→b = %.6f, b→a = %.6f", got, rev)
 			}
 		})
 	}
@@ -63,16 +63,16 @@ func TestHaversineKnownDistances(t *testing.T) {
 // lonCosFor mirrors the per-query longitude-cosine factor the search computes:
 // cos(max(maxAbsLat, |query lat|)). Kept in the test so the admissibility guards
 // exercise the exact factor nearest() threads into axisLowerBound.
-func lonCosFor(tr *kdTree, qLat float64) float64 {
-	return math.Cos(degToRad(math.Max(tr.maxAbsLat, math.Abs(qLat))))
+func lonCosFor(tree *kdTree, qLat float64) float64 {
+	return math.Cos(degToRad(math.Max(tree.maxAbsLat, math.Abs(qLat))))
 }
 
 // TestKDTreeAxisLowerBoundIsAdmissible is a focused guard on the pruning bound:
 // the per-axis lower bound must never exceed the true haversine distance for a
 // pure single-axis displacement, or the search could prune the true nearest.
-func TestKDTreeAxisLowerBoundIsAdmissible(t *testing.T) {
+func TestKDTreeAxisLowerBoundIsAdmissible(test *testing.T) {
 	// Build a tree so the longitude factor is populated from a realistic max latitude.
-	tr := newKDTree([]kdPoint{
+	tree := newKDTree([]kdPoint{
 		{pos: domain.LatLon{Lat: 41.15, Lon: -8.61}, idx: 0},
 		{pos: domain.LatLon{Lat: 41.30, Lon: -8.50}, idx: 1},
 	})
@@ -81,14 +81,14 @@ func TestKDTreeAxisLowerBoundIsAdmissible(t *testing.T) {
 	for _, dDeg := range []float64{0.001, 0.01, 0.1, 0.5} {
 		// Pure latitude displacement: bound vs true haversine.
 		latTrue := haversine(base, domain.LatLon{Lat: base.Lat + dDeg, Lon: base.Lon})
-		if lb := tr.axisLowerBound(0, dDeg, lonCosFor(tr, base.Lat)); lb > latTrue+1e-6 {
-			t.Errorf("lat lower bound %.4f m exceeds true %.4f m at %g°", lb, latTrue, dDeg)
+		if lowerBound1 := tree.axisLowerBound(0, dDeg, lonCosFor(tree, base.Lat)); lowerBound1 > latTrue+1e-6 {
+			test.Errorf("lat lower bound %.4f m exceeds true %.4f m at %g°", lowerBound1, latTrue, dDeg)
 		}
 		// Pure longitude displacement at the largest latitude in the tree, where
 		// the bound is tightest; it must still not exceed the true distance.
 		lonTrue := haversine(domain.LatLon{Lat: 41.30, Lon: base.Lon}, domain.LatLon{Lat: 41.30, Lon: base.Lon + dDeg})
-		if lb := tr.axisLowerBound(1, dDeg, lonCosFor(tr, 41.30)); lb > lonTrue+1e-6 {
-			t.Errorf("lon lower bound %.4f m exceeds true %.4f m at %g°", lb, lonTrue, dDeg)
+		if lowerBound2 := tree.axisLowerBound(1, dDeg, lonCosFor(tree, 41.30)); lowerBound2 > lonTrue+1e-6 {
+			test.Errorf("lon lower bound %.4f m exceeds true %.4f m at %g°", lowerBound2, lonTrue, dDeg)
 		}
 	}
 }
@@ -102,8 +102,8 @@ func TestKDTreeAxisLowerBoundIsAdmissible(t *testing.T) {
 // The worst case below (nodes at 80°, query at 80.2°, gap 100°) makes the old
 // maxAbsLat-only bound inadmissible: cos²(80°)·sin²(50°) > the true h. Threading
 // the query latitude into the factor restores admissibility.
-func TestKDTreeLonBoundAdmissibleQueryAboveBand(t *testing.T) {
-	tr := newKDTree([]kdPoint{
+func TestKDTreeLonBoundAdmissibleQueryAboveBand(test *testing.T) {
+	tree := newKDTree([]kdPoint{
 		{pos: domain.LatLon{Lat: 80.0, Lon: 0.0}, idx: 0},
 		{pos: domain.LatLon{Lat: 80.0, Lon: 100.0}, idx: 1},
 	})
@@ -113,16 +113,16 @@ func TestKDTreeLonBoundAdmissibleQueryAboveBand(t *testing.T) {
 		pLat = 80.0  // far point's latitude (a tree point)
 		gap  = 100.0 // longitude gap to the far point
 	)
-	lonCos := lonCosFor(tr, qLat)
+	lonCos := lonCosFor(tree, qLat)
 
 	// True haversine from the query to the far-side point across the full gap, the
 	// tightest distance any far-side point could have on this longitude split.
-	q := domain.LatLon{Lat: qLat, Lon: 0.0}
+	queryPoint := domain.LatLon{Lat: qLat, Lon: 0.0}
 	far := domain.LatLon{Lat: pLat, Lon: gap}
-	trueD := haversine(q, far)
+	trueD := haversine(queryPoint, far)
 
-	if lb := tr.axisLowerBound(1, gap, lonCos); lb > trueD+1e-6 {
-		t.Errorf("lon lower bound %.4f m exceeds true %.4f m for query lat %g° above band (maxAbsLat %g°): bound is inadmissible",
-			lb, trueD, qLat, tr.maxAbsLat)
+	if lowerBound := tree.axisLowerBound(1, gap, lonCos); lowerBound > trueD+1e-6 {
+		test.Errorf("lon lower bound %.4f m exceeds true %.4f m for query lat %g° above band (maxAbsLat %g°): bound is inadmissible",
+			lowerBound, trueD, qLat, tree.maxAbsLat)
 	}
 }

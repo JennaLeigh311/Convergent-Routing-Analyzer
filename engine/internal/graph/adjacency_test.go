@@ -13,8 +13,8 @@ import (
 // buildTestGraph returns a small dense graph: three nodes (0,1,2) and three
 // directed edges — 0:0→1, 1:1→2, 2:0→2 — so node 0 has two out-edges (0 and 2,
 // in that id order), node 1 has one (1), and node 2 has none.
-func buildTestGraph(t *testing.T) *graph.AdjacencyGraph {
-	t.Helper()
+func buildTestGraph(test *testing.T) *graph.AdjacencyGraph {
+	test.Helper()
 	nodes := []graph.Node{
 		{ID: 0, Pos: domain.LatLon{Lat: 41.15, Lon: -8.61}},
 		{ID: 1, Pos: domain.LatLon{Lat: 41.16, Lon: -8.62}},
@@ -25,59 +25,59 @@ func buildTestGraph(t *testing.T) *graph.AdjacencyGraph {
 		{ID: 1, Segment: "100:1:F", From: 1, To: 2, LengthM: 200, FreeFlowS: 20, CapacityVPH: 1800},
 		{ID: 2, Segment: "200:0:F", From: 0, To: 2, LengthM: 300, FreeFlowS: 30, CapacityVPH: 900},
 	}
-	g, err := graph.New(nodes, edges)
+	roadGraph, err := graph.New(nodes, edges)
 	if err != nil {
-		t.Fatalf("graph.New: unexpected error: %v", err)
+		test.Fatalf("graph.New: unexpected error: %v", err)
 	}
-	return g
+	return roadGraph
 }
 
-func TestAdjacencyGraphTopology(t *testing.T) {
-	g := buildTestGraph(t)
+func TestAdjacencyGraphTopology(test *testing.T) {
+	roadGraph := buildTestGraph(test)
 
-	if got := g.NodeCount(); got != 3 {
-		t.Errorf("NodeCount() = %d, want 3", got)
+	if got := roadGraph.NodeCount(); got != 3 {
+		test.Errorf("NodeCount() = %d, want 3", got)
 	}
-	if got := g.EdgeCount(); got != 3 {
-		t.Errorf("EdgeCount() = %d, want 3", got)
+	if got := roadGraph.EdgeCount(); got != 3 {
+		test.Errorf("EdgeCount() = %d, want 3", got)
 	}
 
 	// Node 0 has two out-edges, returned in increasing EdgeID order (0 then 2).
-	n0 := g.Neighbors(0)
-	if len(n0) != 2 || n0[0].ID != 0 || n0[1].ID != 2 {
-		t.Fatalf("Neighbors(0) = %+v, want edge ids [0 2]", n0)
+	edges := roadGraph.Neighbors(0)
+	if len(edges) != 2 || edges[0].ID != 0 || edges[1].ID != 2 {
+		test.Fatalf("Neighbors(0) = %+v, want edge ids [0 2]", edges)
 	}
-	if n0[0].To != 1 || n0[1].To != 2 {
-		t.Errorf("Neighbors(0) endpoints = [%d %d], want [1 2]", n0[0].To, n0[1].To)
+	if edges[0].To != 1 || edges[1].To != 2 {
+		test.Errorf("Neighbors(0) endpoints = [%d %d], want [1 2]", edges[0].To, edges[1].To)
 	}
-	if got := g.Neighbors(1); len(got) != 1 || got[0].ID != 1 {
-		t.Errorf("Neighbors(1) = %+v, want one edge id 1", got)
+	if got := roadGraph.Neighbors(1); len(got) != 1 || got[0].ID != 1 {
+		test.Errorf("Neighbors(1) = %+v, want one edge id 1", got)
 	}
-	if got := g.Neighbors(2); got != nil {
-		t.Errorf("Neighbors(2) = %+v, want nil (no out-edges)", got)
+	if got := roadGraph.Neighbors(2); got != nil {
+		test.Errorf("Neighbors(2) = %+v, want nil (no out-edges)", got)
 	}
-	if got := g.Neighbors(99); got != nil {
-		t.Errorf("Neighbors(99) = %+v, want nil (out of range)", got)
+	if got := roadGraph.Neighbors(99); got != nil {
+		test.Errorf("Neighbors(99) = %+v, want nil (out of range)", got)
 	}
 
-	if e, ok := g.Edge(1); !ok || e.From != 1 || e.To != 2 || e.Segment != "100:1:F" {
-		t.Errorf("Edge(1) = (%+v, ok=%v), want edge 1→2 segment 100:1:F", e, ok)
+	if edge, found1 := roadGraph.Edge(1); !found1 || edge.From != 1 || edge.To != 2 || edge.Segment != "100:1:F" {
+		test.Errorf("Edge(1) = (%+v, ok=%v), want edge 1→2 segment 100:1:F", edge, found1)
 	}
-	if _, ok := g.Edge(3); ok {
-		t.Error("Edge(3) ok = true, want false (out of range)")
+	if _, found2 := roadGraph.Edge(3); found2 {
+		test.Error("Edge(3) ok = true, want false (out of range)")
 	}
-	if n, ok := g.Node(2); !ok || n.Pos.Lat != 41.17 {
-		t.Errorf("Node(2) = (%+v, ok=%v), want node 2", n, ok)
+	if node, found3 := roadGraph.Node(2); !found3 || node.Pos.Lat != 41.17 {
+		test.Errorf("Node(2) = (%+v, ok=%v), want node 2", node, found3)
 	}
-	if _, ok := g.Node(99); ok {
-		t.Error("Node(99) ok = true, want false (out of range)")
+	if _, found4 := roadGraph.Node(99); found4 {
+		test.Error("Node(99) ok = true, want false (out of range)")
 	}
 }
 
 // TestAdjacencyGraphReadsAreIsolated proves the graph is immutable through its
 // accessors: a caller mutating a returned Neighbors slice, or mutating an input
 // slice after construction, must not change the graph.
-func TestAdjacencyGraphReadsAreIsolated(t *testing.T) {
+func TestAdjacencyGraphReadsAreIsolated(test *testing.T) {
 	nodes := []graph.Node{
 		{ID: 0, Pos: domain.LatLon{Lat: 1, Lon: 1}},
 		{ID: 1, Pos: domain.LatLon{Lat: 2, Lon: 2}},
@@ -85,35 +85,35 @@ func TestAdjacencyGraphReadsAreIsolated(t *testing.T) {
 	edges := []graph.Edge{
 		{ID: 0, Segment: "1:0:F", From: 0, To: 1, LengthM: 100, FreeFlowS: 10, CapacityVPH: 1800},
 	}
-	g, err := graph.New(nodes, edges)
+	roadGraph, err := graph.New(nodes, edges)
 	if err != nil {
-		t.Fatalf("graph.New: %v", err)
+		test.Fatalf("graph.New: %v", err)
 	}
 
 	// Mutating an input slice after New must not affect the graph (New copies).
 	nodes[0].Pos.Lat = 999
 	edges[0].LengthM = 999
-	if n, _ := g.Node(0); n.Pos.Lat != 1 {
-		t.Errorf("Node(0).Pos.Lat = %v after input mutation, want 1 (graph must copy inputs)", n.Pos.Lat)
+	if node, _ := roadGraph.Node(0); node.Pos.Lat != 1 {
+		test.Errorf("Node(0).Pos.Lat = %v after input mutation, want 1 (graph must copy inputs)", node.Pos.Lat)
 	}
-	if e, _ := g.Edge(0); e.LengthM != 100 {
-		t.Errorf("Edge(0).LengthM = %v after input mutation, want 100", e.LengthM)
+	if edge1, _ := roadGraph.Edge(0); edge1.LengthM != 100 {
+		test.Errorf("Edge(0).LengthM = %v after input mutation, want 100", edge1.LengthM)
 	}
 
 	// Mutating a returned Neighbors slice must not affect subsequent reads.
-	first := g.Neighbors(0)
+	first := roadGraph.Neighbors(0)
 	first[0].LengthM = 12345
-	again := g.Neighbors(0)
+	again := roadGraph.Neighbors(0)
 	if again[0].LengthM != 100 {
-		t.Errorf("Neighbors(0)[0].LengthM = %v after caller mutation, want 100 (returned slice must be isolated)", again[0].LengthM)
+		test.Errorf("Neighbors(0)[0].LengthM = %v after caller mutation, want 100 (returned slice must be isolated)", again[0].LengthM)
 	}
 	// The mutation must not have reached shared edge storage via another accessor.
-	if e, _ := g.Edge(0); e.LengthM != 100 {
-		t.Errorf("Edge(0).LengthM = %v after Neighbors mutation, want 100 (returned slice must not alias g.edges)", e.LengthM)
+	if edge2, _ := roadGraph.Edge(0); edge2.LengthM != 100 {
+		test.Errorf("Edge(0).LengthM = %v after Neighbors mutation, want 100 (returned slice must not alias g.edges)", edge2.LengthM)
 	}
 }
 
-func TestNewRejectsMalformedInput(t *testing.T) {
+func TestNewRejectsMalformedInput(test1 *testing.T) {
 	good := graph.Node{ID: 0, Pos: domain.LatLon{Lat: 1, Lon: 1}}
 	cases := []struct {
 		name  string
@@ -146,10 +146,10 @@ func TestNewRejectsMalformedInput(t *testing.T) {
 			edges: []graph.Edge{{ID: 0, From: 0, To: 0}},
 		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if _, err := graph.New(tc.nodes, tc.edges); err == nil {
-				t.Errorf("graph.New(%s) = nil error, want rejection", tc.name)
+	for _, testCase := range cases {
+		test1.Run(testCase.name, func(test2 *testing.T) {
+			if _, err := graph.New(testCase.nodes, testCase.edges); err == nil {
+				test2.Errorf("graph.New(%s) = nil error, want rejection", testCase.name)
 			}
 		})
 	}
@@ -158,25 +158,25 @@ func TestNewRejectsMalformedInput(t *testing.T) {
 // TestNewEmptyGraph covers the degenerate boundary: a graph with no nodes and
 // no edges must build without error and read back as empty without panicking
 // (the CSR outOffsets is len 1, so the offset arithmetic must stay in bounds).
-func TestNewEmptyGraph(t *testing.T) {
-	g, err := graph.New(nil, nil)
+func TestNewEmptyGraph(test *testing.T) {
+	roadGraph, err := graph.New(nil, nil)
 	if err != nil {
-		t.Fatalf("graph.New(nil, nil) = %v, want a valid empty graph", err)
+		test.Fatalf("graph.New(nil, nil) = %v, want a valid empty graph", err)
 	}
-	if got := g.NodeCount(); got != 0 {
-		t.Errorf("NodeCount() = %d, want 0", got)
+	if got := roadGraph.NodeCount(); got != 0 {
+		test.Errorf("NodeCount() = %d, want 0", got)
 	}
-	if got := g.EdgeCount(); got != 0 {
-		t.Errorf("EdgeCount() = %d, want 0", got)
+	if got := roadGraph.EdgeCount(); got != 0 {
+		test.Errorf("EdgeCount() = %d, want 0", got)
 	}
-	if got := g.Neighbors(0); got != nil {
-		t.Errorf("Neighbors(0) = %+v, want nil (empty graph)", got)
+	if got := roadGraph.Neighbors(0); got != nil {
+		test.Errorf("Neighbors(0) = %+v, want nil (empty graph)", got)
 	}
-	if _, ok := g.Edge(0); ok {
-		t.Error("Edge(0) ok = true, want false (empty graph)")
+	if _, found1 := roadGraph.Edge(0); found1 {
+		test.Error("Edge(0) ok = true, want false (empty graph)")
 	}
-	if _, ok := g.Node(0); ok {
-		t.Error("Node(0) ok = true, want false (empty graph)")
+	if _, found2 := roadGraph.Node(0); found2 {
+		test.Error("Node(0) ok = true, want false (empty graph)")
 	}
 }
 
@@ -187,29 +187,29 @@ func TestNewEmptyGraph(t *testing.T) {
 // fresh-allocation implementation that write is goroutine-local and harmless,
 // but if Neighbors ever regressed to aliasing the internal CSR storage, those
 // writes would race against the other workers' reads and -race would catch it.
-func TestAdjacencyGraphConcurrentReads(t *testing.T) {
-	g := buildTestGraph(t)
+func TestAdjacencyGraphConcurrentReads(test *testing.T) {
+	roadGraph := buildTestGraph(test)
 	const workers = 32
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for w := 0; w < workers; w++ {
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(workers)
+	for width := 0; width < workers; width++ {
 		go func() {
-			defer wg.Done()
-			for i := 0; i < 1000; i++ {
-				got := g.Neighbors(0)
+			defer waitGroup.Done()
+			for index := 0; index < 1000; index++ {
+				got := roadGraph.Neighbors(0)
 				if len(got) != 2 {
-					t.Errorf("concurrent Neighbors(0) len = %d, want 2", len(got))
+					test.Errorf("concurrent Neighbors(0) len = %d, want 2", len(got))
 					return
 				}
-				got[0].LengthM = float64(i) // must touch only this goroutine's copy
-				_, _ = g.Edge(1)
-				_, _ = g.Node(2)
-				_ = g.NodeCount()
-				_ = g.EdgeCount()
+				got[0].LengthM = float64(index) // must touch only this goroutine's copy
+				_, _ = roadGraph.Edge(1)
+				_, _ = roadGraph.Node(2)
+				_ = roadGraph.NodeCount()
+				_ = roadGraph.EdgeCount()
 			}
 		}()
 	}
-	wg.Wait()
+	waitGroup.Wait()
 }
 
 // TestAdjacencyGraphNearestEdgeNotImplemented documents the convention for the
@@ -220,22 +220,22 @@ func TestAdjacencyGraphConcurrentReads(t *testing.T) {
 // no-match — the silent-degradation trap. Panicking makes a premature
 // integration fail loudly instead. NearestNode is exercised separately in
 // kdtree_test.go now that issue #24 wired it to a real k-d tree.
-func TestAdjacencyGraphNearestEdgeNotImplemented(t *testing.T) {
-	g := buildTestGraph(t)
+func TestAdjacencyGraphNearestEdgeNotImplemented(test *testing.T) {
+	roadGraph := buildTestGraph(test)
 
 	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("NearestEdge did not panic, want a not-implemented panic (Phase 7)")
+		recovered := recover()
+		if recovered == nil {
+			test.Fatal("NearestEdge did not panic, want a not-implemented panic (Phase 7)")
 		}
 		// Match on the message, not the panic carrier type: the contract is
 		// "panics with a not-implemented message", so a future refactor to
 		// panic(error) instead of panic(string) should still satisfy this test.
-		msg := fmt.Sprint(r)
+		msg := fmt.Sprint(recovered)
 		if !strings.Contains(msg, "not implemented") || !strings.Contains(msg, "Phase 7") {
-			t.Errorf("NearestEdge panic = %q, want mention of %q and %q", msg, "not implemented", "Phase 7")
+			test.Errorf("NearestEdge panic = %q, want mention of %q and %q", msg, "not implemented", "Phase 7")
 		}
 	}()
 
-	g.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90)
+	roadGraph.NearestEdge(domain.LatLon{Lat: 41.15, Lon: -8.61}, 90)
 }

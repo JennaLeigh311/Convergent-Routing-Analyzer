@@ -11,11 +11,11 @@ type LoadSnapshot []float64
 
 // Load returns the load (vehicles/hour) on the edge, or 0 if the edge is out of
 // range / has no observation.
-func (s LoadSnapshot) Load(id domain.EdgeID) float64 {
-	if id < 0 || int(id) >= len(s) {
+func (snapshot LoadSnapshot) Load(edgeID domain.EdgeID) float64 {
+	if edgeID < 0 || int(edgeID) >= len(snapshot) {
 		return 0
 	}
-	return s[id]
+	return snapshot[edgeID]
 }
 
 // CongestionProvider exposes the current per-edge load in vehicles/hour. The
@@ -28,7 +28,7 @@ func (s LoadSnapshot) Load(id domain.EdgeID) float64 {
 type CongestionProvider interface {
 	// Load returns the current load (vehicles/hour) on the edge, or 0 if the
 	// edge has no observation.
-	Load(id domain.EdgeID) float64
+	Load(edgeID domain.EdgeID) float64
 
 	// Snapshot returns a fresh LoadSnapshot that the caller owns and may mutate
 	// freely without affecting the provider. Batch routing takes one Snapshot

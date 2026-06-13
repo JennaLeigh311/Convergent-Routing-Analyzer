@@ -36,9 +36,9 @@ type weightFunc func(graph.Edge) float64
 // staleness check compares the entry's g against the settled-cost slice (never the
 // priority), so adding the heuristic reorders the heap without touching the
 // settle/relax structure here.
-func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []domain.EdgeID, cost float64, ok bool) {
-	n := g.NodeCount()
-	if int(src) < 0 || int(src) >= n || int(dst) < 0 || int(dst) >= n {
+func dijkstra(roadGraph graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []domain.EdgeID, cost float64, found bool) {
+	count := roadGraph.NodeCount()
+	if int(src) < 0 || int(src) >= count || int(dst) < 0 || int(dst) >= count {
 		return nil, 0, false
 	}
 	if src == dst {
@@ -49,22 +49,22 @@ func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []
 	// router safe for unsynchronized concurrent use; a per-worker scratch buffer is
 	// a possible future optimization once the Assign worker-pool shape is concrete
 	// (deferred behind a benchmark, as it is secondary to the Neighbors alloc below).
-	dist := make([]float64, n)
-	for i := range dist {
-		dist[i] = math.Inf(1)
+	dist := make([]float64, count)
+	for index1 := range dist {
+		dist[index1] = math.Inf(1)
 	}
 	// prevEdge[v] is the id of the edge used to settle v on the best path found
 	// so far; -1 means "no predecessor yet" and is the path-reconstruction
 	// terminator at src.
-	prevEdge := make([]domain.EdgeID, n)
-	for i := range prevEdge {
-		prevEdge[i] = -1
+	prevEdge := make([]domain.EdgeID, count)
+	for index2 := range prevEdge {
+		prevEdge[index2] = -1
 	}
 
 	dist[src] = 0
-	pq := &priorityQueue{{node: src, g: 0, priority: 0}}
-	for pq.Len() > 0 {
-		cur := heap.Pop(pq).(pqItem)
+	queue := &priorityQueue{{node: src, g: 0, priority: 0}}
+	for queue.Len() > 0 {
+		cur := heap.Pop(queue).(pqItem)
 		if cur.g > dist[cur.node] {
 			continue // stale entry superseded by a shorter settle
 		}
@@ -75,14 +75,14 @@ func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []
 		// limitation, not a need of this loop, which reads only ID/To/weight). On
 		// the MSA/equilibrium hot path an allocation-free CSR neighbor view is a
 		// worthwhile follow-up — tracked in #35, gated on a profiler-confirmed hotspot.
-		for _, e := range g.Neighbors(cur.node) {
-			relaxed := dist[cur.node] + weight(e)
-			if relaxed < dist[e.To] {
-				dist[e.To] = relaxed
-				prevEdge[e.To] = e.ID
+		for _, edge1 := range roadGraph.Neighbors(cur.node) {
+			relaxed := dist[cur.node] + weight(edge1)
+			if relaxed < dist[edge1.To] {
+				dist[edge1.To] = relaxed
+				prevEdge[edge1.To] = edge1.ID
 				// priority == g for Dijkstra; an A* wrapper would push
 				// g: relaxed, priority: relaxed + h(e.To).
-				heap.Push(pq, pqItem{node: e.To, g: relaxed, priority: relaxed})
+				heap.Push(queue, pqItem{node: edge1.To, g: relaxed, priority: relaxed})
 			}
 		}
 	}
@@ -92,17 +92,17 @@ func dijkstra(g graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []
 	}
 
 	// Walk predecessors from dst back to src, then reverse into travel order.
-	for at := dst; at != src; {
-		eid := prevEdge[at]
-		e, found := g.Edge(eid)
+	for atNodeID := dst; atNodeID != src; {
+		eid := prevEdge[atNodeID]
+		edge2, found := roadGraph.Edge(eid)
 		if !found {
 			return nil, 0, false // defensive: a settled node always has a predecessor edge; a missing one is a logic bug above, not a valid graph
 		}
 		path = append(path, eid)
-		at = e.From
+		atNodeID = edge2.From
 	}
-	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
-		path[i], path[j] = path[j], path[i]
+	for index3, innerIndex := 0, len(path)-1; index3 < innerIndex; index3, innerIndex = index3+1, innerIndex-1 {
+		path[index3], path[innerIndex] = path[innerIndex], path[index3]
 	}
 	return path, dist[dst], true
 }
@@ -122,14 +122,18 @@ type pqItem struct {
 // a fresh (lower) entry and the stale one is discarded when popped.
 type priorityQueue []pqItem
 
-func (pq priorityQueue) Len() int           { return len(pq) }
-func (pq priorityQueue) Less(i, j int) bool { return pq[i].priority < pq[j].priority }
-func (pq priorityQueue) Swap(i, j int)      { pq[i], pq[j] = pq[j], pq[i] }
-func (pq *priorityQueue) Push(x any)        { *pq = append(*pq, x.(pqItem)) }
-func (pq *priorityQueue) Pop() any {
-	old := *pq
-	n := len(old)
-	item := old[n-1]
-	*pq = old[:n-1]
+func (queue priorityQueue) Len() int { return len(queue) }
+func (queue priorityQueue) Less(index, innerIndex int) bool {
+	return queue[index].priority < queue[innerIndex].priority
+}
+func (queue priorityQueue) Swap(index, innerIndex int) {
+	queue[index], queue[innerIndex] = queue[innerIndex], queue[index]
+}
+func (queue *priorityQueue) Push(value any) { *queue = append(*queue, value.(pqItem)) }
+func (queue *priorityQueue) Pop() any {
+	old := *queue
+	count := len(old)
+	item := old[count-1]
+	*queue = old[:count-1]
 	return item
 }

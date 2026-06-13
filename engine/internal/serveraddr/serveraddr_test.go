@@ -2,7 +2,7 @@ package serveraddr
 
 import "testing"
 
-func TestHealthURL(t *testing.T) {
+func TestHealthURL(test1 *testing.T) {
 	tests := []struct {
 		name string
 		addr string
@@ -16,26 +16,26 @@ func TestHealthURL(t *testing.T) {
 		{"concrete ipv4 host", "127.0.0.1:9090", "http://127.0.0.1:9090/healthz"},
 		{"concrete ipv6 host re-bracketed", "[::1]:8080", "http://[::1]:8080/healthz"},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := HealthURL(tt.addr); got != tt.want {
-				t.Errorf("HealthURL(%q) = %q, want %q", tt.addr, got, tt.want)
+	for _, testCase := range tests {
+		test1.Run(testCase.name, func(test2 *testing.T) {
+			if got := HealthURL(testCase.addr); got != testCase.want {
+				test2.Errorf("HealthURL(%q) = %q, want %q", testCase.addr, got, testCase.want)
 			}
 		})
 	}
 }
 
-func TestResolve(t *testing.T) {
-	t.Run("falls back to Default when unset", func(t *testing.T) {
-		t.Setenv(EnvVar, "")
+func TestResolve(test1 *testing.T) {
+	test1.Run("falls back to Default when unset", func(test2 *testing.T) {
+		test2.Setenv(EnvVar, "")
 		if got := Resolve(); got != Default {
-			t.Errorf("Resolve() = %q, want Default %q", got, Default)
+			test2.Errorf("Resolve() = %q, want Default %q", got, Default)
 		}
 	})
-	t.Run("uses env override when set", func(t *testing.T) {
-		t.Setenv(EnvVar, "0.0.0.0:9999")
+	test1.Run("uses env override when set", func(test3 *testing.T) {
+		test3.Setenv(EnvVar, "0.0.0.0:9999")
 		if got := Resolve(); got != "0.0.0.0:9999" {
-			t.Errorf("Resolve() = %q, want %q", got, "0.0.0.0:9999")
+			test3.Errorf("Resolve() = %q, want %q", got, "0.0.0.0:9999")
 		}
 	})
 }

@@ -62,12 +62,12 @@ type congestionMsg struct {
 // known extra, so it is consciously stripped from each raw row BEFORE the strict
 // decode; everything else (e.g. a stray `dropped_late`, which §3 pins as a
 // producer-only metric and NOT a message field) must then fail to decode.
-func loadCongestionStrict(t *testing.T) []congestionMsg {
-	t.Helper()
+func loadCongestionStrict(test *testing.T) []congestionMsg {
+	test.Helper()
 	path := filepath.Join(segmentCongestionFixtureDir, "example_messages.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read fixture %s: %v", path, err)
+		test.Fatalf("read fixture %s: %v", path, err)
 	}
 
 	// First pass: decode into raw JSON objects so we can strip the non-contract
@@ -76,16 +76,16 @@ func loadCongestionStrict(t *testing.T) []congestionMsg {
 	// trips DisallowUnknownFields below.
 	var raws []map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raws); err != nil {
-		t.Fatalf("unmarshal fixture %s into raw rows: %v", path, err)
+		test.Fatalf("unmarshal fixture %s into raw rows: %v", path, err)
 	}
 	if len(raws) == 0 {
-		t.Fatalf("fixture %s is empty", path)
+		test.Fatalf("fixture %s is empty", path)
 	}
 
 	out := make([]congestionMsg, len(raws))
-	for i, raw := range raws {
+	for index, raw := range raws {
 		delete(raw, "note") // documentation, not schema — consciously ignored.
-		out[i] = decodeStrictRow(t, i, raw)
+		out[index] = decodeStrictRow(test, index, raw)
 	}
 	return out
 }
@@ -96,21 +96,21 @@ func loadCongestionStrict(t *testing.T) []congestionMsg {
 // the note-stripped row has exactly 10 keys — that pins the MISSING-field side
 // (a row dropping, say, is_final or producer would otherwise decode to a zero
 // value and pass silently), making "exactly the 10 §3 fields" enforced both ways.
-func decodeStrictRow(t *testing.T, idx int, raw map[string]json.RawMessage) congestionMsg {
-	t.Helper()
+func decodeStrictRow(test *testing.T, idx int, raw map[string]json.RawMessage) congestionMsg {
+	test.Helper()
 	if len(raw) != 10 {
-		t.Fatalf("row %d: has %d fields after stripping `note`, want exactly 10 (§3 message shape); keys = %v",
+		test.Fatalf("row %d: has %d fields after stripping `note`, want exactly 10 (§3 message shape); keys = %v",
 			idx, len(raw), rawKeys(raw))
 	}
 	reMarshaled, err := json.Marshal(raw)
 	if err != nil {
-		t.Fatalf("row %d: re-marshal: %v", idx, err)
+		test.Fatalf("row %d: re-marshal: %v", idx, err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(reMarshaled))
 	dec.DisallowUnknownFields()
 	var msg congestionMsg
 	if err := dec.Decode(&msg); err != nil {
-		t.Fatalf("row %d: strict decode failed: %v", idx, err)
+		test.Fatalf("row %d: strict decode failed: %v", idx, err)
 	}
 	return msg
 }
@@ -121,16 +121,16 @@ func decodeStrictRow(t *testing.T, idx int, raw map[string]json.RawMessage) cong
 // instant with time.RFC3339 and requiring the result to byte-match the input:
 // any non-canonical spelling round-trips to a different string. This is the
 // precondition that makes the dedup comparison well-defined (§3 "Dedup rule").
-func parseCanonicalTS(t *testing.T, field, s string) time.Time {
-	t.Helper()
-	ts, err := time.Parse(canonicalTSLayout, s)
+func parseCanonicalTS(test *testing.T, field, text string) time.Time {
+	test.Helper()
+	timestamp, err := time.Parse(canonicalTSLayout, text)
 	if err != nil {
-		t.Fatalf("%s = %q: not parseable as RFC3339: %v", field, s, err)
+		test.Fatalf("%s = %q: not parseable as RFC3339: %v", field, text, err)
 	}
-	if got := ts.UTC().Format(canonicalTSLayout); got != s {
-		t.Errorf("%s = %q is not canonical RFC3339 UTC (round-trips to %q); §3 requires a literal Z, whole-second precision, no fractional digits", field, s, got)
+	if got := timestamp.UTC().Format(canonicalTSLayout); got != text {
+		test.Errorf("%s = %q is not canonical RFC3339 UTC (round-trips to %q); §3 requires a literal Z, whole-second precision, no fractional digits", field, text, got)
 	}
-	return ts
+	return timestamp
 }
 
 // TestSegmentCongestionStrictSchema asserts that the frozen fixture decodes
@@ -139,17 +139,17 @@ func parseCanonicalTS(t *testing.T, field, s string) time.Time {
 // REJECTED. The producer MUST NOT emit `note`, nor `dropped_late` (§3 pins it as
 // a producer-only metric, never a message field); a silently-tolerated extra
 // field is exactly how the producer and consumer schemas would drift.
-func TestSegmentCongestionStrictSchema(t *testing.T) {
-	msgs := loadCongestionStrict(t)
+func TestSegmentCongestionStrictSchema(test1 *testing.T) {
+	msgs := loadCongestionStrict(test1)
 	if len(msgs) != 7 {
-		t.Fatalf("fixture has %d rows, want 7 (the frozen §3 dedup story)", len(msgs))
+		test1.Fatalf("fixture has %d rows, want 7 (the frozen §3 dedup story)", len(msgs))
 	}
 
 	// Negative case: a row carrying an 11th field MUST fail the strict decode.
 	// We use `dropped_late` precisely because §3 calls it out as a producer-only
 	// metric that "is NOT a message field and never appears on the topic" — so
 	// proving the schema rejects it is proving the contract, not an arbitrary key.
-	t.Run("extra_field_rejected", func(t *testing.T) {
+	test1.Run("extra_field_rejected", func(test2 *testing.T) {
 		// Build a fully-valid 10-field row, then add the forbidden 11th field.
 		raw := map[string]json.RawMessage{
 			"schema_version": json.RawMessage(`1`),
@@ -166,13 +166,13 @@ func TestSegmentCongestionStrictSchema(t *testing.T) {
 		}
 		reMarshaled, err := json.Marshal(raw)
 		if err != nil {
-			t.Fatalf("re-marshal: %v", err)
+			test2.Fatalf("re-marshal: %v", err)
 		}
 		dec := json.NewDecoder(bytes.NewReader(reMarshaled))
 		dec.DisallowUnknownFields()
 		var msg congestionMsg
 		if err := dec.Decode(&msg); err == nil {
-			t.Fatal("strict decode ACCEPTED a row with an 11th field (dropped_late); §3 forbids any field outside the 10-field schema")
+			test2.Fatal("strict decode ACCEPTED a row with an 11th field (dropped_late); §3 forbids any field outside the 10-field schema")
 		}
 	})
 }
@@ -185,48 +185,48 @@ func TestSegmentCongestionStrictSchema(t *testing.T) {
 // Each violation is silent in production (a 6-minute window or a fractional
 // timestamp doesn't crash — it just corrupts the dedup ordering or the BPR
 // flow), which is why every one is gated here.
-func TestSegmentCongestionFieldInvariants(t *testing.T) {
-	msgs := loadCongestionStrict(t)
-	for _, m := range msgs {
+func TestSegmentCongestionFieldInvariants(test1 *testing.T) {
+	msgs := loadCongestionStrict(test1)
+	for _, message := range msgs {
 		// emit_time is appended so the rows that share a segment_id+window_start
 		// (the rows-1..3 revisions of one window) get distinct subtest names
 		// instead of Go's auto #01/#02 suffixes.
-		t.Run(m.SegmentID+"@"+m.WindowStart+"#"+m.EmitTime, func(t *testing.T) {
+		test1.Run(message.SegmentID+"@"+message.WindowStart+"#"+message.EmitTime, func(test2 *testing.T) {
 			// schema_version is the frozen v2 envelope version (§3 "Why v2").
-			if m.SchemaVersion != 1 {
-				t.Errorf("schema_version = %d, want 1 (§3 frozen v2 envelope)", m.SchemaVersion)
+			if message.SchemaVersion != 1 {
+				test2.Errorf("schema_version = %d, want 1 (§3 frozen v2 envelope)", message.SchemaVersion)
 			}
 
 			// segment_id must parse under §1 — it is the §1 wire key and Kafka
 			// message key; if it doesn't parse, congestion can't join to an edge.
-			if _, _, _, err := ParseSegmentID(SegmentID(m.SegmentID)); err != nil {
-				t.Errorf("ParseSegmentID(%q): %v (§3 requires §1-valid segment_id)", m.SegmentID, err)
+			if _, _, _, err := ParseSegmentID(SegmentID(message.SegmentID)); err != nil {
+				test2.Errorf("ParseSegmentID(%q): %v (§3 requires §1-valid segment_id)", message.SegmentID, err)
 			}
 
 			// Canonical timestamps (also returns parsed instants for the window
 			// check). emit_time is exercised here too so a non-canonical emit_time
 			// — which would break the dedup byte/instant comparison — is caught.
-			ws := parseCanonicalTS(t, "window_start", m.WindowStart)
-			we := parseCanonicalTS(t, "window_end", m.WindowEnd)
-			parseCanonicalTS(t, "emit_time", m.EmitTime)
+			windowStart := parseCanonicalTS(test2, "window_start", message.WindowStart)
+			windowEnd := parseCanonicalTS(test2, "window_end", message.WindowEnd)
+			parseCanonicalTS(test2, "emit_time", message.EmitTime)
 
 			// Window is half-open [window_start, window_end) and EXACTLY 5 minutes
 			// (§3). A drifted window length would make overlapping-window dedup and
 			// the ×12 vph scaling wrong without any crash.
-			if d := we.Sub(ws); d != 5*time.Minute {
-				t.Errorf("window_end - window_start = %v, want exactly 5m (§3 half-open window)", d)
+			if duration := windowEnd.Sub(windowStart); duration != 5*time.Minute {
+				test2.Errorf("window_end - window_start = %v, want exactly 5m (§3 half-open window)", duration)
 			}
 
 			// Hard §3 field-table bounds: avg_speed_kmh is strictly > 0 and the
 			// counts are >= 0.
-			if m.VehicleCount < 0 {
-				t.Errorf("vehicle_count = %d, want >= 0 (§3)", m.VehicleCount)
+			if message.VehicleCount < 0 {
+				test2.Errorf("vehicle_count = %d, want >= 0 (§3)", message.VehicleCount)
 			}
-			if m.SamplePings < 0 {
-				t.Errorf("sample_pings = %d, want >= 0 (§3)", m.SamplePings)
+			if message.SamplePings < 0 {
+				test2.Errorf("sample_pings = %d, want >= 0 (§3)", message.SamplePings)
 			}
-			if m.AvgSpeedKmh <= 0 {
-				t.Errorf("avg_speed_kmh = %g, want > 0 (§3)", m.AvgSpeedKmh)
+			if message.AvgSpeedKmh <= 0 {
+				test2.Errorf("avg_speed_kmh = %g, want > 0 (§3)", message.AvgSpeedKmh)
 			}
 			// sample_pings >= vehicle_count is asserted as a FIXTURE-QUALITY gate,
 			// NOT a §3 MUST: the §3 field table says sample_pings is "Typically >=
@@ -235,9 +235,9 @@ func TestSegmentCongestionFieldInvariants(t *testing.T) {
 			// contract-conformant. We hold the curated, frozen fixture to the
 			// stronger relationship on purpose; because this is stricter than the
 			// contract, the failure is not labeled a §3 violation.
-			if m.SamplePings < m.VehicleCount {
-				t.Errorf("sample_pings (%d) < vehicle_count (%d): fixture-quality gate wants sample_pings >= vehicle_count (stricter than §3's \"Typically\")",
-					m.SamplePings, m.VehicleCount)
+			if message.SamplePings < message.VehicleCount {
+				test2.Errorf("sample_pings (%d) < vehicle_count (%d): fixture-quality gate wants sample_pings >= vehicle_count (stricter than §3's \"Typically\")",
+					message.SamplePings, message.VehicleCount)
 			}
 		})
 	}
@@ -250,13 +250,13 @@ func TestSegmentCongestionFieldInvariants(t *testing.T) {
 // makes authoritative), not as raw strings. Returning one record per segment is
 // the whole point: a consumer MUST NOT sum overlapping windows (their counts
 // share pings), so the reducer replaces, never accumulates.
-func keepLatest(t *testing.T, msgs []congestionMsg) map[string]congestionMsg {
-	t.Helper()
+func keepLatest(test *testing.T, msgs []congestionMsg) map[string]congestionMsg {
+	test.Helper()
 	winners := make(map[string]congestionMsg, len(msgs))
-	for _, m := range msgs {
-		cur, ok := winners[m.SegmentID]
-		if !ok || congestionLess(t, cur, m) {
-			winners[m.SegmentID] = m
+	for _, message := range msgs {
+		cur, found := winners[message.SegmentID]
+		if !found || congestionLess(test, cur, message) {
+			winners[message.SegmentID] = message
 		}
 	}
 	return winners
@@ -264,15 +264,15 @@ func keepLatest(t *testing.T, msgs []congestionMsg) map[string]congestionMsg {
 
 // congestionLess reports whether a precedes b in the §3 dedup order
 // (window_start primary, emit_time tiebreaker), comparing parsed instants.
-func congestionLess(t *testing.T, a, b congestionMsg) bool {
-	t.Helper()
-	aws := parseCanonicalTS(t, "window_start", a.WindowStart)
-	bws := parseCanonicalTS(t, "window_start", b.WindowStart)
+func congestionLess(test *testing.T, message1, message2 congestionMsg) bool {
+	test.Helper()
+	aws := parseCanonicalTS(test, "window_start", message1.WindowStart)
+	bws := parseCanonicalTS(test, "window_start", message2.WindowStart)
 	if !aws.Equal(bws) {
 		return aws.Before(bws)
 	}
-	aet := parseCanonicalTS(t, "emit_time", a.EmitTime)
-	bet := parseCanonicalTS(t, "emit_time", b.EmitTime)
+	aet := parseCanonicalTS(test, "emit_time", message1.EmitTime)
+	bet := parseCanonicalTS(test, "emit_time", message2.EmitTime)
 	return aet.Before(bet)
 }
 
@@ -282,9 +282,9 @@ func congestionLess(t *testing.T, a, b congestionMsg) bool {
 // ordering via the row3-vs-row4 case, (b) the provisional→revision→final
 // collapse, and (c) per-segment :F/:R independence — each a silent-failure mode
 // if a naive implementation gets it wrong.
-func TestSegmentCongestionDedupKeepLatest(t *testing.T) {
-	msgs := loadCongestionStrict(t)
-	winners := keepLatest(t, msgs)
+func TestSegmentCongestionDedupKeepLatest(test1 *testing.T) {
+	msgs := loadCongestionStrict(test1)
+	winners := keepLatest(test1, msgs)
 
 	// The §3-mandated final per-segment winners, keyed by segment_id. Values are
 	// the distinguishing vehicle_count of the row that MUST survive dedup. (The
@@ -302,22 +302,22 @@ func TestSegmentCongestionDedupKeepLatest(t *testing.T) {
 	// missing one would mean over-aggressive collapse.
 	if len(winners) != len(wantCount) {
 		gotIDs := make([]string, 0, len(winners))
-		for id := range winners {
-			gotIDs = append(gotIDs, id)
+		for identifier1 := range winners {
+			gotIDs = append(gotIDs, identifier1)
 		}
 		sort.Strings(gotIDs)
-		t.Fatalf("dedup produced %d segments %v, want %d %v",
+		test1.Fatalf("dedup produced %d segments %v, want %d %v",
 			len(winners), gotIDs, len(wantCount), keysOf(wantCount))
 	}
 
-	for id, want := range wantCount {
-		w, ok := winners[id]
-		if !ok {
-			t.Errorf("segment %q missing from dedup winners", id)
+	for identifier2, want := range wantCount {
+		message1, found := winners[identifier2]
+		if !found {
+			test1.Errorf("segment %q missing from dedup winners", identifier2)
 			continue
 		}
-		if w.VehicleCount != want {
-			t.Errorf("segment %q dedup winner vehicle_count = %d, want %d", id, w.VehicleCount, want)
+		if message1.VehicleCount != want {
+			test1.Errorf("segment %q dedup winner vehicle_count = %d, want %d", identifier2, message1.VehicleCount, want)
 		}
 	}
 
@@ -328,16 +328,16 @@ func TestSegmentCongestionDedupKeepLatest(t *testing.T) {
 	// the guard against a naive "latest emit_time wins" reducer: such an impl
 	// would wrongly keep row 3 (count 39) and pin a stale, value-older window as
 	// the segment's live load.
-	t.Run("window_start_primary_row3_vs_row4", func(t *testing.T) {
-		w := winners["27583001:0:F"]
-		if w.WindowStart != "2026-06-08T08:01:00Z" {
-			t.Errorf("27583001:0:F winner window_start = %q, want 2026-06-08T08:01:00Z (row 4; window_start is the PRIMARY dedup key, beating row 3's later emit_time 08:07:05)", w.WindowStart)
+	test1.Run("window_start_primary_row3_vs_row4", func(test2 *testing.T) {
+		message2 := winners["27583001:0:F"]
+		if message2.WindowStart != "2026-06-08T08:01:00Z" {
+			test2.Errorf("27583001:0:F winner window_start = %q, want 2026-06-08T08:01:00Z (row 4; window_start is the PRIMARY dedup key, beating row 3's later emit_time 08:07:05)", message2.WindowStart)
 		}
-		if w.VehicleCount != 35 {
-			t.Errorf("27583001:0:F winner vehicle_count = %d, want 35 (row 4); a 'latest emit_time wins' impl would wrongly keep row 3 (39)", w.VehicleCount)
+		if message2.VehicleCount != 35 {
+			test2.Errorf("27583001:0:F winner vehicle_count = %d, want 35 (row 4); a 'latest emit_time wins' impl would wrongly keep row 3 (39)", message2.VehicleCount)
 		}
-		if w.IsFinal {
-			t.Error("27583001:0:F winner is_final = true, want false: the freshest window (row 4) is provisional and STILL wins (§3 'freshest window wins')")
+		if message2.IsFinal {
+			test2.Error("27583001:0:F winner is_final = true, want false: the freshest window (row 4) is provisional and STILL wins (§3 'freshest window wins')")
 		}
 	})
 
@@ -346,20 +346,20 @@ func TestSegmentCongestionDedupKeepLatest(t *testing.T) {
 	// just those three, row 3 (the is_final, latest emit_time) is the within-
 	// window winner. We assert this on the rows-1..3 subset directly so the
 	// collapse is pinned independently of row 4's newer window superseding it.
-	t.Run("provisional_revision_final_collapse", func(t *testing.T) {
+	test1.Run("provisional_revision_final_collapse", func(test3 *testing.T) {
 		win0805 := filterWindow(msgs, "27583001:0:F", "2026-06-08T08:00:00Z")
 		if len(win0805) != 3 {
-			t.Fatalf("expected 3 rows for 27583001:0:F window 08:00, got %d", len(win0805))
+			test3.Fatalf("expected 3 rows for 27583001:0:F window 08:00, got %d", len(win0805))
 		}
-		sub := keepLatest(t, win0805)
-		w := sub["27583001:0:F"]
-		if w.VehicleCount != 39 || !w.IsFinal {
-			t.Errorf("rows 1→2→3 collapse to vehicle_count=%d is_final=%v, want 39/true (row 3, the final, latest-emit_time record)", w.VehicleCount, w.IsFinal)
+		sub := keepLatest(test3, win0805)
+		message3 := sub["27583001:0:F"]
+		if message3.VehicleCount != 39 || !message3.IsFinal {
+			test3.Errorf("rows 1→2→3 collapse to vehicle_count=%d is_final=%v, want 39/true (row 3, the final, latest-emit_time record)", message3.VehicleCount, message3.IsFinal)
 		}
 		// A consumer MUST NOT sum the three provisional/revision/final emissions
 		// (31+37+39): that double-counts the revisions of one window.
-		if w.VehicleCount == 31+37+39 {
-			t.Error("rows 1→2→3 were SUMMED (107); §3 forbids summing successive emissions for one window")
+		if message3.VehicleCount == 31+37+39 {
+			test3.Error("rows 1→2→3 were SUMMED (107); §3 forbids summing successive emissions for one window")
 		}
 	})
 
@@ -367,17 +367,17 @@ func TestSegmentCongestionDedupKeepLatest(t *testing.T) {
 	// DISTINCT segment_ids and carry independent counts; dedup MUST keep both.
 	// Collapsing them (e.g. keying on osm_way_id instead of the full segment_id)
 	// would silently merge a road's two directions' congestion.
-	t.Run("forward_reverse_independence", func(t *testing.T) {
-		f, okF := winners["48800123:0:F"]
-		r, okR := winners["48800123:0:R"]
+	test1.Run("forward_reverse_independence", func(test4 *testing.T) {
+		message4, okF := winners["48800123:0:F"]
+		message5, okR := winners["48800123:0:R"]
 		if !okF || !okR {
-			t.Fatalf("expected both 48800123:0:F and :0:R to survive (F=%v R=%v)", okF, okR)
+			test4.Fatalf("expected both 48800123:0:F and :0:R to survive (F=%v R=%v)", okF, okR)
 		}
-		if f.VehicleCount != 18 || r.VehicleCount != 12 {
-			t.Errorf(":F count=%d (want 18), :R count=%d (want 12); the two directions must stay distinct", f.VehicleCount, r.VehicleCount)
+		if message4.VehicleCount != 18 || message5.VehicleCount != 12 {
+			test4.Errorf(":F count=%d (want 18), :R count=%d (want 12); the two directions must stay distinct", message4.VehicleCount, message5.VehicleCount)
 		}
-		if f.VehicleCount == r.VehicleCount {
-			t.Error(":F and :R have equal counts — directions appear to have been merged")
+		if message4.VehicleCount == message5.VehicleCount {
+			test4.Error(":F and :R have equal counts — directions appear to have been merged")
 		}
 	})
 }
@@ -386,19 +386,19 @@ func TestSegmentCongestionDedupKeepLatest(t *testing.T) {
 // window_start — used to isolate the rows-1..3 collapse subset.
 func filterWindow(msgs []congestionMsg, segmentID, windowStart string) []congestionMsg {
 	var out []congestionMsg
-	for _, m := range msgs {
-		if m.SegmentID == segmentID && m.WindowStart == windowStart {
-			out = append(out, m)
+	for _, message := range msgs {
+		if message.SegmentID == segmentID && message.WindowStart == windowStart {
+			out = append(out, message)
 		}
 	}
 	return out
 }
 
 // keysOf returns the sorted keys of a map, for legible failure messages.
-func keysOf(m map[string]int) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+func keysOf(fields map[string]int) []string {
+	out := make([]string, 0, len(fields))
+	for key := range fields {
+		out = append(out, key)
 	}
 	sort.Strings(out)
 	return out
@@ -406,10 +406,10 @@ func keysOf(m map[string]int) []string {
 
 // rawKeys returns the sorted keys of a raw row, for legible failure messages
 // when the field count is off.
-func rawKeys(m map[string]json.RawMessage) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
+func rawKeys(fields map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(fields))
+	for key := range fields {
+		out = append(out, key)
 	}
 	sort.Strings(out)
 	return out

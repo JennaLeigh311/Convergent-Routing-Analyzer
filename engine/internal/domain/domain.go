@@ -39,14 +39,14 @@ const (
 // String renders a Direction as its SegmentID token ("F"/"R"). An out-of-range
 // value renders as "Direction(n)" rather than silently masquerading as Forward,
 // so a bad value surfaces instead of producing a valid-looking wire key.
-func (d Direction) String() string {
-	switch d {
+func (direction Direction) String() string {
+	switch direction {
 	case Forward:
 		return "F"
 	case Reverse:
 		return "R"
 	default:
-		return "Direction(" + strconv.Itoa(int(d)) + ")"
+		return "Direction(" + strconv.Itoa(int(direction)) + ")"
 	}
 }
 
