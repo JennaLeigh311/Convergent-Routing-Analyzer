@@ -15,54 +15,25 @@ import (
 // live, event-time-windowed congestion feed flowing from the Spark pipeline
 // (producer) to this engine (consumer); the fixture is the single source of
 // truth for the §3 message schema AND the keep-latest dedup ordering. Executing
-// it here — rather than leaving the fixture to be eyeballed via its `note`
-// strings — is what stops the future Spark producer and the engine's congestion
-// adapter from silently drifting apart: if they disagree on this shape or on the
-// dedup ordering, congestion attaches to the wrong window or the wrong road and
-// every downstream number (the headline "26% improvement") is computed against
-// garbage WITHOUT anything crashing. See docs/contracts.md §3.
+// it here — against the SAME production decoder and dedup reducer the static and
+// future Kafka adapters use (DecodeSegmentCongestion / DedupKeepLatest) — is what
+// stops the producer and the consumers from silently drifting apart: if they
+// disagree on this shape or on the dedup ordering, congestion attaches to the
+// wrong window or the wrong road and every downstream number (the headline "26%
+// improvement") is computed against garbage WITHOUT anything crashing. See
+// docs/contracts.md §3.
 const segmentCongestionFixtureDir = "../../../docs/fixtures/segment_congestion"
 
-// The §3 "Dedup rule" requires comparing window_start and emit_time as parsed
-// instants in the canonical wire form: RFC3339 with a literal `Z` UTC offset and
-// whole-second precision (no fractional digits). time.RFC3339 carries exactly
-// that shape (a `+00:00` offset, lowercase `z`, or fractional seconds round-trip
-// to a DIFFERENT string), so we use it both to parse and — by re-formatting and
-// byte-comparing against the original — to assert canonicality. A non-canonical
-// timestamp would make the dedup comparison ill-defined (§3: a consumer MUST NOT
-// byte-compare a timestamp it has not validated to that form).
-const canonicalTSLayout = time.RFC3339
-
-// congestionMsg mirrors the exactly-10 §3 contract fields of one
-// segment-congestion message, with json tags matching the wire names. This is a
-// test-only struct (no production type exists yet — the adapter is pending);
-// it deliberately has NO field for the fixture's non-contract `note`, which is
-// row documentation, not schema. The strict loader below proves that omission is
-// enforced, not merely conventional. Field→column mapping follows
-// docs/contracts.md §3 "Fields".
-type congestionMsg struct {
-	SchemaVersion int     `json:"schema_version"`
-	SegmentID     string  `json:"segment_id"`
-	WindowStart   string  `json:"window_start"`
-	WindowEnd     string  `json:"window_end"`
-	VehicleCount  int     `json:"vehicle_count"`
-	AvgSpeedKmh   float64 `json:"avg_speed_kmh"`
-	SamplePings   int     `json:"sample_pings"`
-	IsFinal       bool    `json:"is_final"`
-	EmitTime      string  `json:"emit_time"`
-	Producer      string  `json:"producer"`
-}
-
-// loadCongestionStrict reads example_messages.json and STRICT-decodes each row
-// into a congestionMsg. The shared loadFixture helper (segmentid_test.go) uses
-// non-strict json.Unmarshal, which would silently tolerate unknown fields — so
-// this conformance test needs its own loader with json.Decoder +
-// DisallowUnknownFields to prove the producer MUST NOT emit any field outside
-// the 10-field §3 schema. The fixture's documentation-only `note` is the one
-// known extra, so it is consciously stripped from each raw row BEFORE the strict
-// decode; everything else (e.g. a stray `dropped_late`, which §3 pins as a
-// producer-only metric and NOT a message field) must then fail to decode.
-func loadCongestionStrict(test *testing.T) []congestionMsg {
+// loadCongestionStrict reads example_messages.json, strips each row's
+// documentation-only `note`, asserts each stripped row has exactly the ten §3
+// fields, and STRICT-decodes the corpus through the production
+// DecodeSegmentCongestion. The exactly-ten-keys check pins the MISSING-field side
+// (a row dropping, say, is_final or producer would otherwise decode to a zero
+// value and pass silently); DisallowUnknownFields inside DecodeSegmentCongestion
+// pins the EXTRA-field side. The fixture's documentation-only `note` is the one
+// known extra, consciously stripped before the strict decode; any OTHER extra
+// field still trips the decode.
+func loadCongestionStrict(test *testing.T) []SegmentCongestion {
 	test.Helper()
 	path := filepath.Join(segmentCongestionFixtureDir, "example_messages.json")
 	data, err := os.ReadFile(path)
@@ -70,10 +41,6 @@ func loadCongestionStrict(test *testing.T) []congestionMsg {
 		test.Fatalf("read fixture %s: %v", path, err)
 	}
 
-	// First pass: decode into raw JSON objects so we can strip the non-contract
-	// `note` documentation field before the strict schema decode. We do NOT relax
-	// the decoder to tolerate `note`; we remove it, so any OTHER extra field still
-	// trips DisallowUnknownFields below.
 	var raws []map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raws); err != nil {
 		test.Fatalf("unmarshal fixture %s into raw rows: %v", path, err)
@@ -81,54 +48,35 @@ func loadCongestionStrict(test *testing.T) []congestionMsg {
 	if len(raws) == 0 {
 		test.Fatalf("fixture %s is empty", path)
 	}
-
-	out := make([]congestionMsg, len(raws))
 	for index, raw := range raws {
 		delete(raw, "note") // documentation, not schema — consciously ignored.
-		out[index] = decodeStrictRow(test, index, raw)
+		if len(raw) != 10 {
+			test.Fatalf("row %d: has %d fields after stripping `note`, want exactly 10 (§3 message shape); keys = %v",
+				index, len(raw), rawKeys(raw))
+		}
 	}
-	return out
-}
 
-// decodeStrictRow re-marshals one note-stripped raw row and strict-decodes it
-// into a congestionMsg, failing if any field outside the 10-field §3 schema
-// remains. DisallowUnknownFields only catches EXTRA fields, so we also assert
-// the note-stripped row has exactly 10 keys — that pins the MISSING-field side
-// (a row dropping, say, is_final or producer would otherwise decode to a zero
-// value and pass silently), making "exactly the 10 §3 fields" enforced both ways.
-func decodeStrictRow(test *testing.T, idx int, raw map[string]json.RawMessage) congestionMsg {
-	test.Helper()
-	if len(raw) != 10 {
-		test.Fatalf("row %d: has %d fields after stripping `note`, want exactly 10 (§3 message shape); keys = %v",
-			idx, len(raw), rawKeys(raw))
-	}
-	reMarshaled, err := json.Marshal(raw)
+	stripped, err := json.Marshal(raws)
 	if err != nil {
-		test.Fatalf("row %d: re-marshal: %v", idx, err)
+		test.Fatalf("re-marshal note-stripped rows: %v", err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(reMarshaled))
-	dec.DisallowUnknownFields()
-	var msg congestionMsg
-	if err := dec.Decode(&msg); err != nil {
-		test.Fatalf("row %d: strict decode failed: %v", idx, err)
+	messages, err := DecodeSegmentCongestion(bytes.NewReader(stripped))
+	if err != nil {
+		test.Fatalf("DecodeSegmentCongestion(note-stripped fixture): %v", err)
 	}
-	return msg
+	return messages
 }
 
-// parseCanonicalTS parses an RFC3339 timestamp AND asserts it is in the §3
-// canonical wire form (literal `Z`, whole-second precision, no fractional
-// digits, no `+00:00`, no lowercase `z`). It does so by re-formatting the parsed
-// instant with time.RFC3339 and requiring the result to byte-match the input:
-// any non-canonical spelling round-trips to a different string. This is the
-// precondition that makes the dedup comparison well-defined (§3 "Dedup rule").
+// parseCanonicalTS adapts the production parseCanonicalTimestamp to a test
+// helper that fails the test on a non-canonical/unparseable value. It delegates
+// to the production parser so the test asserts the SAME canonicality rule the
+// adapters enforce, rather than shadowing a second copy of it.
 func parseCanonicalTS(test *testing.T, field, text string) time.Time {
 	test.Helper()
-	timestamp, err := time.Parse(canonicalTSLayout, text)
+	timestamp, err := parseCanonicalTimestamp(field, "", text)
 	if err != nil {
-		test.Fatalf("%s = %q: not parseable as RFC3339: %v", field, text, err)
-	}
-	if got := timestamp.UTC().Format(canonicalTSLayout); got != text {
-		test.Errorf("%s = %q is not canonical RFC3339 UTC (round-trips to %q); §3 requires a literal Z, whole-second precision, no fractional digits", field, text, got)
+		test.Errorf("%v", err)
+		return time.Time{}
 	}
 	return timestamp
 }
@@ -150,8 +98,7 @@ func TestSegmentCongestionStrictSchema(test1 *testing.T) {
 	// metric that "is NOT a message field and never appears on the topic" — so
 	// proving the schema rejects it is proving the contract, not an arbitrary key.
 	test1.Run("extra_field_rejected", func(test2 *testing.T) {
-		// Build a fully-valid 10-field row, then add the forbidden 11th field.
-		raw := map[string]json.RawMessage{
+		raw := []map[string]json.RawMessage{{
 			"schema_version": json.RawMessage(`1`),
 			"segment_id":     json.RawMessage(`"27583001:0:F"`),
 			"window_start":   json.RawMessage(`"2026-06-08T08:00:00Z"`),
@@ -163,16 +110,13 @@ func TestSegmentCongestionStrictSchema(test1 *testing.T) {
 			"emit_time":      json.RawMessage(`"2026-06-08T08:05:03Z"`),
 			"producer":       json.RawMessage(`"spark-structured-stream"`),
 			"dropped_late":   json.RawMessage(`5`), // the forbidden 11th field.
-		}
-		reMarshaled, err := json.Marshal(raw)
+		}}
+		encoded, err := json.Marshal(raw)
 		if err != nil {
-			test2.Fatalf("re-marshal: %v", err)
+			test2.Fatalf("marshal: %v", err)
 		}
-		dec := json.NewDecoder(bytes.NewReader(reMarshaled))
-		dec.DisallowUnknownFields()
-		var msg congestionMsg
-		if err := dec.Decode(&msg); err == nil {
-			test2.Fatal("strict decode ACCEPTED a row with an 11th field (dropped_late); §3 forbids any field outside the 10-field schema")
+		if _, err := DecodeSegmentCongestion(bytes.NewReader(encoded)); err == nil {
+			test2.Fatal("DecodeSegmentCongestion ACCEPTED a row with an 11th field (dropped_late); §3 forbids any field outside the 10-field schema")
 		}
 	})
 }
@@ -192,9 +136,11 @@ func TestSegmentCongestionFieldInvariants(test1 *testing.T) {
 		// (the rows-1..3 revisions of one window) get distinct subtest names
 		// instead of Go's auto #01/#02 suffixes.
 		test1.Run(message.SegmentID+"@"+message.WindowStart+"#"+message.EmitTime, func(test2 *testing.T) {
-			// schema_version is the frozen v2 envelope version (§3 "Why v2").
-			if message.SchemaVersion != 1 {
-				test2.Errorf("schema_version = %d, want 1 (§3 frozen v2 envelope)", message.SchemaVersion)
+			// The §3 value bounds (schema_version, non-negative counts, positive
+			// speed) are exactly what SegmentCongestion.Validate enforces at ingest;
+			// assert the fixture passes the production validator.
+			if err := message.Validate(); err != nil {
+				test2.Errorf("Validate: %v", err)
 			}
 
 			// segment_id must parse under §1 — it is the §1 wire key and Kafka
@@ -217,24 +163,13 @@ func TestSegmentCongestionFieldInvariants(test1 *testing.T) {
 				test2.Errorf("window_end - window_start = %v, want exactly 5m (§3 half-open window)", duration)
 			}
 
-			// Hard §3 field-table bounds: avg_speed_kmh is strictly > 0 and the
-			// counts are >= 0.
-			if message.VehicleCount < 0 {
-				test2.Errorf("vehicle_count = %d, want >= 0 (§3)", message.VehicleCount)
-			}
-			if message.SamplePings < 0 {
-				test2.Errorf("sample_pings = %d, want >= 0 (§3)", message.SamplePings)
-			}
-			if message.AvgSpeedKmh <= 0 {
-				test2.Errorf("avg_speed_kmh = %g, want > 0 (§3)", message.AvgSpeedKmh)
-			}
 			// sample_pings >= vehicle_count is asserted as a FIXTURE-QUALITY gate,
 			// NOT a §3 MUST: the §3 field table says sample_pings is "Typically >=
 			// vehicle_count" (deliberately soft language, unlike the hard >=0 / >0
-			// bounds above), so a row with fewer pings than vehicles would still be
-			// contract-conformant. We hold the curated, frozen fixture to the
-			// stronger relationship on purpose; because this is stricter than the
-			// contract, the failure is not labeled a §3 violation.
+			// bounds Validate enforces), so a row with fewer pings than vehicles
+			// would still be contract-conformant. We hold the curated, frozen
+			// fixture to the stronger relationship on purpose; because this is
+			// stricter than the contract, the failure is not labeled a §3 violation.
 			if message.SamplePings < message.VehicleCount {
 				test2.Errorf("sample_pings (%d) < vehicle_count (%d): fixture-quality gate wants sample_pings >= vehicle_count (stricter than §3's \"Typically\")",
 					message.SamplePings, message.VehicleCount)
@@ -243,48 +178,18 @@ func TestSegmentCongestionFieldInvariants(test1 *testing.T) {
 	}
 }
 
-// keepLatest is the reference implementation of the §3 keep-latest dedup rule:
-// per segment_id, keep exactly ONE record — the one with the greatest
-// (window_start, emit_time), ordered by window_start FIRST and emit_time only as
-// the tiebreaker. It compares the timestamps as PARSED INSTANTS (the form §3
-// makes authoritative), not as raw strings. Returning one record per segment is
-// the whole point: a consumer MUST NOT sum overlapping windows (their counts
-// share pings), so the reducer replaces, never accumulates.
-func keepLatest(test *testing.T, msgs []congestionMsg) map[string]congestionMsg {
-	test.Helper()
-	winners := make(map[string]congestionMsg, len(msgs))
-	for _, message := range msgs {
-		cur, found := winners[message.SegmentID]
-		if !found || congestionLess(test, cur, message) {
-			winners[message.SegmentID] = message
-		}
-	}
-	return winners
-}
-
-// congestionLess reports whether a precedes b in the §3 dedup order
-// (window_start primary, emit_time tiebreaker), comparing parsed instants.
-func congestionLess(test *testing.T, message1, message2 congestionMsg) bool {
-	test.Helper()
-	aws := parseCanonicalTS(test, "window_start", message1.WindowStart)
-	bws := parseCanonicalTS(test, "window_start", message2.WindowStart)
-	if !aws.Equal(bws) {
-		return aws.Before(bws)
-	}
-	aet := parseCanonicalTS(test, "emit_time", message1.EmitTime)
-	bet := parseCanonicalTS(test, "emit_time", message2.EmitTime)
-	return aet.Before(bet)
-}
-
-// TestSegmentCongestionDedupKeepLatest runs the reference keep-latest reducer
-// over all 7 fixture rows and asserts the per-segment winners §3 mandates. This
-// is the heart of the conformance test: it pins (a) the window_start-PRIMARY
-// ordering via the row3-vs-row4 case, (b) the provisional→revision→final
-// collapse, and (c) per-segment :F/:R independence — each a silent-failure mode
-// if a naive implementation gets it wrong.
+// TestSegmentCongestionDedupKeepLatest runs the production DedupKeepLatest over
+// all 7 fixture rows and asserts the per-segment winners §3 mandates. This is the
+// heart of the conformance test: it pins (a) the window_start-PRIMARY ordering
+// via the row3-vs-row4 case, (b) the provisional→revision→final collapse, and
+// (c) per-segment :F/:R independence — each a silent-failure mode if a naive
+// implementation gets it wrong.
 func TestSegmentCongestionDedupKeepLatest(test1 *testing.T) {
 	msgs := loadCongestionStrict(test1)
-	winners := keepLatest(test1, msgs)
+	winners, err := DedupKeepLatest(msgs)
+	if err != nil {
+		test1.Fatalf("DedupKeepLatest: %v", err)
+	}
 
 	// The §3-mandated final per-segment winners, keyed by segment_id. Values are
 	// the distinguishing vehicle_count of the row that MUST survive dedup. (The
@@ -351,7 +256,10 @@ func TestSegmentCongestionDedupKeepLatest(test1 *testing.T) {
 		if len(win0805) != 3 {
 			test3.Fatalf("expected 3 rows for 27583001:0:F window 08:00, got %d", len(win0805))
 		}
-		sub := keepLatest(test3, win0805)
+		sub, err := DedupKeepLatest(win0805)
+		if err != nil {
+			test3.Fatalf("DedupKeepLatest(subset): %v", err)
+		}
 		message3 := sub["27583001:0:F"]
 		if message3.VehicleCount != 39 || !message3.IsFinal {
 			test3.Errorf("rows 1→2→3 collapse to vehicle_count=%d is_final=%v, want 39/true (row 3, the final, latest-emit_time record)", message3.VehicleCount, message3.IsFinal)
@@ -382,10 +290,60 @@ func TestSegmentCongestionDedupKeepLatest(test1 *testing.T) {
 	})
 }
 
+// TestSegmentCongestionValidate asserts the §3 value bounds enforced by
+// SegmentCongestion.Validate independently of the fixture: a conformant record
+// passes, and each violated bound (schema_version, vehicle_count, sample_pings,
+// avg_speed_kmh) is rejected.
+func TestSegmentCongestionValidate(test1 *testing.T) {
+	valid := SegmentCongestion{
+		SchemaVersion: 1,
+		SegmentID:     "27583001:0:F",
+		WindowStart:   "2026-06-08T08:00:00Z",
+		WindowEnd:     "2026-06-08T08:05:00Z",
+		VehicleCount:  31,
+		AvgSpeedKmh:   22.4,
+		SamplePings:   98,
+		IsFinal:       false,
+		EmitTime:      "2026-06-08T08:05:03Z",
+		Producer:      "spark-structured-stream",
+	}
+	if err := valid.Validate(); err != nil {
+		test1.Errorf("Validate(conformant record) = %v, want nil", err)
+	}
+
+	testCases := []struct {
+		name   string
+		mutate func(*SegmentCongestion)
+	}{
+		{name: "wrong schema_version", mutate: func(record *SegmentCongestion) { record.SchemaVersion = 2 }},
+		{name: "negative vehicle_count", mutate: func(record *SegmentCongestion) { record.VehicleCount = -1 }},
+		{name: "negative sample_pings", mutate: func(record *SegmentCongestion) { record.SamplePings = -1 }},
+		{name: "zero avg_speed_kmh", mutate: func(record *SegmentCongestion) { record.AvgSpeedKmh = 0 }},
+	}
+	for _, testCase := range testCases {
+		test1.Run(testCase.name, func(test2 *testing.T) {
+			invalid := valid
+			testCase.mutate(&invalid)
+			if err := invalid.Validate(); err == nil {
+				test2.Errorf("Validate(%s) = nil, want an error (§3 bound)", testCase.name)
+			}
+		})
+	}
+}
+
+// TestDecodeSegmentCongestionFileMissing asserts the file wrapper surfaces an
+// open error for a path that does not exist, rather than panicking or returning
+// nil records.
+func TestDecodeSegmentCongestionFileMissing(test1 *testing.T) {
+	if _, err := DecodeSegmentCongestionFile(filepath.Join(test1.TempDir(), "does-not-exist.json")); err == nil {
+		test1.Fatal("DecodeSegmentCongestionFile(missing path) = nil error, want an open error")
+	}
+}
+
 // filterWindow returns the fixture rows matching a given segment_id AND
 // window_start — used to isolate the rows-1..3 collapse subset.
-func filterWindow(msgs []congestionMsg, segmentID, windowStart string) []congestionMsg {
-	var out []congestionMsg
+func filterWindow(msgs []SegmentCongestion, segmentID, windowStart string) []SegmentCongestion {
+	var out []SegmentCongestion
 	for _, message := range msgs {
 		if message.SegmentID == segmentID && message.WindowStart == windowStart {
 			out = append(out, message)
