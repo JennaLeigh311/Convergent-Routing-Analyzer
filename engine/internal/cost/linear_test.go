@@ -11,6 +11,14 @@ import (
 // Compile-time assertion: the production Linear satisfies the CostFunction port.
 var _ cost.CostFunction = cost.Linear{}
 
+// DefaultLinear must carry the default slope and an unscaled capacity.
+func TestDefaultLinearCoefficients(test1 *testing.T) {
+	linear := cost.DefaultLinear()
+	if linear.Slope != 0.15 || linear.CapacityScale != 1.0 {
+		test1.Errorf("DefaultLinear() = %+v, want slope=0.15 capacityScale=1.0", linear)
+	}
+}
+
 func TestLinearCostClosedForm(test1 *testing.T) {
 	linear := cost.DefaultLinear()
 	edge := graph.Edge{FreeFlowS: 10, CapacityVPH: 1000}
@@ -30,6 +38,9 @@ func TestLinearCostClosedForm(test1 *testing.T) {
 		// Non-positive capacity falls back to free flow.
 		{"zero capacity = free flow", graph.Edge{FreeFlowS: 10, CapacityVPH: 0}, 500, 10},
 		{"negative capacity = free flow", graph.Edge{FreeFlowS: 10, CapacityVPH: -1}, 500, 10},
+		// Out-of-contract negative load floors to zero, i.e. free flow (and so
+		// never returns the negative cost a raw linear term would).
+		{"negative load = free flow", edge, -500, 10},
 	}
 	for _, testCase := range tests {
 		test1.Run(testCase.name, func(test2 *testing.T) {
@@ -70,5 +81,19 @@ func TestLinearCapacityScale(test1 *testing.T) {
 	if halved.Cost(edge, loadVPH) <= unscaled.Cost(edge, loadVPH) {
 		test1.Errorf("capacity_scale<1 should raise cost: halved=%v not > unscaled=%v",
 			halved.Cost(edge, loadVPH), unscaled.Cost(edge, loadVPH))
+	}
+}
+
+// NewLinear must reject a non-positive capacity scale, mirroring NewBPR.
+func TestNewLinearRejectsNonPositiveScale(test1 *testing.T) {
+	for _, scale := range []float64{0, -1} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					test1.Errorf("NewLinear(_, %v) did not panic", scale)
+				}
+			}()
+			cost.NewLinear(0.15, scale)
+		}()
 	}
 }

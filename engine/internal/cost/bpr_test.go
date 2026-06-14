@@ -41,6 +41,8 @@ func TestBPRCostClosedForm(test1 *testing.T) {
 		// Non-positive capacity falls back to free flow (guards divide-by-zero).
 		{"zero capacity = free flow", graph.Edge{FreeFlowS: 10, CapacityVPH: 0}, 500, 10},
 		{"negative capacity = free flow", graph.Edge{FreeFlowS: 10, CapacityVPH: -1}, 500, 10},
+		// Out-of-contract negative load floors to zero, i.e. free flow.
+		{"negative load = free flow", edge, -500, 10},
 	}
 	for _, testCase := range tests {
 		test1.Run(testCase.name, func(test2 *testing.T) {
@@ -77,6 +79,59 @@ func TestBPRMarginalCostClosedForm(test1 *testing.T) {
 		if got := bpr.MarginalCost(edge, loadVPH); math.Abs(got-want) > tolerance {
 			test1.Errorf("MarginalCost(loadVPH=%v) = %v, want %v", loadVPH, got, want)
 		}
+	}
+}
+
+// TestBPRMarginalCostHardcoded anchors the marginal-cost magnitude against
+// externally computed constants. The closed-form test above mirrors the
+// production expression, so it would re-derive the same number if the formula
+// were wrong; these hardcoded values pin the (beta+1) coefficient independently.
+func TestBPRMarginalCostHardcoded(test1 *testing.T) {
+	bpr := cost.DefaultBPR()
+	edge := graph.Edge{FreeFlowS: 10, CapacityVPH: 1000}
+
+	tests := []struct {
+		name    string
+		loadVPH float64
+		want    float64
+	}{
+		// v=0: marginal equals free flow.
+		{"empty road", 0, 10},
+		// v=c: 10*(1 + 0.15*5*1^4) = 10*1.75 = 17.5.
+		{"at capacity", 1000, 17.5},
+		// v=2c: 10*(1 + 0.15*5*2^4) = 10*(1 + 12) = 130.
+		{"twice capacity", 2000, 130},
+	}
+	for _, testCase := range tests {
+		test1.Run(testCase.name, func(test2 *testing.T) {
+			if got := bpr.MarginalCost(edge, testCase.loadVPH); math.Abs(got-testCase.want) > tolerance {
+				test2.Errorf("MarginalCost(loadVPH=%v) = %v, want %v", testCase.loadVPH, got, testCase.want)
+			}
+		})
+	}
+}
+
+// Out-of-contract negative load floors to zero for MarginalCost too.
+func TestBPRMarginalCostNegativeLoad(test1 *testing.T) {
+	bpr := cost.DefaultBPR()
+	edge := graph.Edge{FreeFlowS: 10, CapacityVPH: 1000}
+	if got := bpr.MarginalCost(edge, -500); math.Abs(got-edge.FreeFlowS) > tolerance {
+		test1.Errorf("MarginalCost(negative load) = %v, want %v", got, edge.FreeFlowS)
+	}
+}
+
+// NewBPR must reject a non-positive capacity scale rather than return a cost
+// function that silently collapses every edge to free flow.
+func TestNewBPRRejectsNonPositiveScale(test1 *testing.T) {
+	for _, scale := range []float64{0, -1} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					test1.Errorf("NewBPR(_, _, %v) did not panic", scale)
+				}
+			}()
+			cost.NewBPR(0.15, 4, scale)
+		}()
 	}
 }
 

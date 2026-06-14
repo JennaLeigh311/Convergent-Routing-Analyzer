@@ -11,7 +11,8 @@ import "github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/gra
 //	t(v) = e.FreeFlowS * (1 + alpha*(v/c)^beta)   conventionally alpha=0.15, beta=4
 //
 // The system-optimal router instead routes on the marginal cost
-// t(v) + v*t'(v); implementations that support that expose it separately.
+// t(v) + v*t'(v); implementations that support that expose it separately (see
+// BPR.MarginalCost).
 type CostFunction interface {
 	Cost(edge graph.Edge, loadVPH float64) float64
 }

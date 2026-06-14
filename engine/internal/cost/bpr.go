@@ -36,7 +36,8 @@ const (
 //
 // Construct a BPR with NewBPR or DefaultBPR. The zero value is NOT usable: a
 // zero CapacityScale would zero out every edge's capacity and collapse to the
-// free-flow fallback. Use DefaultBPR for the conventional coefficients.
+// free-flow fallback, which is why NewBPR rejects a non-positive scale. Use
+// DefaultBPR for the conventional coefficients.
 type BPR struct {
 	Alpha         float64
 	Beta          float64
@@ -46,7 +47,15 @@ type BPR struct {
 // NewBPR returns a BPR with the given coefficients and global capacity scale.
 // Callers wanting the conventional alpha=0.15, beta=4, capacityScale=1.0
 // should use DefaultBPR instead.
+//
+// capacityScale must be > 0. A non-positive scale is a construction-time
+// misconfiguration that would silently switch off congestion modeling for every
+// edge (it collapses to the free-flow fallback), so NewBPR panics rather than
+// returning a cost function that quietly does nothing.
 func NewBPR(alpha, beta, capacityScale float64) BPR {
+	if capacityScale <= 0 {
+		panic("cost: NewBPR requires capacityScale > 0")
+	}
 	return BPR{Alpha: alpha, Beta: beta, CapacityScale: capacityScale}
 }
 
@@ -62,14 +71,19 @@ func DefaultBPR() BPR {
 //
 // If the effective capacity is non-positive (a zero/negative CapacityVPH, or a
 // non-positive CapacityScale), Cost falls back to the free-flow time to avoid a
-// divide-by-zero.
+// divide-by-zero. A negative loadVPH is out of contract; it is floored to zero
+// so the result never drops below the free-flow time (a negative edge cost would
+// break the router's non-negativity assumption).
 func (bpr BPR) Cost(edge graph.Edge, loadVPH float64) float64 {
 	effectiveCapacity := edge.CapacityVPH * bpr.CapacityScale
 	if effectiveCapacity <= 0 {
 		return edge.FreeFlowS
 	}
+	if loadVPH < 0 {
+		loadVPH = 0
+	}
 	ratio := loadVPH / effectiveCapacity
-	return edge.FreeFlowS * (1 + bpr.Alpha*math.Pow(ratio, bpr.Beta))
+	return edge.FreeFlowS * (1 + bpr.Alpha*powBeta(ratio, bpr.Beta))
 }
 
 // MarginalCost returns the marginal traversal time the future system-optimal
@@ -82,15 +96,41 @@ func (bpr BPR) Cost(edge graph.Edge, loadVPH float64) float64 {
 // CostFunction port — only the BPR concrete type exposes it. MarginalCost is
 // always >= Cost for loadVPH > 0 and equals it at loadVPH = 0.
 //
-// As with Cost, loadVPH and edge.CapacityVPH are both vehicles/hour, and a
-// non-positive effective capacity falls back to the free-flow time.
+// As with Cost, loadVPH and edge.CapacityVPH are both vehicles/hour, a
+// non-positive effective capacity falls back to the free-flow time, and a
+// negative loadVPH is floored to zero.
 func (bpr BPR) MarginalCost(edge graph.Edge, loadVPH float64) float64 {
 	effectiveCapacity := edge.CapacityVPH * bpr.CapacityScale
 	if effectiveCapacity <= 0 {
 		return edge.FreeFlowS
 	}
+	if loadVPH < 0 {
+		loadVPH = 0
+	}
 	ratio := loadVPH / effectiveCapacity
-	return edge.FreeFlowS * (1 + bpr.Alpha*(bpr.Beta+1)*math.Pow(ratio, bpr.Beta))
+	return edge.FreeFlowS * (1 + bpr.Alpha*(bpr.Beta+1)*powBeta(ratio, bpr.Beta))
+}
+
+// powBeta raises a non-negative base to the BPR exponent. Beta is conventionally
+// the integer 4, so for non-negative integer exponents it uses exponentiation by
+// squaring — a handful of multiplications — instead of the general, log/exp-based
+// math.Pow, which is the dominant cost of Cost on the router's hot path. It falls
+// back to math.Pow for fractional exponents. The base (a load/capacity ratio) is
+// always non-negative here, so there is no negative-base branch to consider.
+func powBeta(base, beta float64) float64 {
+	exponent := int(beta)
+	if float64(exponent) != beta || exponent < 0 {
+		return math.Pow(base, beta)
+	}
+	result := 1.0
+	for exponent > 0 {
+		if exponent&1 == 1 {
+			result *= base
+		}
+		base *= base
+		exponent >>= 1
+	}
+	return result
 }
 
 // Compile-time assertion: BPR satisfies the CostFunction port.

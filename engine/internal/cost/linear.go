@@ -26,7 +26,7 @@ const defaultLinearSlope = 0.15
 //
 // Construct a Linear with NewLinear or DefaultLinear. As with BPR, the zero
 // value is NOT usable because a zero CapacityScale collapses every edge to the
-// free-flow fallback.
+// free-flow fallback, which is why NewLinear rejects a non-positive scale.
 type Linear struct {
 	Slope         float64
 	CapacityScale float64
@@ -35,7 +35,15 @@ type Linear struct {
 // NewLinear returns a Linear with the given congestion slope and global
 // capacity scale. Callers wanting the default slope and an unscaled capacity
 // should use DefaultLinear instead.
+//
+// capacityScale must be > 0. As with NewBPR, a non-positive scale is a
+// construction-time misconfiguration that would silently collapse every edge to
+// the free-flow fallback, so NewLinear panics rather than returning a cost
+// function that quietly does nothing.
 func NewLinear(slope, capacityScale float64) Linear {
+	if capacityScale <= 0 {
+		panic("cost: NewLinear requires capacityScale > 0")
+	}
 	return Linear{Slope: slope, CapacityScale: capacityScale}
 }
 
@@ -51,11 +59,16 @@ func DefaultLinear() Linear {
 //
 // If the effective capacity is non-positive (a zero/negative CapacityVPH, or a
 // non-positive CapacityScale), Cost falls back to the free-flow time to avoid a
-// divide-by-zero.
+// divide-by-zero. A negative loadVPH is out of contract; it is floored to zero
+// so the result never drops below the free-flow time (a negative edge cost would
+// break the router's non-negativity assumption).
 func (linear Linear) Cost(edge graph.Edge, loadVPH float64) float64 {
 	effectiveCapacity := edge.CapacityVPH * linear.CapacityScale
 	if effectiveCapacity <= 0 {
 		return edge.FreeFlowS
+	}
+	if loadVPH < 0 {
+		loadVPH = 0
 	}
 	ratio := loadVPH / effectiveCapacity
 	return edge.FreeFlowS * (1 + linear.Slope*ratio)
