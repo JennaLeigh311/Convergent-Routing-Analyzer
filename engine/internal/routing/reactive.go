@@ -41,6 +41,13 @@ type ReactiveRouter struct {
 // cost.DefaultBPR) against the load reported by provider. provider may be any
 // congestion.CongestionProvider — the in-memory, static, and simulator adapters
 // all plug in here — and is read via a single Snapshot() per Route / per Assign.
+//
+// This provider seam is reactive-specific: reactive reads externally-supplied load
+// once and best-responds to it. The Phase-3 demand-aware strategies (incremental,
+// MSA) instead own their per-round snapshot lifecycle, deriving load from the flows
+// they themselves accumulate, so they should reuse the congestedWeight seam (which
+// already takes a LoadSnapshot) rather than copy this (graph, costFn, provider)
+// constructor shape wholesale.
 func NewReactiveRouter(roadGraph graph.Graph, costFn cost.CostFunction, provider congestion.CongestionProvider) *ReactiveRouter {
 	return &ReactiveRouter{g: roadGraph, costFn: costFn, provider: provider}
 }

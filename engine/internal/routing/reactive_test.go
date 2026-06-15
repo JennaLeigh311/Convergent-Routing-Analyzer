@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/memory"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
@@ -197,5 +198,216 @@ func TestReactiveHonorsContextCancellation(test *testing.T) {
 	}
 	if _, err := router.Assign(ctx, []routing.RouteRequest{req}); err != context.Canceled {
 		test.Errorf("Assign() with cancelled ctx err = %v, want context.Canceled", err)
+	}
+}
+
+// snapshotCountingProvider wraps a CongestionProvider and counts Snapshot() calls.
+// It lets a test assert the §R5 frozen-snapshot contract directly — that Assign
+// takes exactly ONE snapshot for the whole batch, not one per request — which a
+// provider whose load never changes (the other tests' setup) cannot distinguish,
+// since per-request and per-batch snapshots would then return identical loads.
+type snapshotCountingProvider struct {
+	inner         congestion.CongestionProvider
+	snapshotCalls int
+}
+
+func (provider *snapshotCountingProvider) Load(edgeID domain.EdgeID) float64 {
+	return provider.inner.Load(edgeID)
+}
+
+func (provider *snapshotCountingProvider) Snapshot() congestion.LoadSnapshot {
+	provider.snapshotCalls++
+	return provider.inner.Snapshot()
+}
+
+// TestReactiveAssignFreezesSnapshot verifies the mechanism behind §R5: Assign
+// takes the congestion snapshot EXACTLY ONCE for the whole batch and routes every
+// request against that one frozen view. A counting provider makes the claim
+// testable independently of whether the load happens to change — an implementation
+// that re-snapshotted per request would record len(reqs) calls and fail here.
+func TestReactiveAssignFreezesSnapshot(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	inner := memory.New(roadGraph.EdgeCount())
+	inner.Set(edgeIDForSegment(test, roadGraph, "905512:0:F"), 50000)
+	spy := &snapshotCountingProvider{inner: inner}
+	reactive := routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), spy)
+
+	node0, _ := roadGraph.Node(0)
+	node2, _ := roadGraph.Node(2)
+	node3, _ := roadGraph.Node(3)
+	node4, _ := roadGraph.Node(4)
+	reqs := []routing.RouteRequest{
+		{ID: "a", From: node0.Pos, To: node2.Pos},
+		{ID: "b", From: node3.Pos, To: node4.Pos},
+	}
+	if _, err := reactive.Assign(context.Background(), reqs); err != nil {
+		test.Fatalf("Assign() error = %v", err)
+	}
+	if spy.snapshotCalls != 1 {
+		test.Errorf("Assign took %d snapshots for a %d-request batch, want exactly 1 (frozen-snapshot §R5)", spy.snapshotCalls, len(reqs))
+	}
+}
+
+// TestReactiveRouteResnapsBetweenCalls is the counterpart to the frozen-batch
+// property: each separate Route call takes a FRESH snapshot, so a Set between two
+// Route calls changes the second result. With the motorway unloaded the first
+// Route takes the 2-hop motorway path; after jamming that motorway hop the second
+// Route must re-snapshot and divert to the direct edge (it is not caching an old
+// snapshot).
+func TestReactiveRouteResnapsBetweenCalls(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	provider := memory.New(roadGraph.EdgeCount())
+	router := routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), provider)
+
+	origin, _ := roadGraph.Node(0)
+	dest, _ := roadGraph.Node(2)
+	req := routing.RouteRequest{ID: "n0->n2", From: origin.Pos, To: dest.Pos}
+
+	before, err := router.Route(context.Background(), req)
+	if err != nil {
+		test.Fatalf("Route() before jam error = %v", err)
+	}
+	if segs := segmentsOf(test, roadGraph, before.Edges); len(segs) != 2 || segs[0] != "905512:0:F" {
+		test.Fatalf("before-jam path = %v, want 2-hop motorway [905512:0:F 905512:1:F]", segs)
+	}
+
+	provider.Set(edgeIDForSegment(test, roadGraph, "905512:0:F"), 50000) // jam after the first Route
+
+	after, err := router.Route(context.Background(), req)
+	if err != nil {
+		test.Fatalf("Route() after jam error = %v", err)
+	}
+	if segs := segmentsOf(test, roadGraph, after.Edges); len(segs) != 1 || segs[0] != "9000001:0:F" {
+		test.Errorf("after-jam path = %v, want diverted [9000001:0:F] (Route must re-snapshot, not cache)", segs)
+	}
+}
+
+// TestReactiveDivertsNearThreshold anchors the actual crossover, not just the
+// extreme jam in TestReactiveJamDiverts. The 2-hop motorway's congested cost first
+// exceeds the 108.0 s direct edge at ~12422 vph on 905512:0:F (FreeFlowS=18.0,
+// cap=5400): 18.0*(1 + 0.15*(v/5400)^4) + 14.4 > 108  ⇒  v > ~12422. Just below it
+// the motorway still wins; just above it reactive diverts — so a regression that
+// mis-scaled the BPR ratio or dropped the alpha term would be caught here even
+// though it might still divert at the extreme load.
+func TestReactiveDivertsNearThreshold(test *testing.T) {
+	testCases := []struct {
+		name     string
+		loadVPH  float64
+		wantSegs []domain.SegmentID
+	}{
+		{name: "just below threshold keeps motorway", loadVPH: 12000, wantSegs: []domain.SegmentID{"905512:0:F", "905512:1:F"}},
+		{name: "just above threshold diverts to direct", loadVPH: 13000, wantSegs: []domain.SegmentID{"9000001:0:F"}},
+	}
+	for _, testCase := range testCases {
+		test.Run(testCase.name, func(test1 *testing.T) {
+			roadGraph := loadToyGraph(test1)
+			provider := memory.New(roadGraph.EdgeCount())
+			provider.Set(edgeIDForSegment(test1, roadGraph, "905512:0:F"), testCase.loadVPH)
+			reactive := routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), provider)
+
+			origin, _ := roadGraph.Node(0)
+			dest, _ := roadGraph.Node(2)
+			got, err := reactive.Route(context.Background(), routing.RouteRequest{ID: testCase.name, From: origin.Pos, To: dest.Pos})
+			if err != nil {
+				test1.Fatalf("Route() error = %v", err)
+			}
+			gotSegs := segmentsOf(test1, roadGraph, got.Edges)
+			if len(gotSegs) != len(testCase.wantSegs) {
+				test1.Fatalf("path = %v (%d hops), want %v", gotSegs, len(gotSegs), testCase.wantSegs)
+			}
+			for index := range testCase.wantSegs {
+				if gotSegs[index] != testCase.wantSegs[index] {
+					test1.Errorf("path[%d] = %q, want %q (full %v)", index, gotSegs[index], testCase.wantSegs[index], gotSegs)
+				}
+			}
+		})
+	}
+}
+
+// TestReactiveRouteSameNode pins the src==dst contract reactive documents: when
+// From and To snap to the same node the route is a clean zero-edge, zero-cost
+// success — not an error and not a panic on the empty predecessor walk. Downstream
+// flow accumulation relies on tolerating an empty Edges slice.
+func TestReactiveRouteSameNode(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	router := routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), memory.New(roadGraph.EdgeCount()))
+
+	node0, _ := roadGraph.Node(0)
+	got, err := router.Route(context.Background(), routing.RouteRequest{ID: "n0->n0", From: node0.Pos, To: node0.Pos})
+	if err != nil {
+		test.Fatalf("Route() same-node error = %v, want nil", err)
+	}
+	if len(got.Edges) != 0 {
+		test.Errorf("Edges = %v, want empty path for a same-node request", got.Edges)
+	}
+	if got.CostS != 0 {
+		test.Errorf("CostS = %v, want 0 for a same-node request", got.CostS)
+	}
+}
+
+// TestReactiveRouteUnreachable confirms an unreachable destination is a clean
+// error, not a panic or a zero-cost empty route. Node 5 is a sink (no outgoing
+// edge), so nothing is reachable from it.
+func TestReactiveRouteUnreachable(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	router := routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), memory.New(roadGraph.EdgeCount()))
+
+	from, _ := roadGraph.Node(5) // sink
+	toNode, _ := roadGraph.Node(0)
+	if _, err := router.Route(context.Background(), routing.RouteRequest{ID: "sink", From: from.Pos, To: toNode.Pos}); err == nil {
+		test.Error("Route() from sink node 5 should error (destination unreachable), got nil")
+	}
+}
+
+// TestReactiveAssignFirstErrorReturnsNil locks reactive's Assign contract: on the
+// first unroutable request it returns (nil, error) — never a partially-filled slice
+// a caller might read stale zero-value Routes from. The second request originates at
+// the sink node 5, from which nothing is reachable.
+func TestReactiveAssignFirstErrorReturnsNil(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	router := routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), memory.New(roadGraph.EdgeCount()))
+
+	node0, _ := roadGraph.Node(0)
+	node2, _ := roadGraph.Node(2)
+	node5, _ := roadGraph.Node(5) // sink: nothing is reachable from it
+	reqs := []routing.RouteRequest{
+		{ID: "ok", From: node0.Pos, To: node2.Pos},
+		{ID: "unroutable", From: node5.Pos, To: node0.Pos},
+	}
+
+	routes, err := router.Assign(context.Background(), reqs)
+	if err == nil {
+		test.Fatal("Assign() with an unroutable request err = nil, want non-nil")
+	}
+	if routes != nil {
+		test.Errorf("Assign() returned a partial slice %v, want nil on error", routes)
+	}
+}
+
+// TestReactiveAssignHonorsMidBatchCancellation confirms the per-request ctx.Err()
+// check inside Assign's loop aborts a batch already in progress, with no partial
+// slice. Reactive's loop calls the unguarded routeWith (not Route), so the loop
+// guard is the ONLY ctx.Err() check per iteration — a reactive Assign iteration
+// consumes one Err() call, not the two a naive iteration does (Route adds its own).
+// liveCalls=1 therefore lets request[0] route, then trips the guard at request[1].
+// countingCtx is defined in naive_test.go (same test package).
+func TestReactiveAssignHonorsMidBatchCancellation(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	router := routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), memory.New(roadGraph.EdgeCount()))
+
+	node0, _ := roadGraph.Node(0)
+	node2, _ := roadGraph.Node(2)
+	ctx := &countingCtx{Context: context.Background(), liveCalls: 1}
+	reqs := []routing.RouteRequest{
+		{ID: "first", From: node0.Pos, To: node2.Pos},
+		{ID: "second", From: node0.Pos, To: node2.Pos},
+	}
+
+	routes, err := router.Assign(ctx, reqs)
+	if err != context.Canceled {
+		test.Errorf("Assign() mid-batch cancel err = %v, want context.Canceled", err)
+	}
+	if routes != nil {
+		test.Errorf("Assign() returned %v, want nil when cancelled mid-batch", routes)
 	}
 }
