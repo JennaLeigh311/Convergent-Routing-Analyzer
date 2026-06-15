@@ -2,6 +2,7 @@ package simulator_test
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/simulator"
@@ -10,6 +11,11 @@ import (
 
 // tolerance is the float comparison tolerance for vph assertions (house style).
 const tolerance = 1e-9
+
+// perturbationFraction mirrors the production evolution knob (simulator.go); the
+// order-determinism test recomputes the expected per-tick factors and so needs
+// the same bound. If the production constant changes, update this to match.
+const perturbationFraction = 0.10
 
 // TestInjectRaisesLoad asserts the acceptance criterion: injecting load on an
 // edge makes Load read above its zero baseline, while an un-injected /
@@ -48,11 +54,8 @@ func TestInjectIsAdditive(test1 *testing.T) {
 		test1.Errorf("Load(2) after two injects = %v, want 420 (additive)", got)
 	}
 	simulation.Inject(2, -1000) // would go negative; must floor at 0.
-	if got := simulation.Load(2); got < 0 {
-		test1.Errorf("Load(2) after negative inject = %v, want >= 0 (floored)", got)
-	}
 	if got := simulation.Load(2); math.Abs(got-0) > tolerance {
-		test1.Errorf("Load(2) after over-subtracting inject = %v, want 0", got)
+		test1.Errorf("Load(2) after over-subtracting inject = %v, want 0 (floored, never negative)", got)
 	}
 }
 
@@ -198,6 +201,70 @@ func TestStepIsLiveAndNonNegative(test1 *testing.T) {
 	// Un-injected edges stay at exactly 0 (Step only touches loaded edges).
 	if math.Abs(after[0]) > tolerance || math.Abs(after[7]) > tolerance {
 		test1.Errorf("Step altered an un-injected edge: edge0=%v edge7=%v", after[0], after[7])
+	}
+}
+
+// TestStepVisitsEdgesInAscendingOrder pins the §R5 contract that Step draws from
+// the RNG in ascending EdgeID order, independent of map iteration order. Two
+// same-seed simulators running identical ops would match even if Step used a
+// randomized order, so that test alone can't catch a regression to map-order
+// iteration; this one recomputes the expected post-tick loads from an
+// independent rand.Rand consumed in ascending edge order, so it fails the moment
+// the visit order changes.
+func TestStepVisitsEdgesInAscendingOrder(test1 *testing.T) {
+	const seed = 123
+	simulation := simulator.New(seed, 8)
+	const (
+		loadLow  = 500.0 // edge 3 — visited first (lower EdgeID).
+		loadHigh = 900.0 // edge 7 — visited second.
+	)
+	simulation.Inject(3, loadLow)
+	simulation.Inject(7, loadHigh)
+
+	// Independent RNG with the same seed: the first draw must apply to edge 3, the
+	// second to edge 7, because Step visits ascending EdgeID order.
+	expectedRNG := rand.New(rand.NewSource(seed))
+	factorLow := 1 - perturbationFraction + expectedRNG.Float64()*(2*perturbationFraction)
+	factorHigh := 1 - perturbationFraction + expectedRNG.Float64()*(2*perturbationFraction)
+
+	simulation.Step()
+
+	if got, want := simulation.Load(3), loadLow*factorLow; math.Abs(got-want) > tolerance {
+		test1.Errorf("Load(3) after Step = %v, want %v (first RNG draw applies to the lowest loaded EdgeID)", got, want)
+	}
+	if got, want := simulation.Load(7), loadHigh*factorHigh; math.Abs(got-want) > tolerance {
+		test1.Errorf("Load(7) after Step = %v, want %v (second RNG draw applies to the next loaded EdgeID)", got, want)
+	}
+}
+
+// TestStepNNonPositiveIsNoOp asserts StepN(0) and StepN(negative) leave the
+// loads (and the RNG stream) untouched.
+func TestStepNNonPositiveIsNoOp(test1 *testing.T) {
+	simulation := simulator.New(5, 8)
+	simulation.Inject(2, 600)
+	before := simulation.Snapshot()
+
+	for _, tickCount := range []int{0, -3} {
+		simulation.StepN(tickCount)
+		after := simulation.Snapshot()
+		for edgeID := range after {
+			if math.Abs(before[edgeID]-after[edgeID]) > tolerance {
+				test1.Errorf("StepN(%d) changed edge %d: %v → %v, want no-op", tickCount, edgeID, before[edgeID], after[edgeID])
+			}
+		}
+	}
+}
+
+// TestStepOnUnloadedSimulator asserts Step on a simulator with no loaded edges
+// is a harmless no-op: every edge stays 0 and nothing panics.
+func TestStepOnUnloadedSimulator(test1 *testing.T) {
+	simulation := simulator.New(1, 8)
+	simulation.StepN(5)
+	snapshot := simulation.Snapshot()
+	for edgeID := range snapshot {
+		if math.Abs(snapshot[edgeID]) > tolerance {
+			test1.Errorf("edge %d = %v after stepping an unloaded simulator, want 0", edgeID, snapshot[edgeID])
+		}
 	}
 }
 

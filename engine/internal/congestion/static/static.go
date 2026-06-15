@@ -51,14 +51,14 @@ func BuildSegmentEdgeIndex(roadGraph graph.Graph) SegmentEdgeIndex {
 }
 
 // Provider is a static, read-only CongestionProvider: it holds one frozen
-// per-edge load snapshot (vehicles/hour) produced from a batch of messages and
+// per-edge load store (vehicles/hour) produced from a batch of messages and
 // serves the same view on every call. Use NewProvider to build one. Its
 // SkippedCount reports how many deduped messages named a segment_id that does
 // not map to any edge in the graph.
 type Provider struct {
-	// snapshot is the frozen, owned per-edge load. Snapshot returns a fresh copy
-	// of it so a caller can mutate the result without disturbing the provider.
-	snapshot congestion.LoadSnapshot
+	// store is the frozen, owned per-edge load. Snapshot returns a fresh copy of
+	// it so a caller can mutate the result without disturbing the provider.
+	store *congestion.LoadStore
 	// skipped is the number of post-dedup segment winners whose segment_id did
 	// not map to an edge — counted, never fatal (§3: unknown segments are
 	// dropped, not errors).
@@ -93,7 +93,7 @@ func NewProvider(messages []domain.SegmentCongestion, index SegmentEdgeIndex, ed
 		return nil, err
 	}
 
-	snapshot := make(congestion.LoadSnapshot, edgeCount)
+	store := congestion.NewLoadStore(edgeCount)
 	skipped := 0
 	for segmentID, winner := range winners {
 		edgeID, found := index[domain.SegmentID(segmentID)]
@@ -101,9 +101,9 @@ func NewProvider(messages []domain.SegmentCongestion, index SegmentEdgeIndex, ed
 			skipped++
 			continue
 		}
-		snapshot[edgeID] = float64(winner.VehicleCount) * annualizationFactor
+		store.Set(edgeID, float64(winner.VehicleCount)*annualizationFactor)
 	}
-	return &Provider{snapshot: snapshot, skipped: skipped}, nil
+	return &Provider{store: store, skipped: skipped}, nil
 }
 
 // SkippedCount returns how many deduped segment winners were dropped because
@@ -114,16 +114,14 @@ func (provider *Provider) SkippedCount() int { return provider.skipped }
 // Load returns the load (vehicles/hour) on the edge, or 0 if the edge is out of
 // range or had no observation, per the congestion.CongestionProvider port.
 func (provider *Provider) Load(edgeID domain.EdgeID) float64 {
-	return provider.snapshot.Load(edgeID)
+	return provider.store.Load(edgeID)
 }
 
 // Snapshot returns a fresh, caller-owned copy of the frozen per-edge loads.
 // Mutating the returned snapshot does not affect the provider, as the port
 // requires.
 func (provider *Provider) Snapshot() congestion.LoadSnapshot {
-	out := make(congestion.LoadSnapshot, len(provider.snapshot))
-	copy(out, provider.snapshot)
-	return out
+	return provider.store.Snapshot()
 }
 
 // Compile-time assertion: *Provider satisfies the CongestionProvider port.
