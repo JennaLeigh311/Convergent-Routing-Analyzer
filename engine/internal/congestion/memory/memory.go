@@ -75,5 +75,14 @@ func (provider *Provider) Snapshot() congestion.LoadSnapshot {
 	return provider.store.Snapshot()
 }
 
+// View returns an allocation-free, read-only congestion.LoadView over the
+// provider's live load (it does not copy), per the CongestionProvider.View
+// contract. Because Set writes the backing slice in place, the borrow must not be
+// retained across a concurrent Set; the single-request Route path drops it within
+// one synchronous call, so it never does.
+func (provider *Provider) View() congestion.LoadView {
+	return provider.store.View()
+}
+
 // Compile-time assertion: *Provider satisfies the CongestionProvider port.
 var _ congestion.CongestionProvider = (*Provider)(nil)
