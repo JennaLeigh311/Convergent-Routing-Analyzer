@@ -16,12 +16,16 @@ func (router fakeRouter) Route(_ context.Context, req routing.RouteRequest) (rou
 	return routing.Route{RequestID: req.ID}, nil
 }
 
-func (router fakeRouter) Assign(_ context.Context, reqs []routing.RouteRequest) ([]routing.Route, error) {
+func (router fakeRouter) Assign(ctx context.Context, reqs []routing.RouteRequest) ([]routing.Route, error) {
+	return routing.AssignFromResult(ctx, reqs, router.AssignResult)
+}
+
+func (router fakeRouter) AssignResult(_ context.Context, reqs []routing.RouteRequest) (routing.AssignResult, error) {
 	out := make([]routing.Route, len(reqs))
 	for index, req := range reqs {
 		out[index] = routing.Route{RequestID: req.ID}
 	}
-	return out, nil
+	return routing.AssignResult{Routes: out, FinalFlows: []float64{}, Iters: 1, Converged: true}, nil
 }
 
 func (router fakeRouter) Name() string { return router.name }
