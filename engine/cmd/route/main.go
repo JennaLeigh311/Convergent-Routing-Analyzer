@@ -58,10 +58,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion"
-	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/memory"
-	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/simulator"
-	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/static"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/source"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
@@ -79,27 +76,16 @@ const (
 	defaultTo        = "40.74,-73.97"
 )
 
-// Algorithm and congestion flag vocabulary. algoNaive is the DEFAULT so the
-// no-flags invocation stays the canonical free-flow route; algoReactive opts into
-// the BPR-weighted reactive router. congestionSim selects the deterministic
-// simulator source (any other --congestion value is treated as a file path).
+// Algorithm flag vocabulary. algoNaive is the DEFAULT so the no-flags invocation
+// stays the canonical free-flow route; algoReactive opts into the BPR-weighted
+// reactive router. The congestion-source vocabulary (the "sim" literal, the
+// default --jam load) lives with the provider construction in package source
+// (source.SimSource, source.DefaultJamVPH), which both this CLI and the future
+// routing server share.
 const (
-	algoNaive     = "naive"
-	algoReactive  = "reactive"
-	congestionSim = "sim"
+	algoNaive    = "naive"
+	algoReactive = "reactive"
 )
-
-// jamDefaultVPH is the default load --jam injects onto a segment. It is set high
-// enough to force the toy-graph divert: jamming the motorway corridor at this
-// load lifts its BPR cost above the 1-hop residential edge's free-flow cost, so
-// reactive reroutes. Override it with --jam-vph for other graphs.
-const jamDefaultVPH = 50000
-
-// simulatorSeed is the FIXED seed for the --congestion sim provider. Pinning it
-// makes the simulator-backed demo deterministic (project-spec.md §R5
-// reproducibility): the same --jam injection yields the same snapshot, so the
-// printed route does not vary run to run.
-const simulatorSeed int64 = 1
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -124,7 +110,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		"reactive congestion source: \"sim\" (deterministic simulator), a path to a §3 segment-congestion JSON batch, or empty (zero load)")
 	jamSegment := flagSet.String("jam", "",
 		"segment_id to inject load onto so reactive avoids it (the Phase-2 divert demo); rejected with a file -congestion, which already carries its own loads")
-	jamVPH := flagSet.Float64("jam-vph", jamDefaultVPH,
+	jamVPH := flagSet.Float64("jam-vph", source.DefaultJamVPH,
 		"vehicles/hour to inject onto --jam (must be > 0; default is high enough to force the toy-graph divert)")
 
 	if err := flagSet.Parse(args); err != nil {
@@ -209,82 +195,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 // buildRouter selects the routing.Router for the chosen --algo. naive returns the
 // free-flow NaiveRouter and ignores every congestion flag (free-flow does not read
 // load), so naive + any --congestion/--jam is harmless, not nonsensical. reactive
-// returns a ReactiveRouter weighting cost.DefaultBPR over the snapshot built by
-// buildCongestionProvider; the caller (run) prefixes any returned error with
-// "route:" and exits non-zero. The graph is needed to size the dense per-edge
-// provider and to resolve a --jam segment_id to its EdgeID.
+// returns a ReactiveRouter weighting cost.DefaultBPR over the frozen snapshot built
+// by source.Build (project-spec.md §R5) — the shared congestion-source seam both
+// this CLI and the future routing server use, so the source switch has one home.
+// The caller (run) prefixes any returned error with "route:" and exits non-zero.
+// The graph is needed to size the dense per-edge provider and to resolve a --jam
+// segment_id to its EdgeID.
 func buildRouter(roadGraph graph.Graph, algo, congestionSource, jamSegment string, jamVPH float64) (routing.Router, error) {
 	if algo == algoNaive {
 		return routing.NewNaiveRouter(roadGraph), nil
 	}
-	provider, err := buildCongestionProvider(roadGraph, congestionSource, jamSegment, jamVPH)
+	provider, err := source.Build(roadGraph, source.Spec{
+		Source:     congestionSource,
+		JamSegment: jamSegment,
+		JamVPH:     jamVPH,
+	})
 	if err != nil {
 		return nil, err
 	}
 	return routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), provider), nil
-}
-
-// buildCongestionProvider builds the frozen congestion snapshot the reactive
-// router best-responds to (project-spec.md §R5). It chooses the source by
-// congestionSource: "sim" is a fixed-seed simulator.New, a non-empty value is a
-// file path decoded into a static.NewProvider (§3 batch), and empty is a zero-load
-// memory.New. When jamSegment is non-empty its load (jamVPH) is injected onto the
-// resolved edge so reactive diverts around it; the sim and empty sources support
-// injection, while a file source already carries its own loads (a --jam alongside
-// a file source is rejected as a contradiction rather than silently dropped).
-//
-// An unknown --jam segment_id is a clean user error naming the bad segment, not a
-// silent no-op, so a typo cannot quietly produce the un-diverted route.
-func buildCongestionProvider(roadGraph graph.Graph, congestionSource, jamSegment string, jamVPH float64) (congestion.CongestionProvider, error) {
-	switch congestionSource {
-	case congestionSim:
-		sim := simulator.New(simulatorSeed, roadGraph.EdgeCount())
-		if jamSegment != "" {
-			edgeID, err := resolveJamSegment(roadGraph, jamSegment)
-			if err != nil {
-				return nil, err
-			}
-			sim.Inject(edgeID, jamVPH)
-		}
-		return sim, nil
-	case "":
-		mem := memory.New(roadGraph.EdgeCount())
-		if jamSegment != "" {
-			edgeID, err := resolveJamSegment(roadGraph, jamSegment)
-			if err != nil {
-				return nil, err
-			}
-			mem.Set(edgeID, jamVPH)
-		}
-		return mem, nil
-	default:
-		if jamSegment != "" {
-			return nil, fmt.Errorf("cannot combine -jam with a file -congestion %q (the file already carries the loads); use -congestion sim to inject", congestionSource)
-		}
-		messages, err := domain.DecodeSegmentCongestionFile(congestionSource)
-		if err != nil {
-			return nil, fmt.Errorf("load congestion %q: %w", congestionSource, err)
-		}
-		index := static.BuildSegmentEdgeIndex(roadGraph)
-		provider, err := static.NewProvider(messages, index, roadGraph.EdgeCount())
-		if err != nil {
-			return nil, fmt.Errorf("load congestion %q: %w", congestionSource, err)
-		}
-		return provider, nil
-	}
-}
-
-// resolveJamSegment maps a --jam segment_id to its dense EdgeID via the graph's
-// segment→edge index (static.BuildSegmentEdgeIndex). An unknown segment_id is a
-// user error that NAMES the bad segment, so a typo fails loudly rather than
-// no-opping into the un-jammed (un-diverted) route.
-func resolveJamSegment(roadGraph graph.Graph, jamSegment string) (domain.EdgeID, error) {
-	index := static.BuildSegmentEdgeIndex(roadGraph)
-	edgeID, found := index[domain.SegmentID(jamSegment)]
-	if !found {
-		return 0, fmt.Errorf("invalid -jam %q: no such segment_id in the graph", jamSegment)
-	}
-	return edgeID, nil
 }
 
 // parseLatLon parses a "lat,lon" pair of decimal degrees into a domain.LatLon.
