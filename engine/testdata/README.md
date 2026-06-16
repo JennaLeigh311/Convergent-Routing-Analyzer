@@ -82,3 +82,51 @@ so a congestion overlay can be joined onto this network later by `segment_id`
 - `27583001:0:F` (edge 3)
 - `48800123:0:F` (edge 4)
 - `48800123:0:R` (edge 5)
+
+## `toy_network_adversarial.geojson`
+
+A second, §2-conformant `edge_attributes` fixture authored for issue #73 to harden
+the Phase-3 routing algorithms against real-network pathology the hand-built
+`toy_network.geojson` lacks. It loads cleanly through the same `#25` loader and is
+exercised by `engine/internal/routing/adversarial_test.go`. Values are computed at
+`capacity_scale = 1.0` via the §2 derivation rules. Its `osm_way_id`s are fresh
+`71000xx` ids, disjoint from `toy_network.geojson` and the congestion fixture, so
+the two networks never collide.
+
+### Topology
+
+6 nodes, 5 directed edges (dense `edge_id` `0..4`), in **two disconnected
+components**:
+
+| edge_id | segment_id    | from→to | class       | dir   | length_m | maxspeed_kmh | lanes | capacity_vph | freeflow_time_s |
+|---------|---------------|---------|-------------|-------|----------|--------------|-------|--------------|-----------------|
+| 0       | 7100001:0:F   | 0→1     | residential | 1-way | 300.0    | 30.0         | 1     | 900.0        | 36.0            |
+| 1       | 7100002:0:F   | 1→2     | secondary   | F     | 500.0    | 50.0         | 2     | 2520.0       | 36.0            |
+| 2       | 7100002:0:R   | 2→1     | secondary   | R     | 500.0    | 50.0         | 2     | 2520.0       | 36.0            |
+| 3       | 7100003:0:F   | 2→3     | primary     | 1-way | 600.0    | 60.0         | 2     | 2880.0       | 36.0            |
+| 4       | 7100004:0:F   | 4→5     | tertiary    | 1-way | 400.0    | 40.0         | 1     | 1080.0       | 36.0            |
+
+Node positions (`[lon, lat]`): node 0 `[-73.99,40.73]`, 1 `[-73.98,40.735]`,
+2 `[-73.97,40.74]`, 3 `[-73.96,40.745]`, 4 `[-73.90,40.80]`, 5 `[-73.89,40.805]`.
+
+### The two pathologies
+
+- **Disconnected component.** Nodes `4,5` and edge 4 (`7100004:0:F`) form an island
+  with **no** edge to or from the main component `{0,1,2,3}`. It sits ~9 km NE of
+  the main component so `NearestNode` cannot bridge the gap. An OD pair across the
+  gap (e.g. node 0 → node 4) is **genuinely unreachable** — the routing layer must
+  return a clean no-route (not a panic/NaN/divide-by-zero).
+- **One-way trap.** Edge 3 (`7100003:0:F`, node 2 → node 3) is one-way only: there
+  is **no** reverse row (`7100003:0:R` does not exist), so node 3 is a directed sink
+  with zero out-edges. The forward OD node 0 → node 3 is reachable (`0→1→2→3`) and
+  legitimately uses the trap edge forward; the forbidden direction (node 3 → node 0)
+  must return a clean no-route and must **never** walk edge 3 backward. The `7100002`
+  F/R pair (node 1 ↔ node 2) is a genuine two-way street, so "no reverse edge" is a
+  property of the trap specifically, not of every edge.
+
+### Where unreachability is enforced
+
+The loader does **not** reject disconnected graphs; reachability is a routing-layer
+concern. See `docs/architecture.md` → "Graph connectedness: unreachability is a
+routing-layer concern, not a loader rejection (issue #73)" for the full decision and
+rationale.

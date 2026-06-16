@@ -80,6 +80,51 @@ Config is env-driven (`.env`, copied from `.env.example`); `core` needs none of 
 broker address, PG DSN, or topic name — they interpolate from the environment so the dev↔full adapter swap is
 config-driven.
 
+## Graph connectedness: unreachability is a routing-layer concern, not a loader rejection (issue #73)
+
+**Decision.** The `edge_attributes` loader (`engine/internal/graph/loader.go`) does **not** validate strong
+(or weak) connectivity, and a disconnected component is **not** a load-time rejection. Reachability is
+resolved at the **routing layer**: an unreachable origin→destination pair returns a clean "no route"
+(`dijkstra` returns `found=false`; the public `Router.Route` surfaces that as a descriptive error, never a
+panic, `NaN`, or divide-by-zero). One-way edges are likewise honored purely by the directed adjacency — a
+router can only traverse an edge `From→To`, so a one-way corridor with no reverse row is never walked
+backward.
+
+**Why the loader does not reject disconnected graphs.** The loader's job is to validate the §2 contract
+*shape* and reject a malformed artifact loudly, atomically, and fail-closed (see `loader.go`'s package
+comment). Connectivity is a *topological property of valid data*, not a contract violation:
+
+- **Real networks are legitimately disconnected.** The Porto `osm2pgrouting` extract (Phase 5) will contain
+  disconnected islands, dead-end stubs, gated service roads, and ferry-only fragments. These are correct rows
+  describing real geometry. Rejecting the whole artifact because one stub is unreachable would make the engine
+  refuse to load real city data — exactly the silent toy↔Porto assumption this fixture exists to break.
+- **Fail-closed is about contract integrity, not topology.** The loader rejects things that mean the data is
+  *wrong* (bad `segment_id`, axis swap, non-finite metric, duplicate edge id). A reachable-only-from-itself
+  component is *right* data; it is just not useful for a particular OD pair. That distinction belongs to the
+  consumer asking the question, not to the artifact's validity.
+- **The cost is paid only by the affected request.** Dijkstra already initializes every distance to `+Inf` and
+  returns `found=false` when `dist[dst]` stays infinite, so an unreachable OD pair costs one failed query, not
+  a corrupted graph. The equilibrium algorithms (`msa`/`systemoptimal`, Phase 3) build on this same
+  shortest-path core, so handling unreachability once at the routing layer hardens all of them — they must
+  treat a `found=false`/`Route` error as "this request contributes no flow", never assume every OD pair is
+  reachable.
+- **Decoupling.** Baking a connectivity policy into the loader would couple the data-side artifact format to a
+  service-side routing assumption. The loader stays region-agnostic and topology-agnostic; the routing layer
+  owns "can I get from A to B".
+
+**What the loader still guarantees** (so the routing layer can rely on it): dense `0..NodeCount-1` node ids
+and `0..EdgeCount-1` edge ids, finite-positive metric fields, and `From`/`To` in range. That is what lets
+`dijkstra` use flat slices and trust that a non-`+Inf` settled distance is a real path.
+
+**Future option (not built).** If an operator ever wants an *early warning* that an export is more fragmented
+than expected, the right shape is an **opt-in, non-fatal** connectivity report (e.g. a `WithConnectivityWarn`
+load option or a separate analysis tool that logs the component-size histogram) — a diagnostic, never a
+fail-closed rejection. No trigger has fired for this yet; the routing-layer handling above is sufficient.
+
+This decision is exercised by `engine/testdata/toy_network_adversarial.geojson` and the regression test in
+`engine/internal/routing/` that asserts an unreachable OD pair returns a clean no-route and that no router
+output traverses the one-way corridor against its direction.
+
 ## Deferred engineering decisions
 
 Decisions made deliberately *not* to act on yet, recorded so the rationale and the trigger survive. Each is

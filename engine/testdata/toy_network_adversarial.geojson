@@ -1,0 +1,112 @@
+{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "note": "Adversarial toy routing network (#73): a §2-conformant edge_attributes FeatureCollection used to harden the Phase-3 algorithms against real-network pathology (disconnected islands + one-way-only corridors) that the Porto extract will have but the hand-built toy_network.geojson does not. Two deliberate pathologies: (1) DISCONNECTED COMPONENT — nodes 4,5 and edge_id 4 (7100004:0:F) form an island with NO edge to/from the main component {0,1,2,3}, so an OD pair across the gap (e.g. node 0 -> node 4) is genuinely unreachable. (2) ONE-WAY TRAP — edge_id 3 (7100003:0:F, node 2 -> node 3) is one-way only: there is NO reverse row (no 7100003:0:R), so node 3 is a directed sink reachable forward from node 2 but with no edge leading back out. Routing the forbidden direction (node 3 -> node 2, or node 3 -> anywhere) must return a clean no-route, never traverse edge 3 backward. The main component also carries one genuine two-way street (7100002 F/R pair, node 1 <-> node 2) so 'no reverse edge' is a property of the trap specifically, not of every edge. All values computed at capacity_scale=1.0 via the §2 derivation rules exactly (capacity_vph = lanes x 1800 x class_factor; freeflow_time_s = length_m / (maxspeed_kmh / 3.6)). Region: NYC-ish, lon [-73.99..-73.89], lat [40.73..40.805]; the island sits ~9 km NE of the main component so NearestNode cannot accidentally bridge the gap. segment_ids are fresh 71000xx way ids (no overlap with toy_network.geojson or the congestion fixture) so the two fixtures never collide. See README.md.",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-73.99000, 40.73000], [-73.98000, 40.73500]]
+      },
+      "properties": {
+        "segment_id": "7100001:0:F",
+        "edge_id": 0,
+        "source_node": 0,
+        "target_node": 1,
+        "osm_way_id": 7100001,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 300.0,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 36.0,
+        "capacity_vph": 900.0
+      },
+      "note": "MAIN COMPONENT entry: one-way residential node0(origin)->node1. defaults lanes=1, maxspeed=30. capacity=1*1800*0.5=900; freeflow=300/(30/3.6)=36.0."
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-73.98000, 40.73500], [-73.97000, 40.74000]]
+      },
+      "properties": {
+        "segment_id": "7100002:0:F",
+        "edge_id": 1,
+        "source_node": 1,
+        "target_node": 2,
+        "osm_way_id": 7100002,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 500.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 36.0,
+        "capacity_vph": 2520.0
+      },
+      "note": "TWO-WAY secondary, FORWARD half of the F/R pair node1->node2. Proves 'no reverse edge' is a property of the one-way TRAP specifically, not of every edge in the fixture. defaults lanes=2, maxspeed=50. capacity=2*1800*0.7=2520; freeflow=500/(50/3.6)=36.0."
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-73.97000, 40.74000], [-73.98000, 40.73500]]
+      },
+      "properties": {
+        "segment_id": "7100002:0:R",
+        "edge_id": 2,
+        "source_node": 2,
+        "target_node": 1,
+        "osm_way_id": 7100002,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 500.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 36.0,
+        "capacity_vph": 2520.0
+      },
+      "note": "TWO-WAY secondary, REVERSE half of the F/R pair node2->node1. Same way+seq as edge 1, dir=R: source_node/target_node swapped AND LineString coordinates reversed (source-first/target-last preserved per direction). Same split-default lanes_effective=2 and derived values."
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-73.97000, 40.74000], [-73.96000, 40.74500]]
+      },
+      "properties": {
+        "segment_id": "7100003:0:F",
+        "edge_id": 3,
+        "source_node": 2,
+        "target_node": 3,
+        "osm_way_id": 7100003,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 600.0,
+        "maxspeed_kmh": 60.0,
+        "freeflow_time_s": 36.0,
+        "capacity_vph": 2880.0
+      },
+      "note": "ONE-WAY TRAP: a single directed row node2->node3 with NO reverse partner (there is no 7100003:0:R). node3 is therefore a directed sink — reachable FORWARD from node2 (node0->node1->node2->node3 is a valid path) but with no out-edge, so routing FROM node3 (e.g. node3->node2) must return a clean no-route and MUST NOT traverse this edge backward. defaults lanes=2, maxspeed=60. capacity=2*1800*0.8=2880; freeflow=600/(60/3.6)=36.0."
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[-73.90000, 40.80000], [-73.89000, 40.80500]]
+      },
+      "properties": {
+        "segment_id": "7100004:0:F",
+        "edge_id": 4,
+        "source_node": 4,
+        "target_node": 5,
+        "osm_way_id": 7100004,
+        "highway_class": "tertiary",
+        "lanes_effective": 1,
+        "length_m": 400.0,
+        "maxspeed_kmh": 40.0,
+        "freeflow_time_s": 36.0,
+        "capacity_vph": 1080.0
+      },
+      "note": "DISCONNECTED COMPONENT: a one-way tertiary node4->node5 on an island ~9 km NE of the main component, with NO edge connecting it to nodes {0,1,2,3}. An OD pair from the main component to this island (e.g. node0->node4) is genuinely unreachable; routing it must yield a defined no-route result (no panic/NaN/divide-by-zero). The 9 km gap keeps NearestNode from accidentally snapping a main-component coordinate onto the island. defaults lanes=1, maxspeed=40. capacity=1*1800*0.6=1080; freeflow=400/(40/3.6)=36.0."
+    }
+  ]
+}
