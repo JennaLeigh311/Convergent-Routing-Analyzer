@@ -1,0 +1,14 @@
+[
+  {
+    "schema_version": 1,
+    "segment_id": "905512:0:F",
+    "window_start": "2026-06-08T08:00:00Z",
+    "window_end": "2026-06-08T08:05:00Z",
+    "vehicle_count": 5000,
+    "avg_speed_kmh": 8.5,
+    "sample_pings": 200,
+    "is_final": true,
+    "emit_time": "2026-06-08T08:07:00Z",
+    "producer": "route-cli-testdata"
+  }
+]

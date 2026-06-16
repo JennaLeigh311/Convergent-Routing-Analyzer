@@ -123,9 +123,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	congestionSource := flagSet.String("congestion", "",
 		"reactive congestion source: \"sim\" (deterministic simulator), a path to a §3 segment-congestion JSON batch, or empty (zero load)")
 	jamSegment := flagSet.String("jam", "",
-		"segment_id to inject load onto so reactive avoids it (the Phase-2 divert demo)")
+		"segment_id to inject load onto so reactive avoids it (the Phase-2 divert demo); rejected with a file -congestion, which already carries its own loads")
 	jamVPH := flagSet.Float64("jam-vph", jamDefaultVPH,
-		"vehicles/hour to inject onto --jam (default is high enough to force the toy-graph divert)")
+		"vehicles/hour to inject onto --jam (must be > 0; default is high enough to force the toy-graph divert)")
 
 	if err := flagSet.Parse(args); err != nil {
 		// flag already printed the error + usage to stderr (our writer).
@@ -134,6 +134,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	if *algo != algoNaive && *algo != algoReactive {
 		fmt.Fprintf(stderr, "route: invalid -algo %q: want %q or %q\n", *algo, algoNaive, algoReactive)
+		return 1
+	}
+
+	// A non-positive --jam-vph is floored to zero by every provider, so the
+	// "jammed" edge stays at zero load and reactive never diverts — a request to
+	// jam that silently does nothing. Reject it loudly rather than print the
+	// un-diverted route. (Only meaningful for reactive + an actual --jam; naive
+	// ignores congestion flags, so it is not validated here.)
+	if *algo == algoReactive && *jamSegment != "" && *jamVPH <= 0 {
+		fmt.Fprintf(stderr, "route: invalid -jam-vph %g: want > 0 (a non-positive load floors to zero and would not divert)\n", *jamVPH)
 		return 1
 	}
 
@@ -253,12 +263,12 @@ func buildCongestionProvider(roadGraph graph.Graph, congestionSource, jamSegment
 		}
 		messages, err := domain.DecodeSegmentCongestionFile(congestionSource)
 		if err != nil {
-			return nil, fmt.Errorf("load congestion %q: %v", congestionSource, err)
+			return nil, fmt.Errorf("load congestion %q: %w", congestionSource, err)
 		}
 		index := static.BuildSegmentEdgeIndex(roadGraph)
 		provider, err := static.NewProvider(messages, index, roadGraph.EdgeCount())
 		if err != nil {
-			return nil, fmt.Errorf("load congestion %q: %v", congestionSource, err)
+			return nil, fmt.Errorf("load congestion %q: %w", congestionSource, err)
 		}
 		return provider, nil
 	}
