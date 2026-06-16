@@ -36,3 +36,12 @@ func haversine(pointA, pointB domain.LatLon) float64 {
 	costValue := 2 * math.Atan2(math.Sqrt(value), math.Sqrt(1-value))
 	return earthRadiusM * costValue
 }
+
+// GreatCircleM is the exported great-circle (haversine) distance in meters
+// between two WGS84 coordinates. It is the same computation the unexported
+// haversine and the k-d tree use; it is exported so out-of-package consumers —
+// notably the routing A* heuristic, which needs node-to-destination straight-line
+// distance — reuse this single implementation rather than re-deriving the formula
+// (and its earth-radius / numerical-conditioning choices). Distance is symmetric
+// and returns 0 for identical points.
+func GreatCircleM(pointA, pointB domain.LatLon) float64 { return haversine(pointA, pointB) }
