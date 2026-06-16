@@ -43,6 +43,121 @@ func TestRunCanonicalLowestCostPath(test *testing.T) {
 	}
 }
 
+// TestRunReactiveJamDiverts pins the Phase-2 headline property (project-spec.md
+// §6): the SAME node 0 -> node 2 request diverts under congestion. With
+// --algo reactive --jam 905512:0:F the motorway corridor is jammed, so reactive
+// must NOT return the naive free-flow path (the 2-hop motorway) but the 1-hop
+// residential edge 9000001:0:F instead. We assert the reactive output differs
+// from the naive output, names the residential segment, exits 0, and carries a
+// cost line.
+func TestRunReactiveJamDiverts(test *testing.T) {
+	var naiveStdout, naiveStderr bytes.Buffer
+	naiveCode := run([]string{
+		"-graph", toyGraph,
+		"-from", defaultFrom, // node 0
+		"-to", defaultTo, // node 2
+		"-algo", "naive",
+	}, &naiveStdout, &naiveStderr)
+	if naiveCode != 0 {
+		test.Fatalf("naive exit code = %d, want 0; stderr=%q", naiveCode, naiveStderr.String())
+	}
+
+	var reactiveStdout, reactiveStderr bytes.Buffer
+	reactiveCode := run([]string{
+		"-graph", toyGraph,
+		"-from", defaultFrom, // node 0
+		"-to", defaultTo, // node 2
+		"-algo", "reactive",
+		"-jam", "905512:0:F", // jam the motorway corridor
+	}, &reactiveStdout, &reactiveStderr)
+	if reactiveCode != 0 {
+		test.Fatalf("reactive exit code = %d, want 0; stderr=%q", reactiveCode, reactiveStderr.String())
+	}
+
+	naiveOut := naiveStdout.String()
+	reactiveOut := reactiveStdout.String()
+	if reactiveOut == naiveOut {
+		test.Errorf("reactive-under-jam output = %q, want it to DIFFER from naive %q (the divert)", reactiveOut, naiveOut)
+	}
+	if !strings.Contains(reactiveOut, "9000001:0:F") {
+		test.Errorf("reactive-under-jam output = %q, want it to take the residential edge 9000001:0:F", reactiveOut)
+	}
+	if !strings.Contains(reactiveOut, "cost") {
+		test.Errorf("reactive-under-jam output = %q, want a cost line", reactiveOut)
+	}
+}
+
+// TestRunReactiveNoJamMatchesNaive pins the zero-load equivalence: reactive with
+// NO congestion injected weights edges against an all-zero snapshot, where BPR
+// collapses to the free-flow ordering, so reactive must choose the SAME path as
+// naive. (The reactive cost line is the congested BPR cost, which equals
+// free-flow at zero load, so the whole output coincides here.)
+func TestRunReactiveNoJamMatchesNaive(test *testing.T) {
+	var naiveStdout, naiveStderr bytes.Buffer
+	naiveCode := run([]string{
+		"-graph", toyGraph,
+		"-from", defaultFrom, // node 0
+		"-to", defaultTo, // node 2
+		"-algo", "naive",
+	}, &naiveStdout, &naiveStderr)
+	if naiveCode != 0 {
+		test.Fatalf("naive exit code = %d, want 0; stderr=%q", naiveCode, naiveStderr.String())
+	}
+
+	var reactiveStdout, reactiveStderr bytes.Buffer
+	reactiveCode := run([]string{
+		"-graph", toyGraph,
+		"-from", defaultFrom, // node 0
+		"-to", defaultTo, // node 2
+		"-algo", "reactive", // no -jam: zero-load snapshot
+	}, &reactiveStdout, &reactiveStderr)
+	if reactiveCode != 0 {
+		test.Fatalf("reactive exit code = %d, want 0; stderr=%q", reactiveCode, reactiveStderr.String())
+	}
+
+	naivePath := firstLine(naiveStdout.String())
+	reactivePath := firstLine(reactiveStdout.String())
+	if reactivePath != naivePath {
+		test.Errorf("reactive no-jam path = %q, want it to equal the naive path %q (zero-load reactive == naive)", reactivePath, naivePath)
+	}
+}
+
+// TestRunReactiveUnknownJam: an unknown --jam segment_id is a clean user error,
+// not a silent no-op that would print the un-diverted route. Expect a non-zero
+// exit and a "route:" stderr message NAMING the bad segment.
+func TestRunReactiveUnknownJam(test *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"-graph", toyGraph,
+		"-from", defaultFrom,
+		"-to", defaultTo,
+		"-algo", "reactive",
+		"-jam", "no-such-segment",
+	}, &stdout, &stderr)
+
+	if code == 0 {
+		test.Fatalf("exit code = 0, want non-zero; stdout=%q", stdout.String())
+	}
+	msg := stderr.String()
+	if !strings.Contains(msg, "route:") {
+		test.Errorf("stderr = %q, want a route:-prefixed error", msg)
+	}
+	if !strings.Contains(msg, "no-such-segment") {
+		test.Errorf("stderr = %q, want it to name the bad -jam segment_id", msg)
+	}
+}
+
+// firstLine returns text up to (not including) the first newline — the path line
+// of the route output, used to compare paths while ignoring the trailing cost
+// line (reactive's congested cost differs from naive's free-flow cost even when
+// the path is identical).
+func firstLine(text string) string {
+	if index := strings.IndexByte(text, '\n'); index >= 0 {
+		return text[:index]
+	}
+	return text
+}
+
 // TestRunUnroutablePair: node 5 is a sink (no outgoing edges), so no path
 // reaches node 0. Expect a non-zero exit and a stderr message naming the
 // unroutable condition.
