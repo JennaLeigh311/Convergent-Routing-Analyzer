@@ -15,9 +15,16 @@ package routing
 // allocation (one float64 per edge), so removing it cuts allocs/op by exactly one
 // but slashes bytes/op by edgeCount*8 — at 512x512 that is the ~8MB the Snapshot
 // path shows over the View path (the remaining ~524K allocs/op are Dijkstra's
-// per-settled-node heap pushes, identical on both paths). The win is the bytes the
-// borrow stops allocating + memcpying per request, which is what feeds the
-// under-concurrency GC cliff the issue describes.
+// per-settled-node heap pushes, identical on both paths).
+//
+// SCOPE: these are single-goroutine benchmarks, so they measure the PER-CALL
+// allocation the borrow removes (bytes/op, allocs/op), NOT the aggregate
+// throughput/pause behavior under concurrency. The issue's motivation is the GC
+// cliff under ~1000 concurrent requests; that the per-call saving drives a
+// concurrent-GC win follows by allocator arithmetic (8MB less transient garbage
+// per in-flight request), but it is not what these benches directly exhibit. A
+// b.RunParallel variant comparing aggregate ns/op + GC under load would show that
+// directly; it is deliberately left out here to keep the gate a clean per-call A/B.
 
 import (
 	"context"

@@ -29,7 +29,11 @@ import (
 // the result is deterministic for a fixed snapshot + OD set and there is no shared
 // mutable state between requests. The router holds only the immutable graph, a
 // stateless cost function, and a congestion provider, so its methods are safe for
-// concurrent use by multiple goroutines (each call takes its own snapshot).
+// concurrent use by multiple goroutines: Assign takes its own owning Snapshot, and
+// Route borrows a read-only View (CongestionProvider.View) that it reads within one
+// synchronous call. That borrow is safe only against a provider not being mutated
+// concurrently — the providers wired here are built once and then frozen — so the
+// read-only borrow, not a per-call copy, is what Route relies on (see Route).
 type ReactiveRouter struct {
 	g        graph.Graph
 	costFn   cost.CostFunction
@@ -40,7 +44,8 @@ type ReactiveRouter struct {
 // graph that weights edges with costFn (a BPR cost.CostFunction; see
 // cost.DefaultBPR) against the load reported by provider. provider may be any
 // congestion.CongestionProvider — the in-memory, static, and simulator adapters
-// all plug in here — and is read via a single Snapshot() per Route / per Assign.
+// all plug in here — and is read via a single View() borrow per Route and a single
+// owning Snapshot() per Assign.
 //
 // This provider seam is reactive-specific: reactive reads externally-supplied load
 // once and best-responds to it. The Phase-3 demand-aware strategies (incremental,
@@ -105,11 +110,11 @@ func (router *ReactiveRouter) Route(ctx context.Context, req RouteRequest) (Rout
 }
 
 // routeWith routes one request against an already-chosen weightFunc. Assign calls
-// it with a single shared weightFunc (closed over one snapshot) so every request in
-// the batch provably sees the identical congestion view; Route closes over its own
-// fresh snapshot. The ctx.Err() check is left to the caller (Route guards before
-// the snapshot; Assign guards once per loop iteration), so routeWith does no
-// redundant context check of its own.
+// it with a single shared weightFunc (closed over one owning Snapshot) so every
+// request in the batch provably sees the identical congestion view; Route closes
+// over its own borrowed View. The ctx.Err() check is left to the caller (Route
+// guards before taking the view; Assign guards once per loop iteration), so
+// routeWith does no redundant context check of its own.
 func (router *ReactiveRouter) routeWith(ctx context.Context, req RouteRequest, weight weightFunc) (Route, error) {
 	src, found := router.g.NearestNode(req.From)
 	if !found {

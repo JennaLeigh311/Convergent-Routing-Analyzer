@@ -81,8 +81,9 @@ func (store *LoadStore) Snapshot() LoadSnapshot {
 // View returns a read-only LoadView over the store's LIVE backing slice WITHOUT
 // copying, the allocation-free borrow the adapters expose for the read-only
 // single-request path (see the CongestionProvider.View contract). The returned
-// LoadView aliases the store's array: a later Set or Grow on the store can change
-// what it reads, so the caller must not retain it across a mutation. It is
-// returned through the LoadView interface, not as a *LoadStore, so a caller
-// cannot write through it.
+// LoadView aliases the store's array, so the caller must not retain it across a
+// mutation: an in-place Set rewrites a slot the borrow can observe mid-write (a
+// torn read), and a Grow REALLOCATES the backing array, leaving the borrow reading
+// the stale pre-grow copy. It is returned through the LoadView interface, not as a
+// *LoadStore, so a caller cannot write through it.
 func (store *LoadStore) View() LoadView { return store.loads }

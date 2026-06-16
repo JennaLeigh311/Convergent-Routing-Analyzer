@@ -73,6 +73,14 @@ type Spec struct {
 //
 // An unknown jam segment_id is a clean caller error naming the bad segment, not a
 // silent no-op, so a typo cannot quietly produce the un-diverted route.
+//
+// NOTE: the error strings below name the CLI flags (-jam, -congestion) rather than
+// the Spec fields, because the only caller today is cmd/route (whose tests assert
+// these substrings) and there is no server caller yet. When a non-CLI caller (the
+// future routing server) lands, rephrase these in Spec vocabulary and let each
+// caller wrap with its own flag-named framing so this reusable package stays
+// transport-neutral. Deliberately deferred to avoid churning passing CLI tests for
+// a caller that does not exist.
 func Build(roadGraph graph.Graph, spec Spec) (congestion.CongestionProvider, error) {
 	switch spec.Source {
 	case SimSource:

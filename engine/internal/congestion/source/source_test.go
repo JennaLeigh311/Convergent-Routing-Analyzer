@@ -26,6 +26,14 @@ const (
 	jamLoadVPH      = 12345.0
 )
 
+// fileJamVPH is the load the jamMotorwayCongestion fixture lands on the motorway
+// edge: its single §3 message carries vehicle_count 5000 over a 5-minute window,
+// which the ×12 annualization (twelve 5-minute windows per hour, docs/contracts.md
+// §3) scales to vehicles/hour. Written as the arithmetic rather than a baked
+// literal so it cannot silently rot if the fixture or the window→vph conversion
+// changes.
+const fileJamVPH = 5000 * 12 // = 60000 vph
+
 // loadToyGraph loads the shared toy network or fails the test; every case needs a
 // graph to size the dense provider and resolve a jam segment_id.
 func loadToyGraph(test *testing.T) graph.Graph {
@@ -84,7 +92,7 @@ func TestBuildSucceeds(test *testing.T) {
 		{
 			name:     "file source",
 			spec:     Spec{Source: jamMotorwayCongestion},
-			wantLoad: 60000, // 5000 vehicles in a 5-minute window ×12 = 60000 vph
+			wantLoad: fileJamVPH,
 		},
 	} {
 		test.Run(testCase.name, func(test *testing.T) {
@@ -102,6 +110,15 @@ func TestBuildSucceeds(test *testing.T) {
 			// returns a consistent view through both faces of the port.
 			if got := provider.Snapshot().Load(jammedEdge); got != testCase.wantLoad {
 				test.Errorf("Snapshot().Load(motorway) = %v, want %v", got, testCase.wantLoad)
+			}
+			// View() must also agree: it is the allocation-free read-only borrow the
+			// single-request Route path takes (issue #67), so a provider whose View
+			// aliased the wrong slice (or a static/simulator adapter that returned a
+			// stale or empty borrow) would diverge from Load/Snapshot and fail here.
+			// This one assertion pins View/Snapshot parity across every source —
+			// simulator, in-memory, and the file-backed static provider.
+			if got := provider.View().Load(jammedEdge); got != testCase.wantLoad {
+				test.Errorf("View().Load(motorway) = %v, want %v", got, testCase.wantLoad)
 			}
 		})
 	}
