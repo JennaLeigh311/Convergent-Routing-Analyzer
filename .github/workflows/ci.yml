@@ -115,6 +115,20 @@ jobs:
             exit 1
           fi
           echo "route CLI: canonical toy route + cost OK"
+          # Phase-2 divert (project-spec.md §6): the SAME A->B request must take a
+          # DIFFERENT path under reactive-with-jam than under naive, and the
+          # diverted path must be the residential edge 9000001:0:F. Reuse the
+          # already-built binary; no recompile.
+          naive_out="$("$bin" --algo naive)"
+          reactive_out="$("$bin" --algo reactive --jam 905512:0:F)"
+          if [ "$naive_out" = "$reactive_out" ]; then
+            echo "route CLI: reactive-under-jam did not diverge from naive (no divert)"
+            exit 1
+          fi
+          case "$reactive_out" in
+            *9000001:0:F*) echo "route CLI: reactive-under-jam diverted to 9000001:0:F OK" ;;
+            *) echo "route CLI: reactive-under-jam did not take the residential edge 9000001:0:F: $reactive_out"; exit 1 ;;
+          esac
           # Negative path: a malformed -from must exit non-zero and name the bad flag.
           if err="$("$bin" -from foo -to 1,1 2>&1)"; then
             echo "route CLI: expected non-zero exit on malformed -from, got success"
