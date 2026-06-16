@@ -124,5 +124,14 @@ func (provider *Provider) Snapshot() congestion.LoadSnapshot {
 	return provider.store.Snapshot()
 }
 
+// View returns an allocation-free, read-only congestion.LoadView over the frozen
+// per-edge loads (it does not copy), per the CongestionProvider.View contract.
+// The static provider never mutates its store after construction, so for this
+// adapter the borrow is stable for the provider's whole lifetime; it is still
+// returned through LoadView so a caller cannot write through it.
+func (provider *Provider) View() congestion.LoadView {
+	return provider.store.View()
+}
+
 // Compile-time assertion: *Provider satisfies the CongestionProvider port.
 var _ congestion.CongestionProvider = (*Provider)(nil)

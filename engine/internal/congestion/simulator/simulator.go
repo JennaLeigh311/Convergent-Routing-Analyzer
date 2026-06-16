@@ -155,6 +155,17 @@ func (simulator *Simulator) Snapshot() congestion.LoadSnapshot {
 	return simulator.store.Snapshot()
 }
 
+// View returns an allocation-free, read-only congestion.LoadView over the
+// simulator's live load (it does not copy), per the CongestionProvider.View
+// contract. Inject and Step rewrite the backing slice in place, so a borrow held
+// across a Step could tear (read a half-evolved tick); the single-request Route
+// path holds it only for one synchronous call and never across a Step, so it is
+// safe there. Callers driving an evolving scenario across ticks should take
+// Snapshot, not View.
+func (simulator *Simulator) View() congestion.LoadView {
+	return simulator.store.View()
+}
+
 // nonNegative floors a load at 0, matching how the cost functions floor negative
 // load: a negative load would break the router's edge-weight non-negativity
 // assumption (Dijkstra).

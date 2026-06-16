@@ -29,7 +29,11 @@ import (
 // the result is deterministic for a fixed snapshot + OD set and there is no shared
 // mutable state between requests. The router holds only the immutable graph, a
 // stateless cost function, and a congestion provider, so its methods are safe for
-// concurrent use by multiple goroutines (each call takes its own snapshot).
+// concurrent use by multiple goroutines: Assign takes its own owning Snapshot, and
+// Route borrows a read-only View (CongestionProvider.View) that it reads within one
+// synchronous call. That borrow is safe only against a provider not being mutated
+// concurrently — the providers wired here are built once and then frozen — so the
+// read-only borrow, not a per-call copy, is what Route relies on (see Route).
 type ReactiveRouter struct {
 	g        graph.Graph
 	costFn   cost.CostFunction
@@ -40,7 +44,8 @@ type ReactiveRouter struct {
 // graph that weights edges with costFn (a BPR cost.CostFunction; see
 // cost.DefaultBPR) against the load reported by provider. provider may be any
 // congestion.CongestionProvider — the in-memory, static, and simulator adapters
-// all plug in here — and is read via a single Snapshot() per Route / per Assign.
+// all plug in here — and is read via a single View() borrow per Route and a single
+// owning Snapshot() per Assign.
 //
 // This provider seam is reactive-specific: reactive reads externally-supplied load
 // once and best-responds to it. The Phase-3 demand-aware strategies (incremental,
@@ -59,23 +64,38 @@ var _ Router = (*ReactiveRouter)(nil)
 func (router *ReactiveRouter) Name() string { return "reactive" }
 
 // congestedWeight returns the weightFunc the Dijkstra core relaxes against: the
-// BPR cost of each edge under its load in the given (frozen) snapshot. BPR.Cost is
-// always >= edge.FreeFlowS >= 0, so the weights stay non-negative as Dijkstra's
-// correctness requires. Closing over one snapshot value is what makes every request
-// in a batch see the identical view (project-spec.md §R5, docs/contracts.md §3).
-func (router *ReactiveRouter) congestedWeight(snapshot congestion.LoadSnapshot) weightFunc {
+// BPR cost of each edge under its load in the given load view. BPR.Cost is always
+// >= edge.FreeFlowS >= 0, so the weights stay non-negative as Dijkstra's
+// correctness requires. It takes the read-only congestion.LoadView (which only
+// exposes Load) rather than an owning LoadSnapshot, since it only ever reads load
+// — that lets Route pass an allocation-free borrow while Assign passes its owning
+// per-batch Snapshot (a LoadSnapshot satisfies LoadView). Closing over one view is
+// what makes every request in a batch see the identical load (project-spec.md §R5,
+// docs/contracts.md §3); for a batch that one view is the frozen owning Snapshot.
+func (router *ReactiveRouter) congestedWeight(view congestion.LoadView) weightFunc {
 	return func(edge graph.Edge) float64 {
-		return router.costFn.Cost(edge, snapshot.Load(edge.ID))
+		return router.costFn.Cost(edge, view.Load(edge.ID))
 	}
 }
 
-// Route answers a single request: take ONE congestion snapshot, snap From/To to
-// the nearest graph nodes, then run Dijkstra on the congested BPR weights derived
-// from that snapshot. The returned Route.CostS is the summed CONGESTED BPR cost of
-// the chosen edges under the snapshot — the cost the path was optimized against,
-// not a realized travel time (the benchmark derives realized time separately from
-// final edge flows; see docs/benchmarks.md). A cancelled context, an endpoint that
-// snaps to no node, or an unreachable destination is returned as an error.
+// Route answers a single request: BORROW a read-only view of congestion, snap
+// From/To to the nearest graph nodes, then run Dijkstra on the congested BPR
+// weights derived from that view. The returned Route.CostS is the summed
+// CONGESTED BPR cost of the chosen edges under the view — the cost the path was
+// optimized against, not a realized travel time (the benchmark derives realized
+// time separately from final edge flows; see docs/benchmarks.md). A cancelled
+// context, an endpoint that snaps to no node, or an unreachable destination is
+// returned as an error.
+//
+// Route uses provider.View() (an allocation-free borrow over the live load), NOT
+// Snapshot(): the congested-weight closure only READS load, so copying the whole
+// dense load vector per single request — ~8–24MB at city scale, the dominant
+// transient allocation under heavy single-request concurrency — is pure waste.
+// The borrow is valid because Route is single-shot best-response-to-stale-state:
+// it holds the view only for this one synchronous call and never across a provider
+// mutation (per the CongestionProvider.View contract). Assign, by contrast, MUST
+// keep its owning per-batch Snapshot so every request in a round provably sees one
+// stable view — see Assign.
 //
 // When From and To snap to the same node the result is a clean zero-edge,
 // zero-cost Route (not an error): a path to where you already are. Downstream flow
@@ -85,16 +105,16 @@ func (router *ReactiveRouter) Route(ctx context.Context, req RouteRequest) (Rout
 		return Route{}, err
 	}
 
-	snapshot := router.provider.Snapshot()
-	return router.routeWith(ctx, req, router.congestedWeight(snapshot))
+	view := router.provider.View()
+	return router.routeWith(ctx, req, router.congestedWeight(view))
 }
 
 // routeWith routes one request against an already-chosen weightFunc. Assign calls
-// it with a single shared weightFunc (closed over one snapshot) so every request in
-// the batch provably sees the identical congestion view; Route closes over its own
-// fresh snapshot. The ctx.Err() check is left to the caller (Route guards before
-// the snapshot; Assign guards once per loop iteration), so routeWith does no
-// redundant context check of its own.
+// it with a single shared weightFunc (closed over one owning Snapshot) so every
+// request in the batch provably sees the identical congestion view; Route closes
+// over its own borrowed View. The ctx.Err() check is left to the caller (Route
+// guards before taking the view; Assign guards once per loop iteration), so
+// routeWith does no redundant context check of its own.
 func (router *ReactiveRouter) routeWith(ctx context.Context, req RouteRequest, weight weightFunc) (Route, error) {
 	src, found := router.g.NearestNode(req.From)
 	if !found {

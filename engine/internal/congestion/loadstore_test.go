@@ -105,3 +105,30 @@ func TestLoadStoreSnapshotIsIndependentCopy(test1 *testing.T) {
 		test1.Errorf("snapshot.Load(2) after later Set = %v, want 0 (store must not alias the snapshot)", got)
 	}
 }
+
+// TestLoadStoreViewAliasesLiveStore asserts View() returns a read-only borrow over
+// the LIVE backing slice — the allocation-free path issue #67 adds and the inverse
+// of Snapshot's owning copy. It reads the current load, and because it aliases
+// rather than copies, a later in-place Set is visible through the SAME borrow. (A
+// Set that grows the slice reallocates and detaches the borrow, which is why the
+// View contract forbids retaining it across a mutation; this test stays within the
+// initial capacity to exercise the aliasing the borrow is built on.)
+func TestLoadStoreViewAliasesLiveStore(test1 *testing.T) {
+	store := congestion.NewLoadStore(8)
+	store.Set(3, 420)
+
+	view := store.View()
+	if got := view.Load(3); got != 420 {
+		test1.Errorf("View().Load(3) = %v, want 420", got)
+	}
+	// An in-place Set within capacity is visible through the existing borrow: it
+	// aliases the live slice, it did not copy it.
+	store.Set(3, 900)
+	if got := view.Load(3); got != 900 {
+		test1.Errorf("View().Load(3) after in-place Set = %v, want 900 (the borrow aliases the live store)", got)
+	}
+	// View agrees with Snapshot at the same edge — both faces report one load.
+	if got, want := view.Load(3), store.Snapshot().Load(3); got != want {
+		test1.Errorf("View().Load(3) = %v, want it to match Snapshot().Load(3) = %v", got, want)
+	}
+}

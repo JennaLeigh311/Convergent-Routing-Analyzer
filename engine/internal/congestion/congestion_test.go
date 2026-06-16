@@ -21,6 +21,8 @@ func (provider fakeProvider) Snapshot() congestion.LoadSnapshot {
 	return out
 }
 
+func (provider fakeProvider) View() congestion.LoadView { return provider.loads }
+
 // Compile-time assertion: fakeProvider satisfies the CongestionProvider port.
 var _ congestion.CongestionProvider = fakeProvider{}
 

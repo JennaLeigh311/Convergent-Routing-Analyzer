@@ -201,14 +201,17 @@ func TestReactiveHonorsContextCancellation(test *testing.T) {
 	}
 }
 
-// snapshotCountingProvider wraps a CongestionProvider and counts Snapshot() calls.
-// It lets a test assert the §R5 frozen-snapshot contract directly — that Assign
-// takes exactly ONE snapshot for the whole batch, not one per request — which a
-// provider whose load never changes (the other tests' setup) cannot distinguish,
-// since per-request and per-batch snapshots would then return identical loads.
+// snapshotCountingProvider wraps a CongestionProvider and counts Snapshot() and
+// View() calls. It lets a test assert two boundary contracts directly: that Assign
+// takes exactly ONE owning Snapshot for the whole batch (not one per request, and
+// not a borrow), and that single-request Route takes the allocation-free View
+// borrow instead of a Snapshot. A provider whose load never changes (the other
+// tests' setup) cannot distinguish these, since per-request and per-batch reads
+// would then return identical loads.
 type snapshotCountingProvider struct {
 	inner         congestion.CongestionProvider
 	snapshotCalls int
+	viewCalls     int
 }
 
 func (provider *snapshotCountingProvider) Load(edgeID domain.EdgeID) float64 {
@@ -218,6 +221,11 @@ func (provider *snapshotCountingProvider) Load(edgeID domain.EdgeID) float64 {
 func (provider *snapshotCountingProvider) Snapshot() congestion.LoadSnapshot {
 	provider.snapshotCalls++
 	return provider.inner.Snapshot()
+}
+
+func (provider *snapshotCountingProvider) View() congestion.LoadView {
+	provider.viewCalls++
+	return provider.inner.View()
 }
 
 // TestReactiveAssignFreezesSnapshot verifies the mechanism behind §R5: Assign
@@ -245,6 +253,38 @@ func TestReactiveAssignFreezesSnapshot(test *testing.T) {
 	}
 	if spy.snapshotCalls != 1 {
 		test.Errorf("Assign took %d snapshots for a %d-request batch, want exactly 1 (frozen-snapshot §R5)", spy.snapshotCalls, len(reqs))
+	}
+	// Assign's per-batch immutability guarantee rests on an OWNING Snapshot, never
+	// the live View borrow: a borrow could be mutated under a concurrent round and
+	// break the "one identical stable view" property, so Assign must take no View.
+	if spy.viewCalls != 0 {
+		test.Errorf("Assign took %d View borrows, want 0 (it must use an owning Snapshot per §R5)", spy.viewCalls)
+	}
+}
+
+// TestReactiveRouteBorrowsView locks the issue #67 contract: single-request Route
+// takes the allocation-free read-only View borrow, NOT an owning Snapshot, since
+// its congested-weight closure only reads load. The counting spy makes the claim
+// testable directly — an implementation that still copied a Snapshot per Route
+// (the pre-#67 waste) would record a Snapshot call and zero View calls and fail
+// here, even though the routed path would be identical.
+func TestReactiveRouteBorrowsView(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	inner := memory.New(roadGraph.EdgeCount())
+	inner.Set(edgeIDForSegment(test, roadGraph, "905512:0:F"), 50000)
+	spy := &snapshotCountingProvider{inner: inner}
+	reactive := routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), spy)
+
+	node0, _ := roadGraph.Node(0)
+	node2, _ := roadGraph.Node(2)
+	if _, err := reactive.Route(context.Background(), routing.RouteRequest{ID: "a", From: node0.Pos, To: node2.Pos}); err != nil {
+		test.Fatalf("Route() error = %v", err)
+	}
+	if spy.viewCalls != 1 {
+		test.Errorf("Route took %d View borrows, want exactly 1 (read-only borrow, issue #67)", spy.viewCalls)
+	}
+	if spy.snapshotCalls != 0 {
+		test.Errorf("Route took %d owning Snapshots, want 0 (it must borrow a View, not copy)", spy.snapshotCalls)
 	}
 }
 

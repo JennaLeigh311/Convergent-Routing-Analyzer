@@ -59,6 +59,24 @@ func TestInjectIsAdditive(test1 *testing.T) {
 	}
 }
 
+// TestViewMatchesLoadAndSnapshot asserts the simulator's read-only View() borrow —
+// the allocation-free path the single-request Route takes (issue #67) — reports the
+// same per-edge load as Load and Snapshot. Without this, a View that aliased the
+// wrong slice or returned an empty borrow would ship green, since the divert tests
+// route through the in-memory provider, not the simulator.
+func TestViewMatchesLoadAndSnapshot(test1 *testing.T) {
+	simulation := simulator.New(1, 8)
+	simulation.Inject(3, 420)
+
+	view := simulation.View()
+	if got := view.Load(3); math.Abs(got-420) > tolerance {
+		test1.Errorf("View().Load(3) = %v, want 420", got)
+	}
+	if got, want := view.Load(3), simulation.Snapshot().Load(3); math.Abs(got-want) > tolerance {
+		test1.Errorf("View().Load(3) = %v, want it to match Snapshot().Load(3) = %v", got, want)
+	}
+}
+
 // TestInjectGrowsBackingStore asserts that Inject on an EdgeID beyond the
 // initial size grows the simulator rather than dropping the load, while a
 // negative EdgeID is ignored.
