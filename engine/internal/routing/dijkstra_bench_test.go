@@ -182,3 +182,27 @@ func BenchmarkDijkstra(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkDijkstraScratch is the iterative-router hot path: the same
+// corner-to-corner traversal as BenchmarkDijkstra, but reusing ONE scratch buffer
+// across every iteration via dijkstraScratch, so the two O(NodeCount) dist/prevEdge
+// slices are allocated once instead of per call. Run alongside BenchmarkDijkstra
+// (which passes nil and allocates fresh slices each call) under -benchmem, the
+// allocs/op and B/op delta is exactly the per-Dijkstra allocation the scratch
+// buffer removes — the win an Assign making thousands of Dijkstras banks. The
+// buffer is single-goroutine state, so reusing one across this serial loop is
+// safe.
+func BenchmarkDijkstraScratch(b *testing.B) {
+	roadGraph := buildGridGraph(benchGridSide)
+	src := domain.NodeID(0)
+	dst := domain.NodeID(benchGridSide*benchGridSide - 1)
+	scratch := newDijkstraScratch(roadGraph.NodeCount())
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, found := dijkstraScratch(roadGraph, src, dst, freeFlowWeight, scratch)
+		if !found {
+			b.Fatal("dijkstraScratch: dst unreachable on a fully connected grid")
+		}
+	}
+}

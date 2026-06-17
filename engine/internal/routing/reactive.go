@@ -6,6 +6,7 @@ import (
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 )
 
@@ -109,12 +110,12 @@ func (router *ReactiveRouter) Route(ctx context.Context, req RouteRequest) (Rout
 	return router.routeWith(ctx, req, router.congestedWeight(view))
 }
 
-// routeWith routes one request against an already-chosen weightFunc. Assign calls
-// it with a single shared weightFunc (closed over one owning Snapshot) so every
-// request in the batch provably sees the identical congestion view; Route closes
-// over its own borrowed View. The ctx.Err() check is left to the caller (Route
-// guards before taking the view; Assign guards once per loop iteration), so
-// routeWith does no redundant context check of its own.
+// routeWith routes one request against an already-chosen weightFunc. Route calls
+// it after snapping its single request and closing over its own borrowed View;
+// AssignResult instead pre-snaps every endpoint once (prefetchOD) and routes node
+// ids through routeNodes, so this per-request snap is on the single-shot Route path
+// only. The ctx.Err() check is left to the caller (Route guards before taking the
+// view), so routeWith does no redundant context check of its own.
 func (router *ReactiveRouter) routeWith(ctx context.Context, req RouteRequest, weight weightFunc) (Route, error) {
 	src, found := router.g.NearestNode(req.From)
 	if !found {
@@ -124,7 +125,15 @@ func (router *ReactiveRouter) routeWith(ctx context.Context, req RouteRequest, w
 	if !found {
 		return Route{}, fmt.Errorf("reactive: request %q: no graph node near destination %+v", req.ID, req.To)
 	}
+	return router.routeNodes(req, src, dst, weight)
+}
 
+// routeNodes routes one request whose endpoints are ALREADY resolved to graph node
+// ids, against an already-chosen weightFunc. It is the per-request core both Route
+// (via routeWith, after snapping) and AssignResult (after a single up-front
+// prefetchOD) funnel through, so the snap-to-node step happens exactly once per
+// request in either path — never re-snapped inside an iteration loop.
+func (router *ReactiveRouter) routeNodes(req RouteRequest, src, dst domain.NodeID, weight weightFunc) (Route, error) {
 	path, cost, found := dijkstra(router.g, src, dst, weight)
 	if !found {
 		return Route{}, fmt.Errorf("reactive: request %q: no path from node %d to node %d", req.ID, src, dst)
@@ -142,26 +151,54 @@ func (router *ReactiveRouter) routeWith(ctx context.Context, req RouteRequest, w
 //
 // It checks ctx.Err() before each request so a cancelled or deadline-exceeded
 // context stops the batch promptly; on the first routing error it returns that
-// error and no partial slice. Reactive re-snaps From/To inside each per-request
-// route, which is fine here because it routes each request exactly once against the
-// frozen snapshot; an iterative demand-aware Assign (incremental / MSA, Phase 3)
-// that re-routes the same requests over many rounds should instead snap every
-// endpoint to its NodeID once up front rather than copy this per-call snap into its
-// hot path.
+// error and no partial slice. It returns just the routes — the paths-only face of
+// AssignResult — for callers that do not need final flows or convergence metadata.
 func (router *ReactiveRouter) Assign(ctx context.Context, reqs []RouteRequest) ([]Route, error) {
+	return AssignFromResult(ctx, reqs, router.AssignResult)
+}
+
+// AssignResult routes a whole batch against ONE frozen congestion snapshot and
+// reports the full outcome: the routes (input order), the dense FinalFlows the
+// batch places on the network, and single-pass convergence metadata. As with
+// Assign it takes the snapshot ONCE up front and routes every request against one
+// shared weightFunc, so every request provably sees the identical view and the
+// result is deterministic for a fixed snapshot + OD set (project-spec.md §R5).
+//
+// Reactive is single-pass best-response, NOT an iterated equilibrium, so it reports
+// Iters = 1, Gap = 0, Converged = true — but it HERDS and oscillates across rounds
+// (see the type doc); FinalFlows is the flow of this one best-response pass, not a
+// user equilibrium. It snaps every endpoint to its node id ONCE up front
+// (prefetchOD) instead of re-snapping per request — the shared substrate the
+// iterative routers use. It checks ctx.Err() before each request; on the first
+// routing error it returns a zero AssignResult and that error (never a partial
+// result).
+func (router *ReactiveRouter) AssignResult(ctx context.Context, reqs []RouteRequest) (AssignResult, error) {
+	pairs, err := prefetchOD(router.g, reqs, router.Name())
+	if err != nil {
+		return AssignResult{}, err
+	}
+
 	snapshot := router.provider.Snapshot()
 	weight := router.congestedWeight(snapshot)
 
-	out := make([]Route, len(reqs))
+	routes := make([]Route, len(reqs))
+	flows := newFlowVector(router.g)
 	for index, req := range reqs {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return AssignResult{}, err
 		}
-		route, err := router.routeWith(ctx, req, weight)
+		route, err := router.routeNodes(req, pairs[index].src, pairs[index].dst, weight)
 		if err != nil {
-			return nil, err
+			return AssignResult{}, err
 		}
-		out[index] = route
+		routes[index] = route
+		addRouteFlow(flows, route, requestWeight(req))
 	}
-	return out, nil
+	return AssignResult{
+		Routes:     routes,
+		FinalFlows: flows,
+		Gap:        0,
+		Iters:      1,
+		Converged:  true,
+	}, nil
 }

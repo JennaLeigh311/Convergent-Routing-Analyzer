@@ -207,3 +207,32 @@ algorithms are not yet built:
 - **MSA** (Method of Successive Averages) and **SO** iterate until **relative gap `< 1e-4` or 100 iterations**,
   and report the achieved gap.
 - **MSA step size** = `1/k` at iteration `k`. (MSA, not Frank-Wolfe.)
+
+### 5.1 The `AssignResult` shape (Phase-3 foundations, issue #71)
+
+The achieved gap, the iteration count, and the final per-edge flows have a single home: `AssignResult`
+(`engine/internal/routing/routing.go`), the batch return shape settled once before any iterative router is
+written so all five never have to be re-touched. The `Router` port carries both `Assign` (paths-only, the
+backward-compatible face) and `AssignResult` (the full outcome); a router implements `AssignResult` and
+defines `Assign` as `AssignFromResult` over it.
+
+```go
+type AssignResult struct {
+	Routes     []Route   // chosen path per request, input order
+	FinalFlows []float64 // dense per-edge flow (vehicles/hour), indexed by EdgeID, length EdgeCount()
+	Gap        float64   // achieved relative convergence gap (§R5)
+	Iters      int       // assignment iterations performed
+	Converged  bool      // reached the convergence criterion within budget
+}
+```
+
+- **`FinalFlows`** is `Σ (route traverses edge e ? 1 : 0) × request.Weight`, summed over all routes — the
+  vector the Phase-4 benchmark applies BPR to for *realized* travel time and PoA (§3.2). It is sized to
+  `EdgeCount()`, so an empty batch still yields a full-length all-zero vector.
+- **Single-pass routers** (`naive`, `reactive`) report `Iters = 1`, `Gap = 0`, `Converged = true`: one
+  assignment IS their result — though `reactive`'s is a herding best-response, not a UE (§3.1).
+- **Reproducibility scaffolding** lives alongside it: a single-seed RNG (`NewSeededRNG`), sorted
+  node/edge iteration helpers (Go randomizes map order, so the assignment path never ranges a map), and
+  OD-set serialize/deserialize (`WriteODSet`/`ReadODSet`). A fixed seed plus a serialized OD set reproduces
+  an `Assign` byte-for-byte. The per-goroutine Dijkstra scratch buffer keeps the iterative hot path from
+  re-allocating `dist`/`prevEdge` per call.

@@ -221,10 +221,12 @@ func TestNaiveAssignFirstErrorReturnsNil(test *testing.T) {
 
 // countingCtx reports cancellation only after liveCalls observations of Err(),
 // letting a test drive Assign's per-request ctx.Err() check to a chosen point in
-// the batch deterministically (no wall-clock races). Each fully-routed Assign
-// iteration consumes two Err() calls — the loop guard plus Route's own
-// top-of-function check — so liveCalls = 2 lets request[0] route, then trips the
-// loop guard at request[1].
+// the batch deterministically (no wall-clock races). Since #71 naive's Assign
+// delegates to AssignResult, which (like reactive) snaps every endpoint once up
+// front and then routes node ids through one loop guarded by a single per-request
+// ctx.Err() — so each fully-routed iteration consumes exactly one Err() call.
+// liveCalls = 1 therefore lets request[0] route, then trips the loop guard at
+// request[1].
 type countingCtx struct {
 	context.Context
 	calls     int
@@ -249,7 +251,7 @@ func TestNaiveAssignHonorsMidBatchCancellation(test *testing.T) {
 
 	node0, _ := roadGraph.Node(0)
 	node2, _ := roadGraph.Node(2)
-	ctx := &countingCtx{Context: context.Background(), liveCalls: 2}
+	ctx := &countingCtx{Context: context.Background(), liveCalls: 1}
 	reqs := []routing.RouteRequest{
 		{ID: "first", From: node0.Pos, To: node2.Pos},
 		{ID: "second", From: node0.Pos, To: node2.Pos},

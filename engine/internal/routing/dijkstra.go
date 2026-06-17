@@ -37,6 +37,22 @@ type weightFunc func(graph.Edge) float64
 // priority), so adding the heuristic reorders the heap without touching the
 // settle/relax structure here.
 func dijkstra(roadGraph graph.Graph, src, dst domain.NodeID, weight weightFunc) (path []domain.EdgeID, cost float64, found bool) {
+	return dijkstraScratch(roadGraph, src, dst, weight, nil)
+}
+
+// dijkstraScratch is dijkstra with an optional caller-supplied scratch buffer.
+// When scratch is nil it allocates fresh dist/prevEdge slices per call (the
+// single-call Route path keeps that allocation-per-call shape, unchanged). When
+// scratch is non-nil it reuses that buffer's dist/prevEdge slices across calls,
+// so an iterative router running thousands of Dijkstras per Assign does not
+// re-allocate two O(NodeCount) slices each time — the optimization deferred at
+// the original dijkstra (see dijkstraScratch's reset below).
+//
+// A scratch buffer is single-goroutine state: it MUST NOT be shared across
+// concurrent dijkstraScratch calls (one per worker — see newDijkstraScratch).
+// Correctness is identical to a fresh allocation because the buffer is fully
+// re-initialized (dist→+Inf, prevEdge→-1) at the top of every call.
+func dijkstraScratch(roadGraph graph.Graph, src, dst domain.NodeID, weight weightFunc, scratch *dijkstraScratchBuffer) (path []domain.EdgeID, cost float64, found bool) {
 	count := roadGraph.NodeCount()
 	if int(src) < 0 || int(src) >= count || int(dst) < 0 || int(dst) >= count {
 		return nil, 0, false
@@ -45,18 +61,24 @@ func dijkstra(roadGraph graph.Graph, src, dst domain.NodeID, weight weightFunc) 
 		return []domain.EdgeID{}, 0, true
 	}
 
-	// dist/prevEdge are allocated and initialized per call (O(n)) to keep the
-	// router safe for unsynchronized concurrent use; a per-worker scratch buffer is
-	// a possible future optimization once the Assign worker-pool shape is concrete
-	// (deferred behind a benchmark, as it is secondary to the Neighbors alloc below).
-	dist := make([]float64, count)
+	// dist[v] is the best settled cost to v so far; prevEdge[v] is the edge that
+	// settled it (-1 = no predecessor yet, the path-reconstruction terminator at
+	// src). With no scratch buffer these are allocated and initialized per call
+	// (O(n)) — the original allocation-per-call shape that keeps an unsynchronized
+	// single Route safe. With a scratch buffer they are reused across calls and
+	// only re-initialized, saving the two allocations per Dijkstra on the iterative
+	// hot path.
+	var dist []float64
+	var prevEdge []domain.EdgeID
+	if scratch == nil {
+		dist = make([]float64, count)
+		prevEdge = make([]domain.EdgeID, count)
+	} else {
+		dist, prevEdge = scratch.reset(count)
+	}
 	for index1 := range dist {
 		dist[index1] = math.Inf(1)
 	}
-	// prevEdge[v] is the id of the edge used to settle v on the best path found
-	// so far; -1 means "no predecessor yet" and is the path-reconstruction
-	// terminator at src.
-	prevEdge := make([]domain.EdgeID, count)
 	for index2 := range prevEdge {
 		prevEdge[index2] = -1
 	}
