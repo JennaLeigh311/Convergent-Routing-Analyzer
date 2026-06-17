@@ -169,14 +169,18 @@ func TestODSetRoundTrip(test *testing.T) {
 	}
 }
 
-// TestWriteODSetRejectsDelimiterInID confirms a request id carrying a tab or
-// newline (the format's only delimiters) is a hard error, not a silently-corrupted
-// serialization.
+// TestWriteODSetRejectsDelimiterInID confirms a request id carrying a tab,
+// newline, or carriage return (the format's reserved delimiters) is a hard error,
+// not a silently-corrupted serialization. The carriage-return case matters because
+// a stray '\r' would otherwise ride along in the last field and break the
+// byte-for-byte round-trip without any error.
 func TestWriteODSetRejectsDelimiterInID(test *testing.T) {
-	var buf bytes.Buffer
-	err := routing.WriteODSet(&buf, []routing.RouteRequest{{ID: "bad\tid"}})
-	if err == nil {
-		test.Error("WriteODSet() with a tab in the id err = nil, want non-nil")
+	for _, badID := range []string{"bad\tid", "bad\nid", "bad\rid"} {
+		var buf bytes.Buffer
+		err := routing.WriteODSet(&buf, []routing.RouteRequest{{ID: badID}})
+		if err == nil {
+			test.Errorf("WriteODSet() with id %q err = nil, want non-nil", badID)
+		}
 	}
 }
 
@@ -211,18 +215,6 @@ func TestSortedIterationHelpers(test *testing.T) {
 	for index, id := range edges {
 		if int(id) != index {
 			test.Errorf("SortedEdgeIDs[%d] = %d, want %d (dense ascending)", index, id, index)
-		}
-	}
-
-	// SortedKeysFloat returns sparse map keys in ascending order.
-	keys := routing.SortedKeysFloat(map[domain.EdgeID]float64{5: 1, 1: 1, 3: 1})
-	want := []domain.EdgeID{1, 3, 5}
-	if len(keys) != len(want) {
-		test.Fatalf("SortedKeysFloat = %v, want %v", keys, want)
-	}
-	for index := range want {
-		if keys[index] != want[index] {
-			test.Errorf("SortedKeysFloat[%d] = %d, want %d", index, keys[index], want[index])
 		}
 	}
 }

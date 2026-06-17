@@ -35,7 +35,7 @@
 //     Dijkstra. dijkstraScratch takes it; the single-call Route path passes nil and
 //     is unchanged. A buffer is NOT safe for concurrent use — one per worker.
 //   - repro.go is the reproducibility scaffolding: NewSeededRNG (one seed source),
-//     SortedNodeIDs/SortedEdgeIDs/SortedKeysFloat (deterministic iteration — never
+//     SortedNodeIDs/SortedEdgeIDs (deterministic iteration — never
 //     range a map on the assignment path, Go randomizes map order), and
 //     WriteODSet/ReadODSet (serialize an OD set to disk and back). A fixed seed plus
 //     a serialized OD set reproduces an Assign byte-for-byte.

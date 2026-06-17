@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -28,6 +27,17 @@ import (
 // output" guarantee impossible. A *rand.Rand is single-goroutine state; a
 // concurrent Assign gives each worker its own seeded stream rather than sharing
 // one.
+//
+// WARNING — per-worker seeding preserves thread-safety, NOT run-to-run
+// determinism. Handing each worker its own seeded stream keeps concurrent Assign
+// race-free, but if requests are sharded across workers nondeterministically (the
+// usual case — work-stealing, arrival order, goroutine scheduling), a given
+// request draws from a different stream from run to run, so the same fixed seed no
+// longer reproduces the same output. A reproducible probabilistic router
+// (multipath) must therefore seed PER REQUEST — derive each request's seed from
+// its stable index/ID (e.g. NewSeededRNG(baseSeed ^ requestIndex)) — not per
+// worker, so the draws a request makes depend only on the seed and the request,
+// never on which worker happened to handle it.
 func NewSeededRNG(seed int64) *rand.Rand {
 	return rand.New(rand.NewSource(seed))
 }
@@ -62,21 +72,6 @@ func SortedEdgeIDs(roadGraph graph.Graph) []domain.EdgeID {
 	return ids
 }
 
-// SortedKeysFloat returns the keys of a map[domain.EdgeID]float64 in ascending key
-// order. It is the escape hatch for the cases where a sparse per-edge map is
-// genuinely the right structure (most of the assignment path uses dense slices and
-// needs no map at all): iterating the map through these sorted keys, rather than
-// ranging the map directly, keeps the traversal deterministic. Prefer a dense
-// slice indexed by EdgeID where the data is dense.
-func SortedKeysFloat(byEdge map[domain.EdgeID]float64) []domain.EdgeID {
-	keys := make([]domain.EdgeID, 0, len(byEdge))
-	for key := range byEdge {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(left, right int) bool { return keys[left] < keys[right] })
-	return keys
-}
-
 // WriteODSet serializes an OD set (a batch of RouteRequests) to w in a stable,
 // line-oriented text form so a run can be reproduced byte-for-byte from a saved OD
 // set plus a fixed seed (the issue #71 determinism criterion). The format is one
@@ -87,14 +82,15 @@ func SortedKeysFloat(byEdge map[domain.EdgeID]float64) []domain.EdgeID {
 // Coordinates and the float fields are written with strconv 'g'/-1 precision
 // (shortest round-trippable decimal), so ReadODSet recovers the identical float64
 // bit patterns and the replayed assignment is byte-identical. The id is written
-// raw; it MUST NOT contain a tab or newline (the only two delimiters), which a
-// request id never does. The fields are written in a fixed order, never from a
-// map, so the serialization itself is deterministic.
+// raw; it MUST NOT contain a tab, newline, or carriage return (a stray '\r' would
+// otherwise survive into the last field on its line and silently corrupt the
+// round-trip), which a request id never does. The fields are written in a fixed
+// order, never from a map, so the serialization itself is deterministic.
 func WriteODSet(w io.Writer, reqs []RouteRequest) error {
 	buffered := bufio.NewWriter(w)
 	for _, req := range reqs {
-		if strings.ContainsAny(req.ID, "\t\n") {
-			return fmt.Errorf("WriteODSet: request id %q contains a tab or newline, which the OD-set format reserves as delimiters", req.ID)
+		if strings.ContainsAny(req.ID, "\t\n\r") {
+			return fmt.Errorf("WriteODSet: request id %q contains a tab, newline, or carriage return, which the OD-set format reserves as delimiters", req.ID)
 		}
 		if _, err := fmt.Fprintf(buffered, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			req.ID,
