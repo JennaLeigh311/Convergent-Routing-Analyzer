@@ -1,13 +1,13 @@
 {
   "type": "FeatureCollection",
   "schema_version": 1,
-  "note": "Adversarial toy routing network (#73): a §2-conformant edge_attributes FeatureCollection used to harden the Phase-3 algorithms against real-network pathology (disconnected islands + one-way-only corridors) that the Porto extract will have but the hand-built toy_network.geojson does not. Two deliberate pathologies: (1) DISCONNECTED COMPONENT — nodes 4,5 and edge_id 4 (7100004:0:F) form an island with NO edge to/from the main component {0,1,2,3}, so an OD pair across the gap (e.g. node 0 -> node 4) is genuinely unreachable. (2) ONE-WAY TRAP — edge_id 3 (7100003:0:F, node 2 -> node 3) is one-way only: there is NO reverse row (no 7100003:0:R), so node 3 is a directed sink reachable forward from node 2 but with no edge leading back out. Routing the forbidden direction (node 3 -> node 2, or node 3 -> anywhere) must return a clean no-route, never traverse edge 3 backward. The main component also carries one genuine two-way street (7100002 F/R pair, node 1 <-> node 2) so 'no reverse edge' is a property of the trap specifically, not of every edge. All values computed at capacity_scale=1.0 via the §2 derivation rules exactly (capacity_vph = lanes x 1800 x class_factor; freeflow_time_s = length_m / (maxspeed_kmh / 3.6)). Region: NYC-ish, lon [-73.99..-73.89], lat [40.73..40.805]; the island sits ~9 km NE of the main component so NearestNode cannot accidentally bridge the gap. segment_ids are fresh 71000xx way ids (no overlap with toy_network.geojson or the congestion fixture) so the two fixtures never collide. See README.md.",
+  "note": "Adversarial toy routing network (#73): a §2-conformant edge_attributes FeatureCollection used to harden the Phase-3 algorithms against real-network pathology (disconnected islands + one-way-only corridors) that the Porto extract will have but the hand-built toy_network.geojson does not. Two deliberate pathologies: (1) DISCONNECTED COMPONENT — nodes 4,5 and edge_id 4 (7100004:0:F) form an island with NO edge to/from the main component {0,1,2,3}, so an OD pair across the gap (e.g. node 0 -> node 4) is genuinely unreachable. (2) ONE-WAY TRAP — edge_id 3 (7100003:0:F, node 2 -> node 3) is one-way only: there is NO reverse row (no 7100003:0:R), so node 3 is a directed sink reachable forward from node 2 but with no edge leading back out. Routing the forbidden direction (node 3 -> node 2, or node 3 -> anywhere) must return a clean no-route, never traverse edge 3 backward. The main component also carries one genuine two-way street (7100002 F/R pair, node 1 <-> node 2) so 'no reverse edge' is a property of the trap specifically, not of every edge. All values computed at capacity_scale=1.0 via the §2 derivation rules exactly (capacity_vph = lanes x 1800 x class_factor; freeflow_time_s = length_m / (maxspeed_kmh / 3.6)). Region: NYC-ish, lon [-73.99..-73.9274], lat [40.73..40.7816]; the island sits ~7 km NE of the main component so NearestNode cannot accidentally bridge the gap. Coordinate deltas are sized so each edge's great-circle chord between its endpoints is strictly LESS than its declared length_m (a real OSM geodesic length_m is always >= the straight-line chord), keeping the fixture physically plausible and hardening against toy<->Porto drift. segment_ids are fresh 71000xx way ids (no overlap with toy_network.geojson or the congestion fixture) so the two fixtures never collide. See README.md.",
   "features": [
     {
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.99000, 40.73000], [-73.98000, 40.73500]]
+        "coordinates": [[-73.99000, 40.73000], [-73.98800, 40.73120]]
       },
       "properties": {
         "segment_id": "7100001:0:F",
@@ -28,7 +28,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.98000, 40.73500], [-73.97000, 40.74000]]
+        "coordinates": [[-73.98800, 40.73120], [-73.98470, 40.73320]]
       },
       "properties": {
         "segment_id": "7100002:0:F",
@@ -49,7 +49,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.97000, 40.74000], [-73.98000, 40.73500]]
+        "coordinates": [[-73.98470, 40.73320], [-73.98800, 40.73120]]
       },
       "properties": {
         "segment_id": "7100002:0:R",
@@ -70,7 +70,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.97000, 40.74000], [-73.96000, 40.74500]]
+        "coordinates": [[-73.98470, 40.73320], [-73.98070, 40.73560]]
       },
       "properties": {
         "segment_id": "7100003:0:F",
@@ -91,7 +91,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.90000, 40.80000], [-73.89000, 40.80500]]
+        "coordinates": [[-73.93000, 40.78000], [-73.92740, 40.78160]]
       },
       "properties": {
         "segment_id": "7100004:0:F",
@@ -106,7 +106,7 @@
         "freeflow_time_s": 36.0,
         "capacity_vph": 1080.0
       },
-      "note": "DISCONNECTED COMPONENT: a one-way tertiary node4->node5 on an island ~9 km NE of the main component, with NO edge connecting it to nodes {0,1,2,3}. An OD pair from the main component to this island (e.g. node0->node4) is genuinely unreachable; routing it must yield a defined no-route result (no panic/NaN/divide-by-zero). The 9 km gap keeps NearestNode from accidentally snapping a main-component coordinate onto the island. defaults lanes=1, maxspeed=40. capacity=1*1800*0.6=1080; freeflow=400/(40/3.6)=36.0."
+      "note": "DISCONNECTED COMPONENT: a one-way tertiary node4->node5 on an island ~7 km NE of the main component, with NO edge connecting it to nodes {0,1,2,3}. An OD pair from the main component to this island (e.g. node0->node4) is genuinely unreachable; routing it must yield a defined no-route result (no panic/NaN/divide-by-zero). The ~7 km gap keeps NearestNode from accidentally snapping a main-component coordinate onto the island. defaults lanes=1, maxspeed=40. capacity=1*1800*0.6=1080; freeflow=400/(40/3.6)=36.0."
     }
   ]
 }

@@ -106,13 +106,19 @@ components**:
 | 3       | 7100003:0:F   | 2→3     | primary     | 1-way | 600.0    | 60.0         | 2     | 2880.0       | 36.0            |
 | 4       | 7100004:0:F   | 4→5     | tertiary    | 1-way | 400.0    | 40.0         | 1     | 1080.0       | 36.0            |
 
-Node positions (`[lon, lat]`): node 0 `[-73.99,40.73]`, 1 `[-73.98,40.735]`,
-2 `[-73.97,40.74]`, 3 `[-73.96,40.745]`, 4 `[-73.90,40.80]`, 5 `[-73.89,40.805]`.
+Node positions (`[lon, lat]`): node 0 `[-73.99,40.73]`, 1 `[-73.988,40.7312]`,
+2 `[-73.9847,40.7332]`, 3 `[-73.9807,40.7356]`, 4 `[-73.93,40.78]`, 5 `[-73.9274,40.7816]`.
+The coordinate deltas are sized so each edge's great-circle chord between its
+endpoints is strictly **less** than its declared `length_m` (e.g. edge 0 ≈ 215 m
+< 300 m, edge 3 ≈ 430 m < 600 m). A real OSM `length_m` is a geodesic length, so
+`length_m ≥ chord` always holds; keeping the fixture physically plausible hardens
+the Phase-3 algorithms against toy↔Porto drift. The `length_m` column and every
+§2-derived value (`capacity_vph`, `freeflow_time_s`) above are unchanged.
 
 ### The two pathologies
 
 - **Disconnected component.** Nodes `4,5` and edge 4 (`7100004:0:F`) form an island
-  with **no** edge to or from the main component `{0,1,2,3}`. It sits ~9 km NE of
+  with **no** edge to or from the main component `{0,1,2,3}`. It sits ~7 km NE of
   the main component so `NearestNode` cannot bridge the gap. An OD pair across the
   gap (e.g. node 0 → node 4) is **genuinely unreachable** — the routing layer must
   return a clean no-route (not a panic/NaN/divide-by-zero).

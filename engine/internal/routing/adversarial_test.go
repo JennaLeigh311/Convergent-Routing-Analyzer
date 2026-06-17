@@ -5,6 +5,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/memory"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/routing"
@@ -30,8 +32,8 @@ import (
 const adversarialNetworkPath = "../../testdata/toy_network_adversarial.geojson"
 
 // adversarialBounds is a loose box around the adversarial fixture's window
-// (main component lon ∈ [-73.99,-73.96] lat ∈ [40.73,40.745]; island lon ∈
-// [-73.90,-73.89] lat ∈ [40.80,40.805]). It still rejects a [lat,lon] axis swap.
+// (main component lon ∈ [-73.99,-73.9807] lat ∈ [40.73,40.7356]; island lon ∈
+// [-73.93,-73.9274] lat ∈ [40.78,40.7816]). It still rejects a [lat,lon] axis swap.
 func adversarialBounds() graph.LoadOption { return graph.WithExpectedBounds(-74, -73, 40, 41) }
 
 // oneWayTrapSegment is the single directed corridor with NO reverse row
@@ -56,13 +58,20 @@ func loadAdversarial(test *testing.T) *graph.AdjacencyGraph {
 }
 
 // concreteRouters returns every concrete Router strategy under test over the
-// given graph. Today only the naive baseline exists; the Phase-3 strategies
-// (reactive, incremental, msa, systemoptimal, multipath) append here as they
-// land, so the unreachable-OD and one-way invariants are enforced for all of
-// them by construction.
+// given graph. The acceptance criterion is "no route returned by ANY router",
+// so the set spans the strategies that exist today — the naive baseline and the
+// reactive best-response router — and the remaining Phase-3 strategies
+// (incremental, msa, systemoptimal, multipath) append here as they land, so the
+// unreachable-OD and one-way invariants are enforced for all of them by
+// construction. The reactive router weights edges with the default BPR over a
+// zero-load in-memory snapshot sized to the graph's EdgeCount; load values do
+// not change reachability or edge direction, so it must reach the same no-route
+// / forward-only verdicts as naive on these structural pathologies.
 func concreteRouters(roadGraph graph.Graph) []routing.Router {
+	reactiveProvider := memory.New(roadGraph.EdgeCount())
 	return []routing.Router{
 		routing.NewNaiveRouter(roadGraph),
+		routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), reactiveProvider),
 	}
 }
 
@@ -103,7 +112,7 @@ func TestAdversarialFixtureLoadsCleanly(test *testing.T) {
 // TestUnreachableODYieldsCleanNoRoute is acceptance #2: routing across the
 // disconnected gap (main-component origin -> island destination) returns a
 // defined, non-crashing result — an error, never a panic / NaN / +Inf cost.
-func TestUnreachableODYieldsCleanNoRoute(test *testing.T) {
+func TestAdversarialUnreachableODYieldsCleanNoRoute(test *testing.T) {
 	roadGraph := loadAdversarial(test)
 	ctx := context.Background()
 
@@ -148,7 +157,7 @@ func TestUnreachableODYieldsCleanNoRoute(test *testing.T) {
 //	    traversed against its From->To direction. We additionally route the
 //	    reachable forward OD (node 0 -> node 3) and confirm it legitimately uses
 //	    the one-way edge FORWARD, so the test would fail if direction were ignored.
-func TestOneWayTrapNeverTraversedBackward(test *testing.T) {
+func TestAdversarialOneWayTrapNeverTraversedBackward(test *testing.T) {
 	roadGraph := loadAdversarial(test)
 	ctx := context.Background()
 
