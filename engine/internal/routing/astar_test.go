@@ -17,33 +17,14 @@ import (
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 )
 
-// loadToyGraphInternal loads the shared toy fixture from inside package routing.
-// (The external routing_test package has its own loadToyGraph; this internal copy
-// exists so the unexported-core tests in this file are self-contained.)
-//
-// The shared toy_network.geojson is NOT usable for the A* heuristic-admissibility
-// acceptance test: it is a synthetic fixture whose hand-written length_m values are
-// SMALLER than the great-circle distance between the edge endpoints it also
-// declares (e.g. 905512:0:F states length_m=500 but its endpoints are ~1011 m apart
-// by haversine). On a real OSM export the polyline length always dominates the
-// straight-line chord, so distance/maxSpeed is a true lower bound on travel time;
-// the toy fixture inverts that, so a geographically-honest heuristic correctly
-// reports it as inadmissible THERE. The acceptance tests therefore route over
-// buildGeoConsistentGraph below, where free-flow time is derived FROM the node
-// geometry so length_m ≥ chord holds by construction — exactly the real-network
-// invariant the heuristic relies on. This fixture is still loaded for the toy-level
-// parity smoke (cost equality survives a small graph regardless).
-func loadToyGraphInternal(test *testing.T) *graph.AdjacencyGraph {
-	test.Helper()
-	roadGraph, _, err := graph.LoadEdgeAttributesGeoJSONFile(
-		"../../testdata/toy_network.geojson",
-		graph.WithExpectedBounds(-74, -73, 40, 41),
-	)
-	if err != nil {
-		test.Fatalf("toy_network.geojson must load with zero error, got: %v", err)
-	}
-	return roadGraph
-}
+// The shared toy fixture (loaded by loadToyGraphInternal, defined in
+// scratch_internal_test.go) has hand-written length_m values SMALLER than the
+// great-circle distance between the edge endpoints it also declares (e.g. 905512:0:F
+// states length_m=500 but its endpoints are ~1011 m apart by haversine) — the
+// geometry quirk the chord-based heuristic divisor (maxFreeFlowSpeedMS) is hardened
+// against. The admissibility and parity tests below run on BOTH that real fixture and
+// the synthetic buildGeoConsistentGraph lattice, whose free-flow time is derived FROM
+// the node geometry so length_m == chord by construction.
 
 // buildGeoConsistentGraph builds a sideLen x sideLen 4-neighbor lattice whose
 // per-edge free-flow time is derived from the SAME node geometry the A* heuristic
@@ -148,8 +129,8 @@ func TestAStarMatchesDijkstraEveryODPair(test *testing.T) {
 
 	for src := domain.NodeID(0); int(src) < n; src++ {
 		for dst := domain.NodeID(0); int(dst) < n; dst++ {
-			dijkstraPath, dijkstraCost, dijkstraOK := shortestPath(roadGraph, src, dst, freeFlowWeight, nil)
-			astarPath, astarCost, astarOK := shortestPath(roadGraph, src, dst, freeFlowWeight, router.heuristic(dst))
+			dijkstraPath, dijkstraCost, dijkstraOK := shortestPath(roadGraph, src, dst, freeFlowWeight, nil, nil)
+			astarPath, astarCost, astarOK := shortestPath(roadGraph, src, dst, freeFlowWeight, router.heuristic(dst), nil)
 
 			if dijkstraOK != astarOK {
 				test.Errorf("%d->%d: reachability mismatch: dijkstra ok=%v, astar ok=%v", src, dst, dijkstraOK, astarOK)
@@ -179,7 +160,7 @@ func TestAStarHeuristicAdmissible(test *testing.T) {
 	for dst := domain.NodeID(0); int(dst) < n; dst++ {
 		h := router.heuristic(dst)
 		for node := domain.NodeID(0); int(node) < n; node++ {
-			_, trueRemaining, reachable := shortestPath(roadGraph, node, dst, freeFlowWeight, nil)
+			_, trueRemaining, reachable := shortestPath(roadGraph, node, dst, freeFlowWeight, nil, nil)
 			if !reachable {
 				continue // h need only bound reachable destinations
 			}
@@ -205,13 +186,13 @@ func TestAStarSettlesNoMoreThanDijkstra(test *testing.T) {
 	for src := domain.NodeID(0); int(src) < n; src++ {
 		for dst := domain.NodeID(0); int(dst) < n; dst++ {
 			dijkstraGraph := &settleCountingGraph{Graph: roadGraph}
-			_, _, dijkstraOK := shortestPath(dijkstraGraph, src, dst, freeFlowWeight, nil)
+			_, _, dijkstraOK := shortestPath(dijkstraGraph, src, dst, freeFlowWeight, nil, nil)
 
 			astarGraph := &settleCountingGraph{Graph: roadGraph}
 			// The heuristic must close over the SAME graph the search walks so the
 			// node lookups are consistent; heuristic itself reads Node, not OutEdgeIDs,
 			// so it does not perturb the settle count.
-			_, _, astarOK := shortestPath(astarGraph, src, dst, freeFlowWeight, router.heuristic(dst))
+			_, _, astarOK := shortestPath(astarGraph, src, dst, freeFlowWeight, router.heuristic(dst), nil)
 
 			if !dijkstraOK || !astarOK {
 				continue // only compare settlement counts on pairs both searches complete
@@ -232,16 +213,178 @@ func TestAStarSettlesNoMoreThanDijkstra(test *testing.T) {
 	}
 }
 
-// TestMaxFreeFlowSpeedMS pins the heuristic's max-speed scaling against the toy
-// network's fastest edge: the motorway edges run at 100 km/h = 27.78 m/s (the
-// §2-derived freeflow_time_s recovers exactly that via LengthM/FreeFlowS), and no
-// edge is faster, so the network max free-flow speed must equal it.
+// TestMaxFreeFlowSpeedMS pins the heuristic divisor to the maximum per-edge
+// STRAIGHT-LINE (endpoint-chord) speed over the graph — chord/FreeFlowS — NOT the
+// LengthM/FreeFlowS edge speed. On the toy fixture every edge's length_m is shorter
+// than its endpoint chord, so chord/FreeFlowS exceeds LengthM/FreeFlowS; the divisor
+// must be the largest chord/FreeFlowS so that chord_i/divisor ≤ FreeFlowS_i holds
+// for every edge (the admissibility guarantee — see maxFreeFlowSpeedMS). The fastest
+// such edge on the toy network is 905512:1:F (chord ~1009 m / 14.4 s ≈ 70.1 m/s).
 func TestMaxFreeFlowSpeedMS(test *testing.T) {
 	roadGraph := loadToyGraphInternal(test)
 	got := maxFreeFlowSpeedMS(roadGraph)
-	const want = 100.0 * 1000.0 / 3600.0 // 100 km/h -> m/s
+
+	// Independently recompute max chord/FreeFlowS so the expectation tracks the
+	// fixture's geometry rather than a hand-copied magic number.
+	want := 0.0
+	for edgeID := domain.EdgeID(0); int(edgeID) < roadGraph.EdgeCount(); edgeID++ {
+		edge, ok := roadGraph.Edge(edgeID)
+		if !ok || edge.FreeFlowS <= 0 {
+			continue
+		}
+		fromNode, fromOK := roadGraph.Node(edge.From)
+		toNode, toOK := roadGraph.Node(edge.To)
+		if !fromOK || !toOK {
+			continue
+		}
+		if speed := graph.GreatCircleM(fromNode.Pos, toNode.Pos) / edge.FreeFlowS; speed > want {
+			want = speed
+		}
+	}
 	if math.Abs(got-want) > 1e-6 {
-		test.Errorf("maxFreeFlowSpeedMS = %.6f m/s, want %.6f m/s (toy network's fastest edge is 100 km/h)", got, want)
+		test.Errorf("maxFreeFlowSpeedMS = %.6f m/s, want %.6f m/s (max chord/FreeFlowS over the toy network)", got, want)
+	}
+}
+
+// TestAStarHeuristicAdmissibleOnToyNetwork is the item-3 guarantee that the new
+// chord-based divisor restores admissibility on the REAL toy fixture — the fixture
+// whose hand-written length_m values are SHORTER than the endpoint chord, exactly
+// the geometry quirk that made the old LengthM/FreeFlowS divisor inadmissible there
+// (and the codebase had to route the old admissibility test over a synthetic
+// geo-consistent grid to dodge it). With the divisor derived from endpoint geometry,
+// h ≤ true remaining free-flow time must hold for every reachable node→dst pair on
+// the toy network itself.
+func TestAStarHeuristicAdmissibleOnToyNetwork(test *testing.T) {
+	roadGraph := loadToyGraphInternal(test)
+	router := NewAStarRouter(roadGraph)
+	n := roadGraph.NodeCount()
+
+	for dst := domain.NodeID(0); int(dst) < n; dst++ {
+		h := router.heuristic(dst)
+		for node := domain.NodeID(0); int(node) < n; node++ {
+			_, trueRemaining, reachable := shortestPath(roadGraph, node, dst, freeFlowWeight, nil, nil)
+			if !reachable {
+				continue
+			}
+			if estimate := h(node); estimate > trueRemaining+1e-9 {
+				test.Errorf("toy network: heuristic inadmissible: h(%d->%d)=%.6f s exceeds true remaining %.6f s",
+					node, dst, estimate, trueRemaining)
+			}
+		}
+	}
+}
+
+// buildAnomalousEdgeGraph reproduces the exact wrong-path case the reviewer found.
+// Four nodes; dst is node 3. The OPTIMAL route is the two cheap hops 0->1->3 (cost
+// 0.2 s). Node 1's two edges are ANOMALOUS: each declares a tiny length_m (1 m) while
+// node 1 sits geographically very far away (a ~85 km chord to dst), so on a real
+// export-conformant graph length_m ≥ chord would hold but here it is grossly
+// violated. Two slower honest paths also reach dst — the 0->2->3 detour (cost 10 s)
+// and the direct 0->3 edge (cost 8 s) — whose endpoints are close, so their LengthM
+// is near their chord and they pin a SMALL LengthM/FreeFlowS divisor.
+//
+// Under the OLD divisor max(LengthM/FreeFlowS) that small divisor makes
+// h(1) = chord(1,3)/divisor a huge OVERESTIMATE of node 1's true 0.1 s remaining
+// time — inadmissible — so A* pushes node 1 to the back of the frontier and settles
+// dst on the cheaper-looking but actually-costlier direct 0->3 edge first: it returns
+// cost 8.0 instead of the optimal 0.2 (the reviewer's "10.0 vs 0.02" shape). Under the
+// chord-based divisor h stays admissible and A* returns the optimal 0.2.
+func buildAnomalousEdgeGraph() *graph.AdjacencyGraph {
+	// Node 1 is placed far to the north-east; 0, 2, 3 cluster near the origin so the
+	// honest edges among them have length ≈ chord (a small LengthM/FreeFlowS divisor).
+	pos := []domain.LatLon{
+		{Lat: 40.73, Lon: -73.99},     // 0 origin
+		{Lat: 41.50, Lon: -72.00},     // 1 far away — the anomalous node
+		{Lat: 40.731, Lon: -73.989},   // 2 near origin
+		{Lat: 40.7305, Lon: -73.9895}, // 3 destination, near origin
+	}
+	nodes := make([]graph.Node, len(pos))
+	for index := range pos {
+		nodes[index] = graph.Node{ID: domain.NodeID(index), Pos: pos[index]}
+	}
+	edges := []graph.Edge{
+		// Optimal path 0->1->3: cheap (0.1 s each) but anomalous — declared LengthM
+		// 1 m while node 1's endpoint chord is ~tens of km. This is what the old
+		// divisor cannot account for.
+		{ID: 0, Segment: "anom", From: 0, To: 1, LengthM: 1.0, FreeFlowS: 0.1, CapacityVPH: 1800},
+		{ID: 1, Segment: "anom", From: 1, To: 3, LengthM: 1.0, FreeFlowS: 0.1, CapacityVPH: 1800},
+		// Honest detour 0->2->3: length ≈ chord, slow (5 s each), summed cost 10 s.
+		{ID: 2, Segment: "leg", From: 0, To: 2, LengthM: graph.GreatCircleM(pos[0], pos[2]), FreeFlowS: 5.0, CapacityVPH: 1800},
+		{ID: 3, Segment: "leg", From: 2, To: 3, LengthM: graph.GreatCircleM(pos[2], pos[3]), FreeFlowS: 5.0, CapacityVPH: 1800},
+		// Honest direct 0->3: length ≈ chord, cost 8 s — the WRONG path A* returns
+		// under the inadmissible old heuristic.
+		{ID: 4, Segment: "leg", From: 0, To: 3, LengthM: graph.GreatCircleM(pos[0], pos[3]), FreeFlowS: 8.0, CapacityVPH: 1800},
+	}
+	roadGraph, err := graph.New(nodes, edges)
+	if err != nil {
+		panic("buildAnomalousEdgeGraph: graph.New: " + err.Error())
+	}
+	return roadGraph
+}
+
+// TestAStarOptimalWithAnomalousEdge is the item-3 wrong-path regression: on the graph
+// the reviewer found returning a non-optimal path (cost 8.0/10.0 vs the optimal 0.2,
+// the "10.0 vs 0.02" shape) under the old LengthM/FreeFlowS max-speed divisor, A* must
+// now return the SAME optimal cost as Dijkstra for every OD pair. The chord-based
+// divisor keeps the heuristic admissible, so A* stays optimal even with the anomalous
+// (length_m ≪ chord) edges present.
+func TestAStarOptimalWithAnomalousEdge(test *testing.T) {
+	roadGraph := buildAnomalousEdgeGraph()
+	router := NewAStarRouter(roadGraph)
+	n := roadGraph.NodeCount()
+
+	for src := domain.NodeID(0); int(src) < n; src++ {
+		for dst := domain.NodeID(0); int(dst) < n; dst++ {
+			_, dCost, dOK := shortestPath(roadGraph, src, dst, freeFlowWeight, nil, nil)
+			_, aCost, aOK := shortestPath(roadGraph, src, dst, freeFlowWeight, router.heuristic(dst), nil)
+			if dOK != aOK {
+				test.Errorf("%d->%d: reachability mismatch: dijkstra ok=%v, astar ok=%v", src, dst, dOK, aOK)
+				continue
+			}
+			if !dOK {
+				continue
+			}
+			if math.Abs(dCost-aCost) > 1e-9 {
+				test.Errorf("%d->%d: A* returned non-optimal cost %.6f, Dijkstra optimal is %.6f (anomalous-edge wrong-path regression)",
+					src, dst, aCost, dCost)
+			}
+		}
+	}
+
+	// Sharpest check: the optimal 0->3 route is the two anomalous cheap hops (cost
+	// 0.2 s), NOT the honest direct edge (8 s) the old inadmissible heuristic chose.
+	// Pin it explicitly so a future regression names the exact wrong-path cost.
+	if _, cost, ok := shortestPath(roadGraph, 0, 3, freeFlowWeight, router.heuristic(3), nil); !ok || math.Abs(cost-0.2) > 1e-9 {
+		test.Errorf("A* 0->3 cost = %.6f (ok=%v), want the optimal 0.2 s (0->1->3); the old divisor returned 8.0 here", cost, ok)
+	}
+}
+
+// TestAStarParityOnToyNetwork is the item-6 toy-network parity criterion: A* returns
+// IDENTICAL cost to Dijkstra for EVERY ordered OD pair on the REAL toy_network.geojson
+// fixture. It passes despite the fixture's length_m < chord geometry quirk both
+// because the new chord-based divisor keeps the heuristic admissible and because the
+// graph is tiny — but the assertion is parity, exercised on the real fixture, not the
+// synthetic grid. (The geo-consistent-grid parity test above is kept too.)
+func TestAStarParityOnToyNetwork(test *testing.T) {
+	roadGraph := loadToyGraphInternal(test)
+	router := NewAStarRouter(roadGraph)
+	n := roadGraph.NodeCount()
+
+	for src := domain.NodeID(0); int(src) < n; src++ {
+		for dst := domain.NodeID(0); int(dst) < n; dst++ {
+			_, dCost, dOK := shortestPath(roadGraph, src, dst, freeFlowWeight, nil, nil)
+			_, aCost, aOK := shortestPath(roadGraph, src, dst, freeFlowWeight, router.heuristic(dst), nil)
+			if dOK != aOK {
+				test.Errorf("toy %d->%d: reachability mismatch: dijkstra ok=%v, astar ok=%v", src, dst, dOK, aOK)
+				continue
+			}
+			if !dOK {
+				continue
+			}
+			if math.Abs(dCost-aCost) > 1e-9 {
+				test.Errorf("toy %d->%d: cost mismatch: dijkstra=%.9f, astar=%.9f", src, dst, dCost, aCost)
+			}
+		}
 	}
 }
 
