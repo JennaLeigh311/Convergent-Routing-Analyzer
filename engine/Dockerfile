@@ -10,8 +10,11 @@
 FROM golang:1.26.4 AS build
 WORKDIR /src
 
-# go.mod first for layer caching. There is no go.sum (no external deps yet);
-# the build copies it opportunistically.
+# go.mod + go.sum first for layer caching. go.sum now exists (the engine has
+# external deps — prometheus/client_golang + its transitive closure landed), so
+# it is copied for a reproducible, fully-pinned `go mod download`. The COPY uses a
+# glob (go.su[m]) so the build still succeeds in the transient state where go.sum
+# is absent (e.g. a deps-free checkout); it is harmless and matches today.
 COPY go.mod ./
 COPY go.su[m] ./
 RUN go mod download

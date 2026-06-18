@@ -88,11 +88,14 @@ jobs:
         # transitive closure), so scan the reachable module + stdlib graph against
         # the Go vulnerability DB — a known-vulnerable, *actually-called* dependency
         # then fails the merge gate. govulncheck reports only vulns on reachable
-        # paths, so it won't flag an unused transitive package. Uses the binary's
-        # latest release (the vuln DB is fetched fresh regardless of binary
-        # version); #32 may pin it alongside golangci-lint.
+        # paths, so it won't flag an unused transitive package. The BINARY is now
+        # PINNED (no @latest) so the scanner version is reproducible across runs and
+        # cannot silently change behavior on a new release — this closes the #32
+        # follow-up to pin it alongside golangci-lint. The vuln DB itself is still
+        # fetched fresh at run time regardless of binary version, so a newly
+        # disclosed vuln is caught without bumping the pin.
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
           govulncheck ./...
 
       - name: go test (race detector — the engine is a concurrent server)
@@ -139,12 +142,21 @@ jobs:
             *) echo "route CLI: unexpected error message: $err"; exit 1 ;;
           esac
 
-      - name: bench (naive router over the toy graph; real run, not the six-algorithm harness)
-        # Real but minimal: loads the toy network, runs the naive free-flow router,
-        # and exits non-zero on any load/routing failure. We also assert the summary
-        # reports requests_routed=2, so the step gates that routing actually produced
-        # the expected batch — not merely that the process didn't crash. The full
-        # convergent-routing comparison lands in a later phase.
+      - name: bench (naive + the four Phase-3 routers over the toy graph; real run, not the six-algorithm harness)
+        # Real but minimal: loads the toy network, runs the naive free-flow router
+        # AND each of the four Phase-3 routers (incremental, msa, systemoptimal,
+        # multipath) over the same toy graph + request batch, and exits non-zero on
+        # any load/routing failure. Those four routers are on no CLI/bench path of
+        # their own, so this is the only place Lane A exercises them end-to-end.
+        #
+        # We assert: (1) the naive summary still reports requests_routed=2 (the
+        # original Phase-1 gate, byte-for-byte unchanged), and (2) EACH Phase-3
+        # router appears in the output on a line that also reports requests_routed=2
+        # — so a router silently dropping out of the run, or routing the wrong
+        # count, fails the merge gate (not merely a non-crashing process). The
+        # in-process determinism + summary-shape contract is pinned by
+        # cmd/benchmark/main_test.go under `go test -race` above; this step gates the
+        # real binary's output. The full convergent-routing comparison lands later.
         run: |
           out="$(go run ./cmd/benchmark 2>&1)"
           printf '%s\n' "$out"
@@ -152,6 +164,17 @@ jobs:
             *requests_routed=2*) echo "bench: routed the expected batch OK" ;;
             *) echo "bench: did not route the expected batch (want requests_routed=2)"; exit 1 ;;
           esac
+          # Each Phase-3 router must appear on a line that ALSO routed the batch
+          # (router=<name> ... requests_routed=2 on the same line). grep -E one line
+          # per router so a missing router OR a wrong count fails (exit 1).
+          for router in incremental msa systemoptimal multipath; do
+            if printf '%s\n' "$out" | grep -Eq "router=${router}([^a-z]|$).*requests_routed=2"; then
+              echo "bench: ${router} router routed the expected batch OK"
+            else
+              echo "bench: ${router} router missing or did not route the expected batch (want router=${router} ... requests_routed=2)"
+              exit 1
+            fi
+          done
 
   lane-b:
     name: Lane B
