@@ -10,9 +10,14 @@
 //
 // Phase-3 extension notes: demand-aware strategies supply their congested weight
 // by closing weightFunc over an immutable per-round congestion LoadSnapshot (the
-// snapshot's immutability keeps the closure pure); multipath's Yen k-shortest core
-// will need an edge-exclusion set, added via a Graph wrapper rather than a change
-// to the dijkstra signature.
+// snapshot's immutability keeps the closure pure). The multipath strategy and its
+// Yen k-shortest core (kshortest.go, multipath.go) are implemented: Yen excludes
+// edges and nodes via +Inf-weight MASKING (maskedWeight wraps the base weightFunc to
+// return +Inf for a removed edge or a removed node's out-edges) so it reuses the
+// existing Dijkstra without changing its signature; multipath then splits the
+// requests across the K paths with a per-request-seeded probabilistic rule and
+// surfaces the split provenance on a MultipathResult adjunct (never by mutating the
+// shared AssignResult).
 //
 // Iterative-router substrate (issue #71). The shared pieces every Phase-3
 // iterative router (incremental, msa, systemoptimal, multipath) sits on are
