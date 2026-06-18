@@ -7,7 +7,39 @@ import (
 	"testing"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 )
+
+// TestMarginalWeightFromFlowsUsesMarginalCost is the robust, fixture-independent guard that
+// systemoptimal routes on the MARGINAL cost, not BPR.Cost. At a positive load the two bases
+// diverge (MarginalCost adds the (beta+1) externality term), so the SO weight factory must
+// return MarginalCost and must NOT equal Cost. This pins the single swap that distinguishes
+// SO from msa directly at the factory — so a regression that reverted marginalWeightFromFlows
+// to weightFromFlows is caught regardless of whether the toy fixture's SO and UE flows happen
+// to coincide (its price of anarchy is ≈ 1, which makes end-to-end totals unable to tell them
+// apart). cf. weightFromFlows, which returns BPR.Cost.
+func TestMarginalWeightFromFlowsUsesMarginalCost(test *testing.T) {
+	bpr := cost.DefaultBPR()
+	edge := graph.Edge{ID: 0, From: 0, To: 1, FreeFlowS: 10, CapacityVPH: 100}
+	const load = 200.0 // v/c = 2: a positive load where MarginalCost strictly exceeds Cost
+	flows := []float64{load}
+
+	got := marginalWeightFromFlows(bpr, flows)(edge)
+	wantMarginal := bpr.MarginalCost(edge, load)
+	bprCost := bpr.Cost(edge, load)
+
+	if math.Abs(got-wantMarginal) > 1e-9 {
+		test.Errorf("marginalWeightFromFlows weight = %v, want MarginalCost %v", got, wantMarginal)
+	}
+	if math.Abs(got-bprCost) < 1e-9 {
+		test.Errorf("marginalWeightFromFlows returned the BPR.Cost value %v — the SO routing basis must be the steeper MarginalCost (%v), not Cost", got, wantMarginal)
+	}
+	// And weightFromFlows (the UE family) must still return Cost, so the two factories are
+	// genuinely on different bases.
+	if ue := weightFromFlows(bpr, flows)(edge); math.Abs(ue-bprCost) > 1e-9 {
+		test.Errorf("weightFromFlows weight = %v, want BPR.Cost %v", ue, bprCost)
+	}
+}
 
 // TestCombineFlowsSumsShardsElementwise pins the sharded-flow REDUCE helper #71
 // deferred: combineFlows sums per-worker dense shards element-wise into one vector of

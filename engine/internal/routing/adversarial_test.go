@@ -64,10 +64,8 @@ func loadAdversarial(test *testing.T) *graph.AdjacencyGraph {
 // incremental, MSA, and system-optimal iterative routers, and the multipath
 // demand-spreading router. The unreachable-OD and one-way invariants are thus
 // enforced for every strategy by construction. The system-optimal router routes on
-// the default BPR's MARGINAL cost over the load it accumulates; load values and the
-// cost basis do not change reachability or edge direction, so it must reach the same
-// no-route / forward-only verdicts as naive on these structural pathologies. The
-// reactive router
+// the default BPR's MARGINAL cost over the load it accumulates; neither the load nor
+// the cost basis changes reachability or edge direction. The reactive router
 // weights edges with the default BPR over a zero-load in-memory snapshot sized to
 // the graph's EdgeCount; load values do not change reachability or edge direction,
 // so it must reach the same no-route / forward-only verdicts as naive on these
