@@ -3,6 +3,7 @@ package routing
 import (
 	"container/heap"
 	"math"
+	"slices"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
@@ -58,9 +59,17 @@ func kShortestPaths(roadGraph graph.Graph, src, dst domain.NodeID, k int, weight
 		return []kPath{{edges: []domain.EdgeID{}, cost: 0}}
 	}
 
+	// One reusable scratch buffer for every Dijkstra this call makes — the initial
+	// shortest path plus every spur search. Yen runs them sequentially in this one
+	// goroutine, so a single buffer is safe and saves the two O(NodeCount) slice
+	// allocations a bare dijkstra makes per spur (Yen issues many spur searches per
+	// OD at city scale). Each kShortestPaths call owns its own buffer, so concurrent
+	// callers never share one.
+	scratch := newDijkstraScratch(count)
+
 	// A holds the accepted k-shortest paths in increasing cost order. The first is
 	// the plain shortest path; each subsequent one is the cheapest spur deviation.
-	first, firstCost, found := dijkstra(roadGraph, src, dst, weight)
+	first, firstCost, found := dijkstraScratch(roadGraph, src, dst, weight, scratch)
 	if !found {
 		return nil // dst unreachable: no paths at all
 	}
@@ -71,16 +80,34 @@ func kShortestPaths(roadGraph graph.Graph, src, dst domain.NodeID, k int, weight
 	// insertion order so the K-set is reproducible run to run.
 	candidates := &candidateHeap{}
 	heap.Init(candidates)
-	seenCandidate := make(map[string]bool) // dedupe identical spur paths across iterations
+	// seenCandidate dedupes spur paths so each is enqueued at most once. Every
+	// accepted path beyond the first is popped from the heap, so it was enqueued
+	// here first; seeding the set with the initial shortest path's key means a spur
+	// that regenerates ANY already-found path is skipped by this one check — no
+	// separate scan of the accepted set is needed.
+	seenCandidate := make(map[string]bool)
+	seenCandidate[edgesKey(first)] = true
 	seq := 0
 
 	for len(accepted) < k {
 		prev := accepted[len(accepted)-1].edges
 
+		// rootCost is the base-weight cost of rootEdges (prev[:spurIndex]),
+		// accumulated incrementally as spurIndex advances rather than re-summed from
+		// scratch each spur (which was O(L^2) over a long path).
+		rootCost := 0.0
+
 		// Each spur node is the From-node of one edge on the previous accepted path
 		// (plus its destination is implicit at the path tail). The root path is the
 		// prefix of prev up to (but excluding) the spur edge.
 		for spurIndex := 0; spurIndex < len(prev); spurIndex++ {
+			if spurIndex > 0 {
+				// rootEdges just grew by prev[spurIndex-1]; fold its base weight in so
+				// rootCost stays the exact cost of the current root prefix.
+				if edge, ok := roadGraph.Edge(prev[spurIndex-1]); ok {
+					rootCost += weight(edge)
+				}
+			}
 			spurNode := edgeFrom(roadGraph, prev[spurIndex])
 			rootEdges := prev[:spurIndex]
 
@@ -100,22 +127,22 @@ func kShortestPaths(roadGraph graph.Graph, src, dst domain.NodeID, k int, weight
 				maskedNodes[edgeFrom(roadGraph, rootEdge)] = true
 			}
 
-			spurEdges, spurCost, ok := dijkstra(
+			spurEdges, spurCost, ok := dijkstraScratch(
 				roadGraph, spurNode, dst,
-				maskedWeight(roadGraph, weight, maskedEdges, maskedNodes),
+				maskedWeight(weight, maskedEdges, maskedNodes),
+				scratch,
 			)
 			if !ok {
 				continue // no spur deviation here under the mask
 			}
 
-			// total = rootPath (verbatim) + spur. Recompute the root cost under the
-			// base weight so the candidate cost is exact (the spur search only costed
-			// the spur half).
+			// total = rootPath (verbatim) + spur. rootCost is the exact base-weight
+			// cost of the root half (the spur search only costed the spur half).
 			totalEdges := concatEdges(rootEdges, spurEdges)
-			totalCost := pathCost(roadGraph, rootEdges, weight) + spurCost
+			totalCost := rootCost + spurCost
 
 			key := edgesKey(totalEdges)
-			if seenCandidate[key] || isAccepted(accepted, totalEdges) {
+			if seenCandidate[key] {
 				continue
 			}
 			seenCandidate[key] = true
@@ -140,9 +167,9 @@ func kShortestPaths(roadGraph graph.Graph, src, dst domain.NodeID, k int, weight
 // improves a distance through a +Inf edge). The base weight is returned unchanged
 // for every non-masked edge, so the search is otherwise identical to the
 // unmasked one. maskedNodes masks an edge whose From-node is removed (the root
-// path's interior nodes Yen excludes to keep the spur loopless).
+// path's interior nodes Yen excludes to keep the spur loopless). The masking is a
+// pure closure over the two sets and the base weight — it needs no graph handle.
 func maskedWeight(
-	roadGraph graph.Graph,
 	base weightFunc,
 	maskedEdges map[domain.EdgeID]bool,
 	maskedNodes map[domain.NodeID]bool,
@@ -170,15 +197,7 @@ func edgeFrom(roadGraph graph.Graph, edgeID domain.EdgeID) domain.NodeID {
 // prefix of path). Yen masks an accepted path's spur-index edge only when that
 // path shares the current root prefix, so the new spur is forced to deviate.
 func sameRoot(path, root []domain.EdgeID) bool {
-	if len(path) < len(root) {
-		return false
-	}
-	for index := range root {
-		if path[index] != root[index] {
-			return false
-		}
-	}
-	return true
+	return len(path) >= len(root) && slices.Equal(path[:len(root)], root)
 }
 
 // concatEdges returns a fresh slice root++spur. A fresh allocation is required —
@@ -189,44 +208,6 @@ func concatEdges(root, spur []domain.EdgeID) []domain.EdgeID {
 	out = append(out, root...)
 	out = append(out, spur...)
 	return out
-}
-
-// pathCost sums the base weight over a slice of edges. Used to cost the root half
-// of a Yen candidate (the spur search costs only the spur half).
-func pathCost(roadGraph graph.Graph, edges []domain.EdgeID, weight weightFunc) float64 {
-	total := 0.0
-	for _, edgeID := range edges {
-		edge, ok := roadGraph.Edge(edgeID)
-		if !ok {
-			continue
-		}
-		total += weight(edge)
-	}
-	return total
-}
-
-// isAccepted reports whether edges equals one of the already-accepted paths — a
-// guard so a candidate identical to an accepted path is never re-accepted.
-func isAccepted(accepted []kPath, edges []domain.EdgeID) bool {
-	for _, accPath := range accepted {
-		if edgesEqual(accPath.edges, edges) {
-			return true
-		}
-	}
-	return false
-}
-
-// edgesEqual reports element-wise edge-id equality of two paths.
-func edgesEqual(left, right []domain.EdgeID) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
 }
 
 // edgesKey renders a path's edge ids as a stable string key for the candidate

@@ -179,6 +179,11 @@ func (router *MultipathRouter) Route(ctx context.Context, req RouteRequest) (Rou
 		return Route{}, fmt.Errorf("multipath: request %q: no path from node %d to node %d", req.ID, src, dst)
 	}
 	intended := proportionalSplit(paths)
+	// Single-request convenience: there is no batch index here, so the draw seeds at
+	// index 0 (seed ^ 0 == seed). Every Route call on a router thus draws from the
+	// same stream — fine for a one-off query, but a caller looping Route to build a
+	// batch would get a non-spreading result and should use Assign/AssignMultipath
+	// instead, where each request seeds from its own input index.
 	choice := drawPath(intended, requestRNG(router.seed, 0))
 	return Route{RequestID: req.ID, Edges: paths[choice].edges, CostS: paths[choice].cost}, nil
 }
@@ -362,7 +367,7 @@ func proportionalSplit(paths []kPath) []float64 {
 // return the first index whose cumulative mass exceeds u. With a per-request-seeded
 // rng (requestRNG) the draw depends only on the seed and the request, so the split
 // is reproducible. An empty split returns 0 defensively.
-func drawPath(intended []float64, rng interface{ Float64() float64 }) int {
+func drawPath(intended []float64, rng *rand.Rand) int {
 	if len(intended) == 0 {
 		return 0
 	}

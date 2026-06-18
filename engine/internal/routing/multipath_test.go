@@ -2,6 +2,7 @@ package routing_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -207,6 +208,52 @@ func TestMultipathRequestIDPreserved(test *testing.T) {
 		if route.RequestID != reqs[index].ID {
 			test.Errorf("routes[%d].RequestID = %q, want %q", index, route.RequestID, reqs[index].ID)
 		}
+	}
+}
+
+// TestMultipathChosenVectorGolden pins the EXACT chosen-path vector for a fixed
+// (seed, batch) against a hard-coded golden. Running AssignMultipath twice in one
+// process only proves intra-process repeatability; a change to the seed SOURCE
+// (e.g. seeding requestRNG from the wall clock) would still self-agree across two
+// same-process calls yet diverge from this baked vector — so the golden is the
+// trap that actually catches such a regression.
+func TestMultipathChosenVectorGolden(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	router := routing.NewMultipathRouter(roadGraph, cost.DefaultBPR(), 12345, 3)
+	reqs := multipathReqs(test, roadGraph, 10)
+
+	res, err := router.AssignMultipath(context.Background(), reqs)
+	if err != nil {
+		test.Fatalf("AssignMultipath error = %v", err)
+	}
+
+	// Golden vector for seed=12345, k=3, 10 requests over OD 0->2 (two K-paths) on
+	// the toy fixture. Regenerate ONLY if the split rule or seed source changes
+	// intentionally — an unexplained change here is a determinism regression.
+	want := []int{1, 0, 1, 0, 0, 0, 0, 0, 0, 1}
+	if !reflect.DeepEqual(res.Provenance.ChosenPathIndex, want) {
+		test.Errorf("ChosenPathIndex = %v, want golden %v (a diff here means the seed source or split rule changed)",
+			res.Provenance.ChosenPathIndex, want)
+	}
+}
+
+// TestMultipathHonorsContextCancellation asserts a cancelled context aborts the
+// batch with the context error rather than routing — exercising the per-request
+// ctx.Err() check in AssignMultipath (and the AssignResult face over it). Mirrors
+// the reactive router's cancellation test.
+func TestMultipathHonorsContextCancellation(test *testing.T) {
+	roadGraph := loadToyGraph(test)
+	router := routing.NewMultipathRouter(roadGraph, cost.DefaultBPR(), 42, 3)
+	reqs := multipathReqs(test, roadGraph, 8)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel: the first per-request check must trip
+
+	if _, err := router.AssignMultipath(ctx, reqs); !errors.Is(err, context.Canceled) {
+		test.Errorf("AssignMultipath with a cancelled context: err = %v, want context.Canceled", err)
+	}
+	if _, err := router.AssignResult(ctx, reqs); !errors.Is(err, context.Canceled) {
+		test.Errorf("AssignResult with a cancelled context: err = %v, want context.Canceled", err)
 	}
 }
 

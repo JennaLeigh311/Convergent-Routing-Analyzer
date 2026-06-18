@@ -2,6 +2,7 @@ package routing
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
@@ -46,14 +47,14 @@ func TestKShortestReturnsDistinctLooplessInOrder(test *testing.T) {
 	}
 
 	// The cheapest path is the 2-hop motorway (edges 1,2; 18.0+14.4=32.4).
-	if !edgesEqual(paths[0].edges, []domain.EdgeID{1, 2}) {
+	if !slices.Equal(paths[0].edges, []domain.EdgeID{1, 2}) {
 		test.Errorf("paths[0].edges = %v, want [1 2] (the fast motorway path)", paths[0].edges)
 	}
 	if math.Abs(paths[0].cost-32.4) > 1e-9 {
 		test.Errorf("paths[0].cost = %.4f, want 32.4", paths[0].cost)
 	}
 	// The second path is the direct residential edge (edge 0; 108.0).
-	if !edgesEqual(paths[1].edges, []domain.EdgeID{0}) {
+	if !slices.Equal(paths[1].edges, []domain.EdgeID{0}) {
 		test.Errorf("paths[1].edges = %v, want [0] (the direct residential path)", paths[1].edges)
 	}
 	if math.Abs(paths[1].cost-108.0) > 1e-9 {
@@ -75,10 +76,97 @@ func TestKShortestDistinct(test *testing.T) {
 	paths := kShortestPaths(roadGraph, 0, 2, 5, freeFlowWeight)
 	for index := range paths {
 		for innerIndex := index + 1; innerIndex < len(paths); innerIndex++ {
-			if edgesEqual(paths[index].edges, paths[innerIndex].edges) {
+			if slices.Equal(paths[index].edges, paths[innerIndex].edges) {
 				test.Errorf("paths[%d] and paths[%d] are identical: %v", index, innerIndex, paths[index].edges)
 			}
 		}
+	}
+}
+
+// buildTriplePathGraph builds a small directed graph whose 0->3 OD has THREE
+// distinct loopless paths, so Yen's machinery BEYOND the first accepted path is
+// actually exercised — the shared toy fixture caps any OD at two loopless paths,
+// leaving the spur loop that produces the 3rd accepted path, the root-prefix
+// masking across paths that share a prefix, and the candidate carry-over across
+// iterations all silent. The three 0->3 paths, by cost:
+//
+//	A: 0->1->3     (e0,e1)      cost 2    — the shortest
+//	B: 0->1->2->3  (e0,e2,e3)   cost 3    — shares root prefix [e0] with A
+//	C: 0->2->3     (e4,e3)      cost 11   — a disjoint deviation at node 0
+//
+// Reaching C requires Yen to (a) generate it as a spur of A in one iteration,
+// (b) dedupe it when B's iteration rediscovers it, and (c) carry it over to be
+// accepted third — none of which a two-path graph can drive.
+func buildTriplePathGraph(test *testing.T) *graph.AdjacencyGraph {
+	test.Helper()
+	pos := []domain.LatLon{
+		{Lat: 40.000, Lon: -74.000}, // 0 origin
+		{Lat: 40.010, Lon: -74.000}, // 1
+		{Lat: 40.010, Lon: -73.990}, // 2
+		{Lat: 40.020, Lon: -73.990}, // 3 destination
+	}
+	nodes := make([]graph.Node, len(pos))
+	for index := range pos {
+		nodes[index] = graph.Node{ID: domain.NodeID(index), Pos: pos[index]}
+	}
+	edges := []graph.Edge{
+		{ID: 0, Segment: "e0", From: 0, To: 1, LengthM: 100, FreeFlowS: 1, CapacityVPH: 1800},
+		{ID: 1, Segment: "e1", From: 1, To: 3, LengthM: 100, FreeFlowS: 1, CapacityVPH: 1800},
+		{ID: 2, Segment: "e2", From: 1, To: 2, LengthM: 100, FreeFlowS: 1, CapacityVPH: 1800},
+		{ID: 3, Segment: "e3", From: 2, To: 3, LengthM: 100, FreeFlowS: 1, CapacityVPH: 1800},
+		{ID: 4, Segment: "e4", From: 0, To: 2, LengthM: 100, FreeFlowS: 10, CapacityVPH: 1800},
+	}
+	roadGraph, err := graph.New(nodes, edges)
+	if err != nil {
+		test.Fatalf("buildTriplePathGraph: graph.New: %v", err)
+	}
+	return roadGraph
+}
+
+// TestKShortestThreeDistinctPaths drives Yen past the first accepted path on a
+// graph that actually has three loopless 0->3 paths. It pins all three edge
+// sequences and costs in non-decreasing order — the multi-spur machinery (root
+// masking across A and B, dedupe + carry-over of C) is the part a two-path fixture
+// never reaches.
+func TestKShortestThreeDistinctPaths(test *testing.T) {
+	roadGraph := buildTriplePathGraph(test)
+
+	paths := kShortestPaths(roadGraph, 0, 3, 5, freeFlowWeight)
+	if len(paths) != 3 {
+		test.Fatalf("kShortestPaths(0->3, k=5) returned %d paths, want 3", len(paths))
+	}
+
+	want := []struct {
+		edges []domain.EdgeID
+		cost  float64
+	}{
+		{[]domain.EdgeID{0, 1}, 2},    // A: 0->1->3
+		{[]domain.EdgeID{0, 2, 3}, 3}, // B: 0->1->2->3
+		{[]domain.EdgeID{4, 3}, 11},   // C: 0->2->3
+	}
+	for index, expected := range want {
+		if !slices.Equal(paths[index].edges, expected.edges) {
+			test.Errorf("paths[%d].edges = %v, want %v", index, paths[index].edges, expected.edges)
+		}
+		if math.Abs(paths[index].cost-expected.cost) > 1e-9 {
+			test.Errorf("paths[%d].cost = %.4f, want %.4f", index, paths[index].cost, expected.cost)
+		}
+		if !looplessPath(roadGraph, 0, paths[index].edges) {
+			test.Errorf("paths[%d] = %v is not loopless", index, paths[index].edges)
+		}
+	}
+	for index := 1; index < len(paths); index++ {
+		if paths[index].cost < paths[index-1].cost {
+			test.Errorf("paths not in non-decreasing cost order at %d", index)
+		}
+	}
+
+	// k=2 caps to the two cheapest (A, B), never the expensive disjoint C.
+	two := kShortestPaths(roadGraph, 0, 3, 2, freeFlowWeight)
+	if len(two) != 2 ||
+		!slices.Equal(two[0].edges, []domain.EdgeID{0, 1}) ||
+		!slices.Equal(two[1].edges, []domain.EdgeID{0, 2, 3}) {
+		test.Errorf("k=2 = %v, want the two cheapest paths [[0 1] [0 2 3]]", two)
 	}
 }
 

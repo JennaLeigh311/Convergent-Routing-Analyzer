@@ -59,19 +59,22 @@ func loadAdversarial(test *testing.T) *graph.AdjacencyGraph {
 
 // concreteRouters returns every concrete Router strategy under test over the
 // given graph. The acceptance criterion is "no route returned by ANY router",
-// so the set spans the strategies that exist today — the naive baseline and the
-// reactive best-response router — and the remaining Phase-3 strategies
-// (incremental, msa, systemoptimal, multipath) append here as they land, so the
-// unreachable-OD and one-way invariants are enforced for all of them by
-// construction. The reactive router weights edges with the default BPR over a
-// zero-load in-memory snapshot sized to the graph's EdgeCount; load values do
-// not change reachability or edge direction, so it must reach the same no-route
-// / forward-only verdicts as naive on these structural pathologies.
+// so the set spans the strategies that exist today — the naive baseline, the
+// reactive best-response router, and the multipath demand-spreading router — and
+// the remaining Phase-3 strategies (incremental, msa, systemoptimal) append here
+// as they land, so the unreachable-OD and one-way invariants are enforced for all
+// of them by construction. The reactive router weights edges with the default BPR
+// over a zero-load in-memory snapshot sized to the graph's EdgeCount; load values
+// do not change reachability or edge direction, so it must reach the same no-route
+// / forward-only verdicts as naive on these structural pathologies. multipath runs
+// Yen over the same zero-load weights, so an unreachable OD yields no K-paths (a
+// clean error) and every returned path is a forward Yen walk.
 func concreteRouters(roadGraph graph.Graph) []routing.Router {
 	reactiveProvider := memory.New(roadGraph.EdgeCount())
 	return []routing.Router{
 		routing.NewNaiveRouter(roadGraph),
 		routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), reactiveProvider),
+		routing.NewMultipathRouter(roadGraph, cost.DefaultBPR(), 1, 3),
 	}
 }
 
