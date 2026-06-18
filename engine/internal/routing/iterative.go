@@ -57,13 +57,43 @@ const (
 // BPR.Cost is always >= edge.FreeFlowS >= 0, so the weights stay non-negative as
 // Dijkstra requires.
 //
-// systemoptimal (#76) will supply a sibling factory of this same shape with
-// bpr.MarginalCost in place of bpr.Cost — the only thing that distinguishes its routing
-// weights from this UE-family core. (The gap metric stays on bpr.Cost for both, so the
-// swap is confined to the routing weightFunc.)
+// systemoptimal (#76) supplies a sibling factory of this same shape with
+// bpr.MarginalCost in place of bpr.Cost (marginalWeightFromFlows) — the only thing
+// that distinguishes its routing weights from this UE-family core.
+//
+// IMPORTANT: the convergence gap basis MUST match the ROUTING basis, not stay fixed on
+// bpr.Cost. assignAONConcurrent computes its SPTT (outcome.totalSP) under whatever
+// weightFunc it is handed, so SPTT is marginal-weighted for systemoptimal and
+// bpr.Cost-weighted for the UE family. For the relative gap (TSTT-SPTT)/SPTT to be
+// coherent, its TSTT must be in the SAME cost basis as that SPTT: the UE family pairs
+// this weightFunc with a bpr.Cost-weighted TSTT (totalSystemCost), and systemoptimal
+// pairs marginalWeightFromFlows with a marginal-weighted TSTT (totalMarginalCost).
+// System Optimal is exactly User Equilibrium on the marginal-cost network, so its
+// convergence criterion is the relative gap on that marginal network — using the
+// bpr.Cost gap would stop the loop on the wrong condition. (Separately, the REPORTED /
+// compared total network time both SO and UE are judged on stays on bpr.Cost; see
+// TotalNetworkTime — do not conflate the gap basis with the objective.)
 func weightFromFlows(bpr cost.BPR, flows []float64) weightFunc {
 	return func(edge graph.Edge) float64 {
 		return bpr.Cost(edge, loadAt(flows, edge.ID))
+	}
+}
+
+// marginalWeightFromFlows is the systemoptimal sibling of weightFromFlows: it weights
+// each edge by its BPR MARGINAL cost under the iteration's immutable flow vector, the
+// cost a marginal vehicle imposes on every vehicle already on the edge (not just on
+// itself). Routing on the marginal cost is what makes the iterative core converge to
+// System Optimal — the assignment that minimizes TOTAL network time — instead of User
+// Equilibrium: each driver, charged the externality it imposes, picks the path that is
+// best for the system rather than only for itself.
+//
+// It mirrors weightFromFlows exactly otherwise: it closes over one fixed flows slice so
+// every request in an iteration sees the identical load, a missing/out-of-range edge
+// reads as zero load (free-flow), and MarginalCost is always >= edge.FreeFlowS >= 0 so
+// the weights stay non-negative as Dijkstra requires.
+func marginalWeightFromFlows(bpr cost.BPR, flows []float64) weightFunc {
+	return func(edge graph.Edge) float64 {
+		return bpr.MarginalCost(edge, loadAt(flows, edge.ID))
 	}
 }
 
@@ -245,12 +275,13 @@ func workersFor(n int) int {
 	return workers
 }
 
-// totalSystemCost returns Σ_e flows[e] × BPR.Cost(e, flows[e]) — the total travel
-// time the network experiences under the given flow (TSTT), summed in deterministic
-// edge order. It is the numerator side of the relative gap: the cost actually being
-// paid on the current flows, against which the all-or-nothing shortest-path total
-// (SPTT) is compared. A missing/out-of-range edge contributes nothing.
-func totalSystemCost(roadGraph graph.Graph, bpr cost.BPR, flows []float64) float64 {
+// edgeCostSum returns Σ_e flows[e] × perEdge(e, flows[e]), summed in deterministic edge
+// order — the single weighted-flow accumulator the network-time totals share, so the
+// "missing/out-of-range edge contributes nothing" and the fixed iteration order live in
+// one place. perEdge is the per-edge cost basis: BPR.Cost for the realized total time
+// (TSTT) and BPR.MarginalCost for the marginal-network total. A missing/out-of-range
+// edge contributes nothing.
+func edgeCostSum(roadGraph graph.Graph, flows []float64, perEdge func(graph.Edge, float64) float64) float64 {
 	var total float64
 	for edgeID := domain.EdgeID(0); int(edgeID) < roadGraph.EdgeCount(); edgeID++ { // 0..EdgeCount-1, deterministic order
 		edge, ok := roadGraph.Edge(edgeID)
@@ -258,9 +289,44 @@ func totalSystemCost(roadGraph graph.Graph, bpr cost.BPR, flows []float64) float
 			continue
 		}
 		load := loadAt(flows, edgeID)
-		total += load * bpr.Cost(edge, load)
+		total += load * perEdge(edge, load)
 	}
 	return total
+}
+
+// TotalNetworkTime returns Σ_e flows[e] × BPR.Cost(e, flows[e]) — the realized total
+// system travel time (TSTT) the network experiences under the given flow, on BPR.Cost,
+// summed in deterministic edge order. A missing/out-of-range edge contributes nothing.
+//
+// This is the evaluator (project-spec.md §R5) the SO ≤ UE invariant is proven on and
+// the basis of the Phase-4 benchmark's realized-time / price-of-anarchy work: it is the
+// real total time BOTH systemoptimal and the UE family are compared on, ALWAYS on
+// BPR.Cost regardless of the basis a router internally routed/converged on. It is
+// exported (one implementation, delegated to by the unexported totalSystemCost) so the
+// benchmark and the invariant tests can reuse it without re-deriving the sum.
+func TotalNetworkTime(roadGraph graph.Graph, bpr cost.BPR, flows []float64) float64 {
+	return edgeCostSum(roadGraph, flows, bpr.Cost)
+}
+
+// totalSystemCost is the package-internal name the iterative core uses for the realized
+// total system travel time (TSTT) on BPR.Cost. It delegates to the exported
+// TotalNetworkTime so there is exactly one implementation of the weighted-flow sum. It
+// is the numerator side of the UE-family relative gap: the cost actually being paid on
+// the current flows, against which the all-or-nothing shortest-path total (SPTT) — also
+// measured under bpr.Cost weights — is compared.
+func totalSystemCost(roadGraph graph.Graph, bpr cost.BPR, flows []float64) float64 {
+	return TotalNetworkTime(roadGraph, bpr, flows)
+}
+
+// totalMarginalCost returns Σ_e flows[e] × BPR.MarginalCost(e, flows[e]) — the total
+// over the MARGINAL-cost network, summed in deterministic edge order. It is the TSTT
+// side of systemoptimal's relative gap: System Optimal is User Equilibrium on the
+// marginal network, so SO's gap must compare this marginal-weighted total against a
+// marginal-weighted SPTT (the all-or-nothing total assignAONConcurrent computes under
+// marginalWeightFromFlows). This is NOT the realized network time — that is always
+// TotalNetworkTime on BPR.Cost; this total exists only to drive SO's convergence.
+func totalMarginalCost(roadGraph graph.Graph, bpr cost.BPR, flows []float64) float64 {
+	return edgeCostSum(roadGraph, flows, bpr.MarginalCost)
 }
 
 // iterationStep is one strategy-specific iteration of the shared convergence loop.

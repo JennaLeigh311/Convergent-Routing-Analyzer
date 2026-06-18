@@ -59,11 +59,15 @@ func loadAdversarial(test *testing.T) *graph.AdjacencyGraph {
 
 // concreteRouters returns every concrete Router strategy under test over the
 // given graph. The acceptance criterion is "no route returned by ANY router",
-// so the set spans the strategies that exist today — the naive baseline, the
-// reactive best-response router, the incremental and MSA iterative routers, and
-// the multipath demand-spreading router — and the remaining Phase-3 strategy
-// (systemoptimal) appends here as it lands, so the unreachable-OD and one-way
-// invariants are enforced for all of them by construction. The reactive router
+// so the set spans ALL SIX strategies now that systemoptimal — the last Phase-3
+// router — has landed: the naive baseline, the reactive best-response router, the
+// incremental, MSA, and system-optimal iterative routers, and the multipath
+// demand-spreading router. The unreachable-OD and one-way invariants are thus
+// enforced for every strategy by construction. The system-optimal router routes on
+// the default BPR's MARGINAL cost over the load it accumulates; load values and the
+// cost basis do not change reachability or edge direction, so it must reach the same
+// no-route / forward-only verdicts as naive on these structural pathologies. The
+// reactive router
 // weights edges with the default BPR over a zero-load in-memory snapshot sized to
 // the graph's EdgeCount; load values do not change reachability or edge direction,
 // so it must reach the same no-route / forward-only verdicts as naive on these
@@ -77,6 +81,7 @@ func concreteRouters(roadGraph graph.Graph) []routing.Router {
 		routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), reactiveProvider),
 		routing.NewIncrementalRouter(roadGraph, cost.DefaultBPR()),
 		routing.NewMSARouter(roadGraph, cost.DefaultBPR()),
+		routing.NewSystemOptimalRouter(roadGraph, cost.DefaultBPR()),
 		routing.NewMultipathRouter(roadGraph, cost.DefaultBPR(), 1, 3),
 	}
 }
