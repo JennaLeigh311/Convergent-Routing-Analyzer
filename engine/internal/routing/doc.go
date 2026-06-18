@@ -10,8 +10,17 @@
 //
 // Phase-3 extension notes: demand-aware strategies supply their congested weight
 // by closing weightFunc over an immutable per-round congestion LoadSnapshot (the
-// snapshot's immutability keeps the closure pure). The multipath strategy and its
-// Yen k-shortest core (kshortest.go, multipath.go) are implemented: Yen excludes
+// snapshot's immutability keeps the closure pure). The incremental, msa, and
+// systemoptimal iterative strategies are implemented as thin wrappers over the
+// shared iterative core (iterative.go): incremental loads the demand in cumulative
+// batches, msa averages an all-or-nothing assignment toward User Equilibrium on
+// BPR.Cost, and systemoptimal runs the same MSA average but ROUTES on
+// BPR.MarginalCost and converges (its relative gap measured on that same marginal
+// basis) to System Optimal — the assignment that minimizes total network time. The
+// realized total time the SO ≤ UE invariant compares them on stays on BPR.Cost
+// (TotalNetworkTime), distinct from the marginal basis SO converges on. The
+// multipath strategy and its Yen k-shortest core (kshortest.go, multipath.go) are
+// implemented: Yen excludes
 // edges and nodes via +Inf-weight MASKING (maskedWeight wraps the base weightFunc to
 // return +Inf for a removed edge or a removed node's out-edges) so it reuses the
 // existing Dijkstra without changing its signature; multipath then splits the
