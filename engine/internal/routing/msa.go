@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 )
 
@@ -105,15 +106,21 @@ func (router *MSARouter) AssignResult(ctx context.Context, reqs []RouteRequest) 
 		// the previous iteration's flow (closed over by `weight`) is never mutated.
 		stepSize := 1.0 / float64(k)
 		next := newFlowVector(router.g)
-		for _, edgeID := range SortedEdgeIDs(router.g) { // sorted, never map order
+		for edgeID := domain.EdgeID(0); int(edgeID) < router.g.EdgeCount(); edgeID++ { // 0..EdgeCount-1, deterministic order
 			x := loadAt(flow, edgeID)
 			y := loadAt(outcome.flows, edgeID)
 			next[edgeID] = x + stepSize*(y-x)
 		}
 
-		// Gap is measured on the AVERAGED flow vs the all-or-nothing total under this
-		// iteration's weights: TSTT(next) against the SPTT the AON just achieved.
-		gap := relativeGap(totalSystemCost(router.g, router.bpr, next), outcome.totalSP)
+		// Gap is the standard relative gap of the CURRENT iterate `flow` (the point this
+		// AON was computed for), measured consistently under one weight vector t(flow):
+		// TSTT(flow) against outcome.totalSP, which is the all-or-nothing total of `flow`
+		// under those same weights (its SPTT). Measuring TSTT on the AVERAGED `next` while
+		// taking SPTT from `flow` would mix two flow/weight vectors and report a non-
+		// standard gap; this reports the textbook UE convergence gap of `flow`. At k=1
+		// `flow` is all-zero so the gap is 1 (the zero flow is not at equilibrium), and as
+		// the averaging settles flow→UE the gap → 0.
+		gap := relativeGap(totalSystemCost(router.g, router.bpr, flow), outcome.totalSP)
 		// MSA never sets done: it iterates until the gap criterion or the budget.
 		return next, outcome.routes, gap, false, nil
 	}

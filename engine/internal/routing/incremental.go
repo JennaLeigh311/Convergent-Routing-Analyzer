@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 )
 
@@ -17,6 +18,14 @@ import (
 // earlier ones loaded. A batch count above the request count is harmless — empty
 // trailing batches just contribute no flow.
 const incrementalBatches = 4
+
+// partialLoadGap is the sentinel "gap" an intermediate incremental batch reports (a
+// fully-unconverged 1.0). It exists only to keep the shared convergence loop from
+// stopping incremental early on a partial gap — which would leave later batches' demand
+// unassigned, since incremental must load every batch to be complete. 1.0 is never
+// < gapTolerance, so it can never trip the loop's gap check; the loop overwrites it with
+// the final batch's real gap, so it never surfaces in the returned AssignResult.
+const partialLoadGap = 1.0
 
 // IncrementalRouter is the incremental-assignment strategy (algorithm catalog row 3,
 // project-spec.md §4; docs/algorithms.md §2): it splits the demand into equal batches
@@ -36,9 +45,10 @@ const incrementalBatches = 4
 //
 // Unlike MSA, incremental does NOT average or iterate to a fixed point — once every
 // batch is loaded the assignment is complete (the loop's `done` signal), so it
-// converges in exactly incrementalBatches iterations (or fewer if the gap criterion is
-// met first). The reported routes are each request's path from the batch in which it
-// was loaded.
+// converges in exactly incrementalBatches iterations — it stops on `done`, never early
+// on the gap, because stopping before every batch is loaded would leave later batches'
+// demand unassigned. The reported routes are each request's path from the batch in
+// which it was loaded.
 //
 // The router holds only the immutable graph and a stateless BPR cost function (no
 // congestion provider — it derives load from the flow it accumulates), so its methods
@@ -118,28 +128,31 @@ func (router *IncrementalRouter) AssignResult(ctx context.Context, reqs []RouteR
 		}
 		copy(routes[lo:hi], outcome.routes) // place this batch's routes at their global indices
 
-		// Add this batch's flow to the cumulative flow (cumulative, never re-removed),
-		// written into a fresh vector so the previous flow (closed over by `weight`) is
-		// never mutated.
+		// Fold this batch's flow into the cumulative flow (never re-removed) in a fresh
+		// vector, so the previous flow (closed over by `weight`) is never mutated.
 		next := newFlowVector(router.g)
-		for _, edgeID := range SortedEdgeIDs(router.g) { // sorted, never map order
+		for edgeID := domain.EdgeID(0); int(edgeID) < router.g.EdgeCount(); edgeID++ { // 0..EdgeCount-1, deterministic order
 			next[edgeID] = loadAt(flow, edgeID) + loadAt(outcome.flows, edgeID)
 		}
 
-		// The reported gap is the standard relative gap of the WHOLE cumulative flow,
-		// not of this one batch: re-route ALL requests under the new cumulative weights
-		// (an all-or-nothing pass over every OD) to get the equilibrium-reference SPTT,
-		// then compare it to TSTT(cumulative). Comparing the batch's own SPTT would mix
-		// scales (a few requests' shortest-path cost against the whole network's load)
-		// and report a meaningless gap. Incremental still stops on `done`, not the gap;
-		// this just makes the reported number an honest distance-from-equilibrium.
+		// Only the FINAL batch computes incremental's meaningful gap. It is the standard
+		// relative gap of the WHOLE cumulative load: re-route ALL requests under the final
+		// cumulative weights (an all-or-nothing pass over every OD) for the
+		// equilibrium-reference SPTT, then compare it to TSTT(cumulative). (Comparing one
+		// batch's own SPTT would mix a few requests' shortest-path cost against the whole
+		// network's load and report a meaningless number.) Intermediate batches skip this
+		// whole-network re-route — it is pure cost there, since incremental never stops on
+		// the gap — and report partialLoadGap instead.
+		if !done {
+			return next, routes, partialLoadGap, false, nil
+		}
 		gapWeight := weightFromFlows(router.bpr, next)
 		gapOutcome, err := assignAONConcurrent(ctx, router.g, pairs, reqs, gapWeight, router.Name())
 		if err != nil {
 			return nil, nil, 0, false, err
 		}
 		gap := relativeGap(totalSystemCost(router.g, router.bpr, next), gapOutcome.totalSP)
-		return next, routes, gap, done, nil
+		return next, routes, gap, true, nil
 	}
 
 	return runConvergenceLoop(ctx, router.g, step)

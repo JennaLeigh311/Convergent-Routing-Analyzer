@@ -1,8 +1,12 @@
 package routing
 
 import (
+	"context"
+	"fmt"
 	"math"
 	"testing"
+
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
 )
 
 // TestCombineFlowsSumsShardsElementwise pins the sharded-flow REDUCE helper #71
@@ -161,5 +165,48 @@ func TestBatchBoundsFewerRequestsThanBatches(test *testing.T) {
 	}
 	if total != 2 {
 		test.Errorf("batches cover %d requests, want 2", total)
+	}
+}
+
+// TestMSAReportedConvergenceMatchesIndependentGap guards the MSA gap-metric fix: the
+// reported convergence must be backed by FinalFlows genuinely sitting near user
+// equilibrium under a CONSISTENT, single-weight-vector gap measurement. It recomputes
+// the relative gap of FinalFlows independently — TSTT under t(FinalFlows) against an
+// all-or-nothing SPTT under those SAME weights — and requires it below the tolerance.
+// A regression to the old metric (TSTT taken at the averaged flow while SPTT is taken
+// at the pre-average flow — two different flow/weight vectors) could report Converged
+// off a gap that this consistent re-measurement would not corroborate.
+func TestMSAReportedConvergenceMatchesIndependentGap(test *testing.T) {
+	roadGraph := loadToyGraphInternal(test)
+	node0, _ := roadGraph.Node(0)
+	node2, _ := roadGraph.Node(2)
+	reqs := make([]RouteRequest, 50)
+	for index := range reqs {
+		reqs[index] = RouteRequest{ID: fmt.Sprintf("r%d", index), From: node0.Pos, To: node2.Pos, Weight: 200}
+	}
+
+	router := NewMSARouter(roadGraph, cost.DefaultBPR())
+	result, err := router.AssignResult(context.Background(), reqs)
+	if err != nil {
+		test.Fatalf("AssignResult() error = %v", err)
+	}
+	if !result.Converged {
+		test.Fatalf("MSA did not converge (gap %v after %d iters)", result.Gap, result.Iters)
+	}
+
+	// Independent, consistent gap of FinalFlows: both terms under t(FinalFlows).
+	pairs, err := prefetchOD(roadGraph, reqs, "test")
+	if err != nil {
+		test.Fatalf("prefetchOD() error = %v", err)
+	}
+	weight := weightFromFlows(cost.DefaultBPR(), result.FinalFlows)
+	aon, err := assignAONConcurrent(context.Background(), roadGraph, pairs, reqs, weight, "test")
+	if err != nil {
+		test.Fatalf("assignAONConcurrent() error = %v", err)
+	}
+	independentGap := relativeGap(totalSystemCost(roadGraph, cost.DefaultBPR(), result.FinalFlows), aon.totalSP)
+	if !(independentGap < gapTolerance) {
+		test.Errorf("independent gap of FinalFlows = %v, want < gapTolerance %v (reported Converged with Gap %v) — FinalFlows is not actually near equilibrium",
+			independentGap, gapTolerance, result.Gap)
 	}
 }

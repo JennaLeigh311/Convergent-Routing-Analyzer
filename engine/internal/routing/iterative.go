@@ -57,9 +57,10 @@ const (
 // BPR.Cost is always >= edge.FreeFlowS >= 0, so the weights stay non-negative as
 // Dijkstra requires.
 //
-// systemoptimal (#76) supplies the SAME shape with bpr.MarginalCost in place of
-// bpr.Cost — that is the single line that distinguishes it from this UE-family core,
-// so it is factored to one call site here.
+// systemoptimal (#76) will supply a sibling factory of this same shape with
+// bpr.MarginalCost in place of bpr.Cost — the only thing that distinguishes its routing
+// weights from this UE-family core. (The gap metric stays on bpr.Cost for both, so the
+// swap is confined to the routing weightFunc.)
 func weightFromFlows(bpr cost.BPR, flows []float64) weightFunc {
 	return func(edge graph.Edge) float64 {
 		return bpr.Cost(edge, loadAt(flows, edge.ID))
@@ -100,19 +101,18 @@ func loadAt(flows []float64, edgeID domain.EdgeID) float64 {
 	return flows[edgeID]
 }
 
-// combineFlows sums the per-worker partial-flow shards element-wise into a single
-// dense round-load vector of length n, in deterministic edge order. It is the REDUCE
-// half of the sharded map-reduce flow accumulator (#71 deferred it; #74 makes the
-// fan-out real, so it lands here): each worker writes only its OWN shard during the
-// MAP (fan-out) phase with no shared mutable state, then this runs ONCE per
-// iteration, single-goroutine, after every worker has finished — so there is never a
-// concurrent writer and never a lock.
+// combineFlows is the REDUCE half of the sharded map-reduce flow accumulator (#71
+// deferred it; #74 makes the fan-out real): it sums the per-worker shards element-wise
+// into one dense round-load vector of length n. Each worker writes only its OWN shard
+// during the MAP phase (no shared mutable state, no lock); this runs once per iteration,
+// single-goroutine, after every worker has finished — so there is never a concurrent
+// writer.
 //
-// Order matters for determinism: floating-point addition is not associative, so the
-// shards are summed in a FIXED order (shard 0, then 1, ...; within a shard, edge id
-// 0..n-1 ascending) on every run, giving byte-identical output for a fixed input.
-// A shard shorter than n contributes 0 for the missing tail (defensive; the fan-out
-// always sizes shards to EdgeCount), and a shard element past n is ignored.
+// The sum is taken in a FIXED order (shard 0, 1, ...; edge 0..n-1 ascending) because
+// floating-point addition is not associative, so a fixed order is what makes the output
+// byte-identical run to run. A shard shorter than n contributes 0 for the missing tail
+// and a shard element past n is ignored (defensive; the fan-out always sizes shards to
+// EdgeCount).
 func combineFlows(n int, shards [][]float64) []float64 {
 	combined := make([]float64, n)
 	for _, shard := range shards {
@@ -252,7 +252,7 @@ func workersFor(n int) int {
 // (SPTT) is compared. A missing/out-of-range edge contributes nothing.
 func totalSystemCost(roadGraph graph.Graph, bpr cost.BPR, flows []float64) float64 {
 	var total float64
-	for _, edgeID := range SortedEdgeIDs(roadGraph) { // sorted, never map order
+	for edgeID := domain.EdgeID(0); int(edgeID) < roadGraph.EdgeCount(); edgeID++ { // 0..EdgeCount-1, deterministic order
 		edge, ok := roadGraph.Edge(edgeID)
 		if !ok {
 			continue
@@ -318,7 +318,10 @@ func runConvergenceLoop(ctx context.Context, roadGraph graph.Graph, step iterati
 		if done {
 			// The strategy has structurally finished (e.g. incremental loaded every
 			// batch). Its assignment is complete; report it as converged at the gap it
-			// achieved — there are no further iterations that would refine it.
+			// achieved — there are no further iterations that would refine it. Per the
+			// AssignResult.Converged contract (routing.go), Converged means "reached its
+			// stopping criterion", not "is at user equilibrium"; the honest
+			// distance-from-equilibrium is carried in Gap.
 			converged = true
 			break
 		}

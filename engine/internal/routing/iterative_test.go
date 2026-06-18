@@ -140,12 +140,13 @@ func TestMSASplitsCongestedDemand(test *testing.T) {
 }
 
 // TestIterativeRoutersDeterministic is the determinism acceptance criterion driven by
-// the ACTUAL iterative routers (not the single-pass naive case): a fixed seed plus a
-// SERIALIZED OD set, re-read and re-run through the concurrent fan-out, yields
-// byte-identical FinalFlows across runs. The OD set is round-tripped through
-// Write/ReadODSet so the test exercises the real on-disk form, and each run fans the
-// requests across goroutines — so this also pins that the sharded map-reduce reduce is
-// order-stable regardless of how the scheduler interleaves workers.
+// the ACTUAL iterative routers (not the single-pass naive case): a SERIALIZED OD set,
+// re-read and re-run through the concurrent fan-out, yields byte-identical FinalFlows
+// across runs (the iterative core is deterministic without any RNG — the determinism
+// comes from the fixed-order sharded reduce, not a seed). The OD set is round-tripped
+// through Write/ReadODSet so the test exercises the real on-disk form, and each run
+// fans the requests across goroutines — so this also pins that the sharded map-reduce
+// reduce is order-stable regardless of how the scheduler interleaves workers.
 func TestIterativeRoutersDeterministic(test *testing.T) {
 	roadGraph := loadToyGraph(test)
 	original := heavyDemand(test, roadGraph, 60, 200)
@@ -165,7 +166,6 @@ func TestIterativeRoutersDeterministic(test *testing.T) {
 			if err != nil {
 				test.Fatalf("ReadODSet() error = %v", err)
 			}
-			_ = routing.NewSeededRNG(42) // fixed seed source (the iterative core is deterministic without RNG)
 			result, err := makeRouter().AssignResult(context.Background(), reqs)
 			if err != nil {
 				test.Fatalf("AssignResult() error = %v", err)
