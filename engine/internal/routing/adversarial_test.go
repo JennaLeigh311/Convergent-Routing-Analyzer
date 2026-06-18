@@ -72,6 +72,8 @@ func concreteRouters(roadGraph graph.Graph) []routing.Router {
 	return []routing.Router{
 		routing.NewNaiveRouter(roadGraph),
 		routing.NewReactiveRouter(roadGraph, cost.DefaultBPR(), reactiveProvider),
+		routing.NewIncrementalRouter(roadGraph, cost.DefaultBPR()),
+		routing.NewMSARouter(roadGraph, cost.DefaultBPR()),
 	}
 }
 
