@@ -30,8 +30,10 @@ import (
 
 // buildGeoConsistentGraph builds a sideLen x sideLen 4-neighbor lattice whose
 // per-edge free-flow time is derived from the SAME node geometry the A* heuristic
-// reads, so it models a real OSM export's invariant (polyline length ≥ straight-line
-// chord) rather than the toy fixture's hand-written, geometry-inconsistent lengths.
+// reads, with LengthM set to exactly the endpoint chord (length_m == chord). The
+// toy fixture now also satisfies length_m ≥ chord, but this synthetic lattice is
+// the EXACT-equality stress case for the heuristic — it pins admissibility right
+// at the boundary where the chord-based divisor and the per-edge time coincide.
 //
 // Each grid cell is a fixed lat/lon step, so neighboring nodes are a real
 // great-circle distance apart. An edge's LengthM is set to exactly that chord and

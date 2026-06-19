@@ -248,7 +248,7 @@
             "osm_way_id": 33112200,
             "highway_class": "trunk",
             "lanes_effective": 2,
-            "length_m": 200.0,
+            "length_m": 400.0,
             "maxspeed_kmh": 80.0,
             "freeflow_time_s": 9.0,
             "capacity_vph": 3240.0
@@ -265,7 +265,7 @@
             "osm_way_id": 33112200,
             "highway_class": "trunk",
             "lanes_effective": 2,
-            "length_m": 200.0,
+            "length_m": 400.0,
             "maxspeed_kmh": 80.0,
             "freeflow_time_s": 9.0,
             "capacity_vph": 3240.0
@@ -396,6 +396,32 @@
             "highway_class": "primary",
             "lanes_effective": 2,
             "length_m": 240.0,
+            "maxspeed_kmh": 60.0,
+            "freeflow_time_s": 14.4,
+            "capacity_vph": 2880.0
+          }
+        }
+      ]
+    }
+  },
+  {
+    "violates": "length_m (50.0) is shorter than the great-circle chord (~185 m) between the edge's endpoint nodes — §2 implied invariant length_m >= endpoint chord (a road is at least as long as the straight line between its ends). This is a pure chord violation: the row is otherwise §2-valid and its NYC coords sit inside the dataset region, so the chord guard (not bounds or any other check) is what rejects it.",
+    "feature_collection": {
+      "type": "FeatureCollection",
+      "schema_version": 1,
+      "features": [
+        {
+          "type": "Feature",
+          "geometry": { "type": "LineString", "coordinates": [[-73.99012, 40.73456], [-73.98801, 40.73502]] },
+          "properties": {
+            "segment_id": "27583001:0:F",
+            "edge_id": 0,
+            "source_node": 10,
+            "target_node": 11,
+            "osm_way_id": 27583001,
+            "highway_class": "primary",
+            "lanes_effective": 2,
+            "length_m": 50.0,
             "maxspeed_kmh": 60.0,
             "freeflow_time_s": 14.4,
             "capacity_vph": 2880.0

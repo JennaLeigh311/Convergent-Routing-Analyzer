@@ -157,6 +157,24 @@ These map onto the engine's in-memory `graph.Edge` (`engine/internal/graph/graph
 `lanes_effective`, `maxspeed_kmh` are derivation inputs the in-memory struct does not retain; `geometry` is
 held separately for map-matching and the `/graph` endpoint.)
 
+#### Implied invariant: `length_m >= endpoint great-circle chord`
+
+`length_m` is the **geodesic length of the edge geometry**, and a geodesic is by definition at least as long
+as the straight line between its ends. So `length_m` MUST be `>= ` the great-circle (haversine) chord between
+the edge's first and last geometry coordinates (`source_node` / `target_node` positions). This is not a new
+field — it is a **mathematical entailment** of "geodesic length" already in the table — but the Go loader now
+**enforces** it: a row whose `length_m` is shorter than its endpoint chord (beyond a `1e-9` relative
+tolerance that absorbs float rounding only, not real producer rounding) is rejected at load
+(`engine/internal/graph/loader.go`). It is measured on the **endpoints only** (first/last coordinate), never
+the interior shape points or the polyline length. Both the producer (database export) and the frontend
+`/graph` consumer therefore share this expectation: a length shorter than the endpoint chord is a
+contradictory export. The producer MUST emit `length_m` at a precision consistent with the coordinate
+precision it derives it from, so a legitimately straight road (`length_m == chord`) is not pushed below the
+tolerance by rounding.
+
+This enforcement does **not** bump the frozen contract version: enforcing an entailment of an existing field
+is not a field-set, type, derivation, unit, or serialization change, so version **1** stands.
+
 #### `edge_id` is the load-time assignment
 
 Mirroring §1's `segment_id ↔ EdgeID` framing: `segment_id` is the durable cross-system wire key; `edge_id`

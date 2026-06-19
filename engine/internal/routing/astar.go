@@ -75,7 +75,7 @@ func (router *AStarRouter) Name() string { return "astar" }
 //     chord/time speed.
 //   - the LengthM / FreeFlowS form is corrupted when length_m < the endpoint chord
 //     (a real geometry quirk: a hand-written or simplified length shorter than the
-//     straight-line distance between the endpoints — see the toy fixture). A single
+//     straight-line distance between the endpoints). A single
 //     such anomalous edge would NOT change LengthM/FreeFlowS into a safe divisor,
 //     and the heuristic chord/maxSpeed could then EXCEED that edge's own true time
 //     FreeFlowS, making h inadmissible and A* return a non-optimal path (cost 10.0

@@ -125,6 +125,13 @@ edge (with a tiny relative tolerance, `lengthChordRelTol = 1e-9`, so a legitimat
 `length_m == chord` is not rejected on float rounding). Bad geometry is rejected at the source rather than left
 for each downstream consumer to defend against.
 
+This sits on the same side of the issue #73 connectedness taxonomy as the loader's other rejections:
+**wrong / contradictory data** (an axis swap, contradictory node coordinates, `length_m < chord`) is rejected
+at the loader, whereas **right-but-unhelpful data** (a disconnected component) is deferred to the routing
+layer. That is why `length_m < chord` rejects always-on while connectivity checking is opt-in: a length
+shorter than its endpoint chord cannot be correct under any interpretation, but a disconnected graph may be
+exactly the network the operator meant to load.
+
 **A* divisor stays geometry-derived.** Even though the loader now guarantees `length_m >= chord` (so
 `LengthM/FreeFlowS` would be an admissible A* heuristic divisor on conformant data), the A* router
 (`engine/internal/routing/astar.go`, `maxFreeFlowSpeedMS`) **keeps** the `chord/FreeFlowS` divisor as

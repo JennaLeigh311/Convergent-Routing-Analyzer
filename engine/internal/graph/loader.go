@@ -54,6 +54,12 @@ const nodePosEpsilonDeg = 1e-7
 // instead: 1e-9 relative is ~nanometers on a city edge — far below any real
 // geometry error but generous enough to absorb float noise. A length_m that
 // falls short by more than this slack is a genuine violation and is rejected.
+//
+// Phase-5 note: 1e-9 absorbs float-ULP noise ONLY, not real-world producer
+// rounding (e.g. a length_m emitted at coarser precision than the endpoint
+// coordinates it is derived from). It should be revisited against the real Porto
+// extract before Phase 5; if genuine straight roads there trip the guard on
+// rounding, widening it is a one-constant change here.
 const lengthChordRelTol = 1e-9
 
 // loadConfig holds the per-call, caller-supplied options for a load. It is

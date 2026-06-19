@@ -18,11 +18,13 @@ Region: NYC-ish — lon ∈ [-73.975, -73.966], lat ∈ [40.737, 40.742].
 Every edge's `length_m` is **≥** the great-circle chord between its endpoint
 nodes — a road is at least as long as the straight line between its ends, the §2
 `edge_attributes` contract invariant the loader now enforces. The drawn geometry
-was uniformly scaled toward the network centroid by a factor of **0.25** (from the
-original lon ∈ [-73.99, -73.95], lat ∈ [40.73, 40.75] window) so every endpoint
-chord drops comfortably below its curated `length_m`; the worst ratio is
-`48800123:0:F` at chord/length ≈ 0.75. Uniform scaling preserves relative geometry,
-so nearest-node snapping order is unchanged, and the curated `length_m` /
+was contracted toward the network centroid by **approximately** a factor of `0.25`
+(from the original lon ∈ [-73.99, -73.95], lat ∈ [40.73, 40.75] window) so every
+endpoint chord drops comfortably below its curated `length_m`; the worst ratio is
+`48800123:0:F` at chord/length ≈ 0.75. The contraction is not exactly uniform —
+per-node factors range ≈ 0.18–0.28, and node 2 lands ≈ on the centroid — but it
+keeps the network's relative shape, so nearest-node snapping order is unchanged,
+and the curated `length_m` /
 `maxspeed_kmh` / `freeflow_time_s` / `capacity_vph` triples are **unchanged** — so
 every routing cost (and `canonical_route.golden`) is unaffected.
 
