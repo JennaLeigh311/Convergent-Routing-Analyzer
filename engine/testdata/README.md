@@ -11,8 +11,22 @@ for #27 (the router) and later phases. It loads cleanly through the merged #25
 loader (`graph.LoadEdgeAttributesGeoJSONFile`). All values are computed at
 `capacity_scale = 1.0` using the §2 derivation rules exactly.
 
-Region: NYC-ish, continuing the golden fixture's window — lon ∈ [-73.99, -73.95],
-lat ∈ [40.73, 40.75].
+Region: NYC-ish — lon ∈ [-73.975, -73.966], lat ∈ [40.737, 40.742].
+
+### `length_m` ≥ endpoint chord (issue #81)
+
+Every edge's `length_m` is **≥** the great-circle chord between its endpoint
+nodes — a road is at least as long as the straight line between its ends, the §2
+`edge_attributes` contract invariant the loader now enforces. The drawn geometry
+was contracted toward the network centroid by **approximately** a factor of `0.25`
+(from the original lon ∈ [-73.99, -73.95], lat ∈ [40.73, 40.75] window) so every
+endpoint chord drops comfortably below its curated `length_m`; the worst ratio is
+`48800123:0:F` at chord/length ≈ 0.75. The contraction is not exactly uniform —
+per-node factors range ≈ 0.18–0.28, and node 2 lands ≈ on the centroid — but it
+keeps the network's relative shape, so nearest-node snapping order is unchanged,
+and the curated `length_m` /
+`maxspeed_kmh` / `freeflow_time_s` / `capacity_vph` triples are **unchanged** — so
+every routing cost (and `canonical_route.golden`) is unaffected.
 
 ### Topology
 
@@ -25,12 +39,12 @@ Node coordinates (`[lon, lat]`):
 
 | node | lon        | lat       |
 |------|------------|-----------|
-| 0    | -73.99000  | 40.73000  | origin
-| 1    | -73.98000  | 40.73500  |
-| 2    | -73.97000  | 40.74000  | destination
-| 3    | -73.96500  | 40.74200  |
-| 4    | -73.96000  | 40.74500  |
-| 5    | -73.95500  | 40.74800  |
+| 0    | -73.97491  | 40.73736  | origin
+| 1    | -73.97241  | 40.73861  |
+| 2    | -73.96991  | 40.73986  | destination
+| 3    | -73.96866  | 40.74036  |
+| 4    | -73.96741  | 40.74111  |
+| 5    | -73.96616  | 40.74186  |
 
 Edges (one row per directed edge):
 

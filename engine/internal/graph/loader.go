@@ -43,6 +43,25 @@ const maxArtifactBytes = 512 << 20 // 512 MiB
 // contradictory export and rejected loudly, not silently accept-first'd.
 const nodePosEpsilonDeg = 1e-7
 
+// lengthChordRelTol is the relative slack applied to the §2 length_m >= chord
+// invariant. A road's drawn length_m must be at least the great-circle chord
+// between its endpoint nodes (a road is at least as long as the straight line
+// between its ends — see validateFeature). A LEGITIMATELY straight road has
+// length_m == chord, and the two are computed by different paths (length_m is an
+// authored/geodesic value; chord is this loader's haversine over the rounded
+// endpoint coords), so a bare length_m >= chord would spuriously reject such a
+// road on sub-ULP float rounding. We require length_m >= chord*(1-lengthChordRelTol)
+// instead: 1e-9 relative is ~nanometers on a city edge — far below any real
+// geometry error but generous enough to absorb float noise. A length_m that
+// falls short by more than this slack is a genuine violation and is rejected.
+//
+// Phase-5 note: 1e-9 absorbs float-ULP noise ONLY, not real-world producer
+// rounding (e.g. a length_m emitted at coarser precision than the endpoint
+// coordinates it is derived from). It should be revisited against the real Porto
+// extract before Phase 5; if genuine straight roads there trip the guard on
+// rounding, widening it is a one-constant change here.
+const lengthChordRelTol = 1e-9
+
 // loadConfig holds the per-call, caller-supplied options for a load. It is
 // populated by the functional LoadOptions before the load runs. A zero
 // loadConfig (no options) means "region-agnostic": only the WGS84 hard bounds
@@ -429,6 +448,24 @@ func validateFeature(index int, feature *geoFeature, cfg loadConfig, count int) 
 			return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: coordinate %d [lon=%v,lat=%v] is outside the supplied expected bounds [lon %v..%v, lat %v..%v] — this indicates a [lat,lon] axis swap (§2 requires [lon,lat])", props.SegmentID, innerIndex, lon, lat, cfg.lonMin, cfg.lonMax, cfg.latMin, cfg.latMax)
 		}
 		lineString[innerIndex] = [2]float64{lon, lat}
+	}
+
+	// (5b) §2 geometry/length consistency: length_m must be >= the great-circle
+	// chord between the edge's endpoint nodes (first and last LineString coords). A
+	// road is at least as long as the straight line between its ends, so a declared
+	// length shorter than the endpoint chord is a contradictory export. (It also
+	// breaks the A* admissible heuristic, which the router defends against
+	// separately; see engine/internal/routing/astar.go. This loader guard rejects
+	// the bad data at the source rather than relying on every downstream consumer to
+	// be defensive.) A small relative slack (lengthChordRelTol) keeps a legitimately
+	// straight road, where length_m == chord, from being rejected on float rounding.
+	first, last := lineString[0], lineString[len(lineString)-1]
+	chord := GreatCircleM(
+		domain.LatLon{Lat: first[1], Lon: first[0]},
+		domain.LatLon{Lat: last[1], Lon: last[0]},
+	)
+	if props.LengthM < chord*(1-lengthChordRelTol) {
+		return Edge{}, nil, 0, 0, fmt.Errorf("edge_attributes: segment_id %q: length_m %v m is shorter than the %v m great-circle chord between its endpoints — a road must be at least as long as the straight line between its ends (§2)", props.SegmentID, props.LengthM, chord)
 	}
 
 	// (4) Dense edge_id range. (The duplicate check stays in the main loop, which

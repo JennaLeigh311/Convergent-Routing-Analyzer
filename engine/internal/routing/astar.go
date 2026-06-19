@@ -35,6 +35,14 @@ type AStarRouter struct {
 	// rather than LengthM/FreeFlowS, so the bound holds even on an edge whose declared
 	// length_m is shorter than its endpoint chord; a smaller divisor would lose
 	// pruning (still admissible), a larger one could make h inadmissible.
+	//
+	// As of issue #81 the loader enforces length_m >= chord on every §2 export (and the
+	// canonical toy fixture was regenerated to satisfy it), so LengthM/FreeFlowS would
+	// now ALSO be admissible on conformant data. We deliberately keep the chord/FreeFlowS
+	// form as defense-in-depth: it is admissible BY CONSTRUCTION from the same endpoint
+	// geometry the heuristic measures, so A* stays correct regardless of any length_m
+	// anomaly — a hand-built test graph, a future loader-bypass, or a contract drift —
+	// without depending on the loader invariant holding. See maxFreeFlowSpeedMS.
 	maxSpeedMS float64
 }
 
@@ -67,7 +75,7 @@ func (router *AStarRouter) Name() string { return "astar" }
 //     chord/time speed.
 //   - the LengthM / FreeFlowS form is corrupted when length_m < the endpoint chord
 //     (a real geometry quirk: a hand-written or simplified length shorter than the
-//     straight-line distance between the endpoints — see the toy fixture). A single
+//     straight-line distance between the endpoints). A single
 //     such anomalous edge would NOT change LengthM/FreeFlowS into a safe divisor,
 //     and the heuristic chord/maxSpeed could then EXCEED that edge's own true time
 //     FreeFlowS, making h inadmissible and A* return a non-optimal path (cost 10.0

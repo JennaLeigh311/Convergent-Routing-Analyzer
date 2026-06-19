@@ -121,7 +121,7 @@
     "capacity_vph": 3240.0,
     "geometry": {
       "type": "LineString",
-      "coordinates": [[-73.94000, 40.75500], [-73.93720, 40.75640], [-73.93410, 40.75810]]
+      "coordinates": [[-73.93882, 40.75562], [-73.93714, 40.75646], [-73.93528, 40.75748]]
     },
     "note": "trunk, defaults: lanes=2, maxspeed=80. exercises class_factor 0.9: capacity=2*1800*0.9=3240; freeflow=400/(80/3.6)=18.0. THREE-vertex LineString: the middle coordinate is a geometry shape point, NOT a graph node (only first/last map to source_node/target_node)."
   },
@@ -193,7 +193,7 @@
     "capacity_vph": 3780.0,
     "geometry": {
       "type": "LineString",
-      "coordinates": [[-73.92960, 40.76030], [-73.92700, 40.76150]]
+      "coordinates": [[-73.92908, 40.76054], [-73.92752, 40.76126]]
     },
     "note": "two-way secondary tagged with a BARE OSM lanes=6 (both-directions total) and no lanes:forward/backward. The split rule applies: lanes_effective = floor(6/2) = 3 per direction (NOT 6 applied whole, NOT the secondary default 2). capacity=3*1800*0.7=3780; freeflow=200/(50/3.6)=14.4. forward half of the F/R pair."
   },
@@ -211,7 +211,7 @@
     "capacity_vph": 3780.0,
     "geometry": {
       "type": "LineString",
-      "coordinates": [[-73.92700, 40.76150], [-73.92960, 40.76030]]
+      "coordinates": [[-73.92752, 40.76126], [-73.92908, 40.76054]]
     },
     "note": "reverse half of the bare-lanes=6 two-way pair (same way+seq, dir=R, source/target swapped, geometry reversed). same split-derived lanes_effective=3 and derived values."
   }

@@ -132,7 +132,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.94000, 40.75500], [-73.93720, 40.75640], [-73.93410, 40.75810]]
+        "coordinates": [[-73.93882, 40.75562], [-73.93714, 40.75646], [-73.93528, 40.75748]]
       },
       "properties": {
         "segment_id": "33112200:0:F",
@@ -216,7 +216,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.92960, 40.76030], [-73.92700, 40.76150]]
+        "coordinates": [[-73.92908, 40.76054], [-73.92752, 40.76126]]
       },
       "properties": {
         "segment_id": "8123456:0:F",
@@ -237,7 +237,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.92700, 40.76150], [-73.92960, 40.76030]]
+        "coordinates": [[-73.92752, 40.76126], [-73.92908, 40.76054]]
       },
       "properties": {
         "segment_id": "8123456:0:R",

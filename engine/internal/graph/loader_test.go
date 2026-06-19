@@ -3,6 +3,7 @@ package graph_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -111,7 +112,7 @@ func TestGeometryFidelity(test *testing.T) {
 	if len(threeVtx) != 3 {
 		test.Fatalf("33112200:0:F geometry has %d coords, want 3 (interior shape point retained)", len(threeVtx))
 	}
-	wantInterior := [2]float64{-73.93720, 40.75640}
+	wantInterior := [2]float64{-73.93714, 40.75646}
 	if threeVtx[1] != wantInterior {
 		test.Errorf("33112200:0:F interior coord = %v, want %v", threeVtx[1], wantInterior)
 	}
@@ -185,16 +186,18 @@ func TestRejectCorpus(test *testing.T) {
 	if err := json.Unmarshal(data, &corpus); err != nil {
 		test.Fatalf("unmarshal corpus: %v", err)
 	}
-	if len(corpus) != 13 {
-		test.Fatalf("corpus has %d entries, want 13", len(corpus))
+	if len(corpus) != 14 {
+		test.Fatalf("corpus has %d entries, want 14", len(corpus))
 	}
 
 	// The fixture corpus is an NYC extract. Case 8 (a uniform [lat,lon] axis
 	// swap whose swapped values BOTH stay inside WGS84) is only detectable
 	// against the dataset's expected region, so we supply the NYC box: lon ∈
 	// [-75,-73], lat ∈ [40,41] contains every golden coordinate and excludes the
-	// swap (lon 40.73 > -73; lat -73.99 < 40). The other 12 entries reject
-	// region-agnostically regardless of whether bounds are supplied.
+	// swap (lon 40.73 > -73; lat -73.99 < 40). The other 13 entries reject
+	// region-agnostically regardless of whether bounds are supplied (case 13, the
+	// pure length_m < chord violation, sits inside the NYC box so the box is
+	// harmless and the chord guard is what rejects it).
 	nycBounds := graph.WithExpectedBounds(-75, -73, 40, 41)
 	for index, entry := range corpus {
 		roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader(entry.FeatureCollection), nycBounds)
@@ -233,6 +236,7 @@ func TestRejectErrorMessages(test *testing.T) {
 		8:  "outside",
 		9:  "length_m",
 		10: "maxspeed_kmh",
+		13: "chord",
 	}
 	// Case 8 (in-range axis swap) needs the dataset's region to be caught; supply
 	// the NYC box for it. The others reject region-agnostically, so a uniform
@@ -449,6 +453,235 @@ func TestRejectContradictoryNodeCoords(test *testing.T) {
 	}
 	if !bytes.Contains([]byte(err.Error()), []byte("contradictory")) {
 		test.Errorf("error %q should name the contradictory endpoint coordinates", err.Error())
+	}
+}
+
+// shortLengthEdge is a §2-valid single-edge FeatureCollection EXCEPT that
+// length_m (50 m) is far shorter than the great-circle chord between its
+// endpoints (~210 m for these Tokyo coords). A road must be at least as long as
+// the straight line between its ends, so the issue #81 loader guard must reject
+// it (a length_m < endpoint chord is a contradictory export — and it would make
+// the A* admissible heuristic inadmissible). The same coords with length_m=210
+// load cleanly, see TestStraightRoadLengthEqualsChordLoads.
+const shortLengthEdge = `{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.70010, 35.68950], [139.70220, 35.69010]]
+      },
+      "properties": {
+        "segment_id": "4001234:0:F",
+        "edge_id": 0,
+        "source_node": 10,
+        "target_node": 11,
+        "osm_way_id": 4001234,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 50.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    }
+  ]
+}`
+
+// TestRejectLengthShorterThanChord asserts the issue #81 guard: an edge whose
+// length_m is shorter than its endpoint great-circle chord is rejected with a
+// non-nil error and a nil graph (fail-closed), and the message names length_m so
+// the offending invariant is identifiable.
+func TestRejectLengthShorterThanChord(test *testing.T) {
+	roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(shortLengthEdge)))
+	if err == nil {
+		test.Fatalf("length_m shorter than the endpoint chord must be rejected (§2 length_m >= chord)")
+	}
+	if roadGraph != nil || geom != nil {
+		test.Errorf("rejected load must return nil graph/map, got g=%v geom=%v", roadGraph, geom)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("length_m")) || !bytes.Contains([]byte(err.Error()), []byte("chord")) {
+		test.Errorf("error %q should name length_m and the chord", err.Error())
+	}
+}
+
+// straightRoadEdge is a §2-valid single-edge FeatureCollection whose length_m
+// (210 m) is comfortably ABOVE the ~201 m endpoint chord for these coords (about
+// 4.5% longer, as a slightly curved road would be). It is the gross-ACCEPT anchor:
+// a length safely longer than the chord must load cleanly. (It is NOT length_m ==
+// chord — the boundary behaviour of the tolerance is proved separately by
+// TestLengthChordToleranceBoundary, which computes the exact chord in-test.)
+const straightRoadEdge = `{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.70010, 35.68950], [139.70220, 35.69010]]
+      },
+      "properties": {
+        "segment_id": "4001234:0:F",
+        "edge_id": 0,
+        "source_node": 10,
+        "target_node": 11,
+        "osm_way_id": 4001234,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 210.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    }
+  ]
+}`
+
+// TestGrossLengthAboveChordLoads is the gross-ACCEPT anchor: a road whose
+// length_m (210 m) is comfortably longer than its ~201 m endpoint chord must load
+// cleanly — the issue #81 guard only rejects a length SHORTER than the chord.
+// (The exact behaviour right at the tolerance boundary is proved by
+// TestLengthChordToleranceBoundary.)
+func TestGrossLengthAboveChordLoads(test *testing.T) {
+	roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(straightRoadEdge)))
+	if err != nil {
+		test.Fatalf("a road with length_m comfortably above the chord must load cleanly, got: %v", err)
+	}
+	if roadGraph == nil || geom == nil {
+		test.Errorf("clean load must return a non-nil graph and geometry map")
+	}
+}
+
+// boundaryEdgeJSON builds a §2-valid single-edge FeatureCollection over the fixed
+// Tokyo coords with the supplied length_m, so a test can set length_m relative to
+// the chord computed in-test via graph.GreatCircleM (and thus track the loader's
+// earth-radius / haversine constants if they ever change).
+func boundaryEdgeJSON(lengthM float64) string {
+	return fmt.Sprintf(`{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.70010, 35.68950], [139.70220, 35.69010]]
+      },
+      "properties": {
+        "segment_id": "4001234:0:F",
+        "edge_id": 0,
+        "source_node": 10,
+        "target_node": 11,
+        "osm_way_id": 4001234,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": %.17g,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    }
+  ]
+}`, lengthM)
+}
+
+// TestLengthChordToleranceBoundary exercises the only non-trivial logic in the
+// issue #81 guard: the relative slack lengthChordRelTol (1e-9). It computes the
+// exact endpoint chord in-test via graph.GreatCircleM — the same function the
+// loader uses — then probes both sides of the slack:
+//
+//   - length_m = chord*(1-5e-10): a shortfall of half the slack, just INSIDE the
+//     tolerance, MUST load (float-ULP noise must not trip the guard); and
+//   - length_m = chord*(1-1e-8): a shortfall of 10× the slack, just outside it,
+//     MUST be rejected (a real length<chord violation is caught).
+//
+// These two cases are what prove the tolerance does real work — that it absorbs
+// only sub-ULP noise, not a genuine shortfall.
+func TestLengthChordToleranceBoundary(test *testing.T) {
+	// The fixed Tokyo endpoints these JSONs use; chord computed via the loader's
+	// own exported great-circle function so this tracks the loader constants.
+	chord := graph.GreatCircleM(
+		domain.LatLon{Lat: 35.68950, Lon: 139.70010},
+		domain.LatLon{Lat: 35.69010, Lon: 139.70220},
+	)
+
+	// (a) Just INSIDE the slack: a shortfall smaller than lengthChordRelTol.
+	insideLen := chord * (1 - 5e-10)
+	roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(boundaryEdgeJSON(insideLen))))
+	if err != nil {
+		test.Fatalf("length_m = chord*(1-5e-10) is within the tolerance and must load, got: %v", err)
+	}
+	if roadGraph == nil || geom == nil {
+		test.Errorf("clean load must return a non-nil graph and geometry map")
+	}
+
+	// (b) Just OUTSIDE the slack: a shortfall 10× lengthChordRelTol.
+	outsideLen := chord * (1 - 1e-8)
+	roadGraph2, geom2, err2 := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(boundaryEdgeJSON(outsideLen))))
+	if err2 == nil {
+		test.Fatalf("length_m = chord*(1-1e-8) is below the tolerance and must be rejected")
+	}
+	if roadGraph2 != nil || geom2 != nil {
+		test.Errorf("rejected load must return nil graph/map, got g=%v geom=%v", roadGraph2, geom2)
+	}
+	if !bytes.Contains([]byte(err2.Error()), []byte("length_m")) || !bytes.Contains([]byte(err2.Error()), []byte("chord")) {
+		test.Errorf("error %q should name length_m and the chord", err2.Error())
+	}
+}
+
+// threeVertexShortLengthEdge is a §2-valid single-edge FeatureCollection with a
+// 3-vertex LineString whose INTERIOR shape point sits ~21 m from the first
+// endpoint while the first→last endpoint chord is ~1060 m. Its length_m (100 m)
+// is comfortably ABOVE the first→interior distance but well BELOW the true
+// endpoint chord. If the guard (wrongly) measured to an interior coord instead of
+// the last endpoint it would ACCEPT this; because it measures the first/last
+// endpoints only it must REJECT it. This pins that the chord guard is an
+// endpoint measurement, not a polyline-length or interior measurement.
+const threeVertexShortLengthEdge = `{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.70010, 35.68950], [139.70030, 35.68960], [139.71010, 35.69450]]
+      },
+      "properties": {
+        "segment_id": "4001234:0:F",
+        "edge_id": 0,
+        "source_node": 10,
+        "target_node": 11,
+        "osm_way_id": 4001234,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 100.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    }
+  ]
+}`
+
+// TestChordGuardMeasuresEndpointsNotInterior asserts the issue #81 guard measures
+// the great-circle chord between the FIRST and LAST LineString coordinates only.
+// The fixture's interior shape point is ~21 m from the first endpoint while the
+// true endpoint chord is ~1060 m; length_m=100 sits between them, so it loads iff
+// the guard wrongly used the interior coord. The loader must REJECT it.
+func TestChordGuardMeasuresEndpointsNotInterior(test *testing.T) {
+	roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(threeVertexShortLengthEdge)))
+	if err == nil {
+		test.Fatalf("length_m below the first→last endpoint chord must be rejected even when an interior shape point is closer")
+	}
+	if roadGraph != nil || geom != nil {
+		test.Errorf("rejected load must return nil graph/map, got g=%v geom=%v", roadGraph, geom)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("chord")) {
+		test.Errorf("error %q should name the chord", err.Error())
 	}
 }
 
