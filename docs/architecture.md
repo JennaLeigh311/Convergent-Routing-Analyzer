@@ -141,10 +141,20 @@ depending on the loader invariant holding. The canonical toy fixture (`engine/te
 was regenerated for #81 by uniformly scaling its drawn geometry toward the centroid so every chord drops below
 its curated `length_m`; the curated attributes are unchanged, so routing costs and the golden are unaffected.
 
-**Future option (not built).** If an operator ever wants an *early warning* that an export is more fragmented
-than expected, the right shape is an **opt-in, non-fatal** connectivity report (e.g. a `WithConnectivityWarn`
-load option or a separate analysis tool that logs the component-size histogram) — a diagnostic, never a
-fail-closed rejection. No trigger has fired for this yet; the routing-layer handling above is sufficient.
+**Built option: `WithConnectivityWarn` (issue #82).** An operator who wants an *early warning* that an export
+is more fragmented than expected can pass the **opt-in, non-fatal** `WithConnectivityWarn` load option. It is
+**OFF by default**, so a load with no options is byte-identical to before — no connectivity code runs. When
+set, after the graph is built the loader computes the graph's **weak** connectivity (every edge treated as
+undirected, via union-find) and, if the graph splits into more than one weakly-connected component, emits a
+single non-fatal `slog` warning: the component count, the largest ("main") component's node count and
+fraction, the number of nodes unreachable from it, and an ascending, capped (first 10) sample of those
+unreachable node ids. Weak — not strong — connectivity is used deliberately: weak flags genuine topological
+splits (a bad bbox clip, a physically separated island) while NOT flagging legitimate one-way sinks (a node
+reachable forward with no edge back out), which strong/directed connectivity would noisily report on almost
+every real extract. The option is purely **diagnostic**: it never rejects (the export still loads with a
+non-nil graph and nil error), it changes nothing about default load behavior, and it does not touch the frozen
+§2 contract. The routing-layer no-route handling described above remains the actual correctness mechanism for
+unreachable OD pairs; this option only logs.
 
 This decision is exercised by `engine/testdata/toy_network_adversarial.geojson` and the regression test in
 `engine/internal/routing/` that asserts an unreachable OD pair returns a clean no-route and that no router

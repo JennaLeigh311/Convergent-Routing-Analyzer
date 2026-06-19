@@ -71,6 +71,13 @@ type loadConfig struct {
 	// is enforced and the loader is fully region-agnostic.
 	hasBounds                      bool
 	lonMin, lonMax, latMin, latMax float64
+
+	// connectivityWarn is set by WithConnectivityWarn. When false (the default),
+	// NO connectivity code runs, so the default load is byte-identical to a load
+	// with no options at all. When true, after the graph is built the loader
+	// computes weak connectivity and logs a non-fatal warning if the graph is
+	// fragmented — it never rejects.
+	connectivityWarn bool
 }
 
 // LoadOption configures an individual LoadEdgeAttributesGeoJSON call via the
@@ -97,6 +104,37 @@ func WithExpectedBounds(lonMin, lonMax, latMin, latMax float64) LoadOption {
 	return func(config *loadConfig) {
 		config.hasBounds = true
 		config.lonMin, config.lonMax, config.latMin, config.latMax = lonMin, lonMax, latMin, latMax
+	}
+}
+
+// WithConnectivityWarn enables an OPT-IN, NON-FATAL connectivity diagnostic on
+// the load. It is OFF by default: a load with no options (or any load that omits
+// this option) runs exactly as before, with no connectivity code path and
+// byte-identical behavior. When set, AFTER the graph is successfully built the
+// loader computes the graph's WEAK connectivity (treating every edge as
+// undirected) and, if the graph splits into more than one weakly-connected
+// component, emits a single structured slog warning naming the component count,
+// the largest component's node count and fraction, the number of nodes
+// unreachable from that largest ("main") component, and an ascending, capped
+// sample of those unreachable node ids.
+//
+// It is a DIAGNOSTIC, never a rejection. An unreachable component is surfaced for
+// an operator's attention (the usual cause is a bad bounding-box clip or a
+// physically separated region carried as an island) but the export still loads
+// successfully — non-nil graph, nil error. Reachability/no-route handling stays a
+// routing-layer concern; this option only logs.
+//
+// Weak, not strong, on purpose: weak connectivity treats edges as undirected, so
+// it flags genuine topological splits while NOT flagging legitimate one-way sinks
+// (a node reachable forward but with no edge back out, e.g. a one-way street or a
+// dead-end slip road), which strong/directed connectivity would noisily report on
+// almost every real extract. The diagnostic is region- and topology-agnostic: it
+// makes no assumption about the network's geography and only reads the loaded
+// node/edge structure. See connectivity.go for the implementation and the
+// weak-vs-strong rationale in full.
+func WithConnectivityWarn() LoadOption {
+	return func(config *loadConfig) {
+		config.connectivityWarn = true
 	}
 }
 
@@ -335,6 +373,15 @@ func LoadEdgeAttributesGeoJSON(reader io.Reader, opts ...LoadOption) (graph *Adj
 	if err != nil {
 		return nil, nil, fmt.Errorf("edge_attributes: build graph: %w", err)
 	}
+
+	// Opt-in, non-fatal connectivity diagnostic (issue #82). Only runs when the
+	// caller passed WithConnectivityWarn; when off, no new code path executes, so
+	// the default load stays byte-identical. It logs (via slog) if the graph is
+	// not weakly connected and never rejects — see connectivity.go.
+	if cfg.connectivityWarn {
+		warnIfNotWeaklyConnected(nodes, edges)
+	}
+
 	return graph, geom, nil
 }
 
