@@ -17,14 +17,15 @@
 // run (or routing the wrong count) fails the merge gate too.
 //
 // DETERMINISM: every summary line this harness emits must be byte-identical run
-// to run (modulo the naive line's wall-clock `elapsed`, which is the only
-// time-varying field). The MSA and systemoptimal routers achieve this via sorted
+// to run, modulo two wall-clock fields: the slog text handler's own `time=` stamp
+// on every line, and the naive line's `elapsed=` routing duration. The MSA and
+// systemoptimal routers achieve this via sorted
 // node/edge iteration (internal/routing/repro.go), never RNG; the multipath
 // router's randomized split is made reproducible by threading a single fixed seed
 // (benchSeed below) into its constructor — per-request seeding inside the router
 // keeps a fixed seed ⇒ identical split regardless of worker scheduling. The
 // in-process determinism test (main_test.go) runs the whole harness twice and
-// asserts byte-identical output (after normalizing the naive `elapsed` token), so
+// asserts byte-identical output (after normalizing those two wall-clock fields), so
 // any nondeterministic flow/ordering leaking from MSA averaging or the multipath
 // split fails `go test -race ./...`.
 //
@@ -61,7 +62,12 @@ const benchSeed int64 = 20260618
 
 // benchK is the per-request path count for the multipath router's Yen K-shortest
 // split. Three is the same small value the multipath tests exercise — enough to
-// demonstrate a split over the toy graph without enumerating every path.
+// demonstrate a split over the toy graph without enumerating every path. NOTE: on
+// this sparse toy graph an OD pair may have fewer than benchK simple paths, in
+// which case the probabilistic draw collapses onto the single available path and
+// does not actually fan out. The determinism test still gates path-enumeration
+// order and requests_routed here; it does not assert the split itself fires — that
+// is covered by the multipath router's own unit tests (internal/routing).
 const benchK = 3
 
 // toyRequests returns the shared toy request batch every router in this harness
@@ -80,7 +86,11 @@ func toyRequests() []routing.RouteRequest {
 }
 
 func main() {
-	logging.Setup() // installs the configured logger as the slog default.
+	// No logging.Setup() here: run() builds its own writer-bound logger and nothing
+	// in the benchmark's call graph logs through slog.Default(), so installing a
+	// global default would be dead configuration. If a router ever starts emitting
+	// via slog.Default(), wire logging.Setup() back in (and thread its config into
+	// run) so that output is captured by the determinism test too.
 	if err := run(os.Stderr, toyNetworkPath); err != nil {
 		os.Exit(1)
 	}
@@ -89,9 +99,10 @@ func main() {
 // run loads the graph at graphPath, routes the shared batch through the naive
 // router and each Phase-3 router, and writes one summary line per router to w. It
 // returns a non-nil error (and logs it) on any load/routing failure so main can
-// exit non-zero. Output to w is deterministic apart from the naive line's
-// `elapsed` wall-clock field, so the determinism test can run this twice and
-// compare. graphPath is a parameter (not the package const) only so the in-process
+// exit non-zero. Output to w is deterministic apart from two wall-clock fields (the
+// slog `time=` stamp on every line and the naive line's `elapsed=`), so the
+// determinism test can run this twice and compare. graphPath is a parameter (not
+// the package const) only so the in-process
 // test can resolve the fixture relative to the test's working directory; main
 // always passes toyNetworkPath.
 func run(w io.Writer, graphPath string) error {

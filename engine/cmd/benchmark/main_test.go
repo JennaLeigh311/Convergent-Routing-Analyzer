@@ -18,12 +18,18 @@ const toyGraphFromTestDir = "../../testdata/toy_network.geojson"
 //   - time=...   the slog text handler stamps every line with wall-clock time.
 //   - elapsed=... the naive line reports its own wall-clock routing duration.
 //
+// The leading \b anchors each alternative to a key boundary so only the exact
+// `time=` and `elapsed=` tokens are stripped: a future structured field whose key
+// merely starts with those words (e.g. `elapsed_ms=` or `time_to_route=`) is NOT
+// stripped, so its value still participates in the determinism check rather than
+// being silently masked.
+//
 // Everything else (router names, node/edge counts, requests_routed, field
 // ordering) is the deterministic content this harness exists to gate. A router
 // leaking nondeterminism (MSA averaging order, multipath split without the fixed
 // seed) would change requests_routed or the line set, which survives this
 // normalization and fails the byte-identical check below.
-var volatileFields = regexp.MustCompile(`(?:time|elapsed)=\S+`)
+var volatileFields = regexp.MustCompile(`\b(?:time|elapsed)=\S+`)
 
 func normalize(out string) string {
 	return volatileFields.ReplaceAllString(out, "")
@@ -46,6 +52,15 @@ func runOnce(t *testing.T) string {
 // iteration (not RNG), and multipath via the fixed benchSeed. Any run-to-run
 // drift in flow/ordering/counts fails here — and because this runs under
 // `go test -race ./...` (Lane A), it auto-gates the merge.
+//
+// SCOPE: both runs execute in one process, so they share GOMAXPROCS. The iterative
+// routers shard work by index % workerCount (workerCount caps at GOMAXPROCS), so a
+// host with a different core count could in principle accumulate per-shard flow in
+// a different order. That is invisible here and harmless today because the summary
+// lines expose only requests_routed and the router name, never flow values. If a
+// flow-sensitive field is ever added to the summary, the routers must combine
+// shards in a fixed (GOMAXPROCS-independent) order and this test should be
+// re-evaluated for cross-core determinism.
 func TestBenchDeterministic(t *testing.T) {
 	first := normalize(runOnce(t))
 	second := normalize(runOnce(t))
@@ -110,6 +125,16 @@ func TestBenchSummaryShape(t *testing.T) {
 		if got := fieldOrder(line); got != "component router nodes edges requests_routed" {
 			t.Errorf("%s line field order drifted: %q", name, got)
 		}
+	}
+}
+
+// TestBenchBadGraphPath covers run()'s load-failure branch: a nonexistent graph
+// path must return a non-nil error (which main turns into a non-zero exit), so a
+// missing/unreadable network fails the build rather than silently routing nothing.
+func TestBenchBadGraphPath(t *testing.T) {
+	var buf bytes.Buffer
+	if err := run(&buf, "../../testdata/does-not-exist.geojson"); err == nil {
+		t.Fatal("run() with a nonexistent graph path returned nil error; want non-nil")
 	}
 }
 

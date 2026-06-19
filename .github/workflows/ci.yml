@@ -94,6 +94,10 @@ jobs:
         # follow-up to pin it alongside golangci-lint. The vuln DB itself is still
         # fetched fresh at run time regardless of binary version, so a newly
         # disclosed vuln is caught without bumping the pin.
+        #
+        # Keep @v1.4.0 in sync with GOVULNCHECK_VERSION in the repo Makefile (which
+        # `make vuln` installs) so a local scan uses the SAME scanner as this gate —
+        # mirroring the golangci-lint pin's Makefile/CI sync contract.
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.4.0
           govulncheck ./...

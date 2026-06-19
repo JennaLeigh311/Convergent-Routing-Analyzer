@@ -33,7 +33,7 @@ COMPOSE ?= docker compose
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up-core up-full down clean test route bench replay integration lint protect-main
+.PHONY: help up-core up-full down clean test route bench replay integration lint vuln protect-main
 
 ## help: list the available targets
 help:
@@ -47,6 +47,7 @@ help:
 	@echo "  bench        cd engine && go run ./cmd/benchmark (naive router over the toy graph)"
 	@echo "  replay       cd engine && go run ./cmd/replay (stub today)"
 	@echo "  lint         cd engine && gofmt check + go vet ./... + golangci-lint (required)"
+	@echo "  vuln         cd engine && govulncheck ./... (pinned scanner; matches CI)"
 	@echo "  integration  boot full, smoke (engine /healthz /readyz, web /), tear down"
 	@echo "  protect-main apply main's branch-protection rule (repo admin; post-CI)"
 
@@ -101,6 +102,12 @@ replay:
 # v2.12.2 is built with go1.26.2, so it parses the engine's go-1.26.4 source.
 GOLANGCI_LINT_VERSION := v2.12.2
 
+# Pinned govulncheck version — keep in sync with the govulncheck step in
+# .github/workflows/ci.yml (the CI gate installs this exact version). The binary is
+# pinned for reproducibility; the vuln DB is still fetched fresh at run time, so a
+# newly disclosed vuln is caught without bumping this pin.
+GOVULNCHECK_VERSION := v1.4.0
+
 ## lint: gofmt + go vet + golangci-lint (the same gate lane A runs). golangci-lint
 ## is REQUIRED, not optional: if it isn't installed this target fails with an
 ## install hint rather than silently skipping, so a degraded local gate can't
@@ -125,6 +132,16 @@ lint:
 	}
 	@echo ">> golangci-lint run ($(GOLANGCI_LINT_VERSION) pinned in CI)"
 	cd engine && golangci-lint run
+
+## vuln: scan the reachable module + stdlib graph against the Go vulnerability DB,
+## the same gate lane A runs. Installs the PINNED $(GOVULNCHECK_VERSION) (matches
+## CI) so a local scan can't diverge from the merge gate, then runs it. A
+## known-vulnerable, actually-called dependency fails here just as it does in CI.
+vuln:
+	@echo ">> go install govulncheck@$(GOVULNCHECK_VERSION) (pinned; matches CI)"
+	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
+	@echo ">> govulncheck ./..."
+	cd engine && govulncheck ./...
 
 # ---- integration smoke (what lane C runs) -----------------------------------
 
