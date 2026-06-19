@@ -113,8 +113,26 @@ comment). Connectivity is a *topological property of valid data*, not a contract
   owns "can I get from A to B".
 
 **What the loader still guarantees** (so the routing layer can rely on it): dense `0..NodeCount-1` node ids
-and `0..EdgeCount-1` edge ids, finite-positive metric fields, and `From`/`To` in range. That is what lets
-`dijkstra` use flat slices and trust that a non-`+Inf` settled distance is a real path.
+and `0..EdgeCount-1` edge ids, finite-positive metric fields, `From`/`To` in range, and (issue #81) that each
+edge's `length_m` is `>=` the great-circle chord between its endpoint nodes — a road is at least as long as the
+straight line between its ends. That is what lets `dijkstra` use flat slices and trust that a non-`+Inf` settled
+distance is a real path.
+
+## `length_m` ≥ endpoint chord: loader guard vs. A* divisor (issue #81)
+
+**Decision.** The `edge_attributes` loader enforces the §2 invariant `length_m >= chord(endpoints)` on every
+edge (with a tiny relative tolerance, `lengthChordRelTol = 1e-9`, so a legitimately straight road where
+`length_m == chord` is not rejected on float rounding). Bad geometry is rejected at the source rather than left
+for each downstream consumer to defend against.
+
+**A* divisor stays geometry-derived.** Even though the loader now guarantees `length_m >= chord` (so
+`LengthM/FreeFlowS` would be an admissible A* heuristic divisor on conformant data), the A* router
+(`engine/internal/routing/astar.go`, `maxFreeFlowSpeedMS`) **keeps** the `chord/FreeFlowS` divisor as
+defense-in-depth: it is admissible *by construction* from the same endpoint geometry the heuristic measures, so
+A* stays correct on any graph — a hand-built test graph, a loader bypass, or a future contract drift — without
+depending on the loader invariant holding. The canonical toy fixture (`engine/testdata/toy_network.geojson`)
+was regenerated for #81 by uniformly scaling its drawn geometry toward the centroid so every chord drops below
+its curated `length_m`; the curated attributes are unchanged, so routing costs and the golden are unaffected.
 
 **Future option (not built).** If an operator ever wants an *early warning* that an export is more fragmented
 than expected, the right shape is an **opt-in, non-fatal** connectivity report (e.g. a `WithConnectivityWarn`

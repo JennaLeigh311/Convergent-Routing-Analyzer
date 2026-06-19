@@ -18,13 +18,15 @@ import (
 )
 
 // The shared toy fixture (loaded by loadToyGraphInternal, defined in
-// scratch_internal_test.go) has hand-written length_m values SMALLER than the
-// great-circle distance between the edge endpoints it also declares (e.g. 905512:0:F
-// states length_m=500 but its endpoints are ~1011 m apart by haversine) — the
-// geometry quirk the chord-based heuristic divisor (maxFreeFlowSpeedMS) is hardened
-// against. The admissibility and parity tests below run on BOTH that real fixture and
-// the synthetic buildGeoConsistentGraph lattice, whose free-flow time is derived FROM
-// the node geometry so length_m == chord by construction.
+// scratch_internal_test.go) has curated length_m values that, as of issue #81, are
+// >= the great-circle chord between the edge endpoints it declares (the geometry was
+// scaled toward the centroid so the §2 length_m >= chord invariant holds; the loader
+// now enforces it). The chord-based heuristic divisor (maxFreeFlowSpeedMS) is kept as
+// defense-in-depth: it stays admissible BY CONSTRUCTION even if some future graph
+// violated that invariant, since it is derived from endpoint geometry, not length_m.
+// The admissibility and parity tests below run on BOTH that real fixture and the
+// synthetic buildGeoConsistentGraph lattice, whose free-flow time is derived FROM the
+// node geometry so length_m == chord by construction.
 
 // buildGeoConsistentGraph builds a sideLen x sideLen 4-neighbor lattice whose
 // per-edge free-flow time is derived from the SAME node geometry the A* heuristic
@@ -215,11 +217,11 @@ func TestAStarSettlesNoMoreThanDijkstra(test *testing.T) {
 
 // TestMaxFreeFlowSpeedMS pins the heuristic divisor to the maximum per-edge
 // STRAIGHT-LINE (endpoint-chord) speed over the graph — chord/FreeFlowS — NOT the
-// LengthM/FreeFlowS edge speed. On the toy fixture every edge's length_m is shorter
-// than its endpoint chord, so chord/FreeFlowS exceeds LengthM/FreeFlowS; the divisor
-// must be the largest chord/FreeFlowS so that chord_i/divisor ≤ FreeFlowS_i holds
-// for every edge (the admissibility guarantee — see maxFreeFlowSpeedMS). The fastest
-// such edge on the toy network is 905512:1:F (chord ~1009 m / 14.4 s ≈ 70.1 m/s).
+// LengthM/FreeFlowS edge speed. As of issue #81 the toy fixture satisfies length_m >=
+// endpoint chord, so chord/FreeFlowS <= LengthM/FreeFlowS now; the divisor is still
+// the largest chord/FreeFlowS so that chord_i/divisor ≤ FreeFlowS_i holds for every
+// edge (the admissibility guarantee — see maxFreeFlowSpeedMS). The test recomputes the
+// expectation from the fixture's live geometry, so it tracks the regenerated coords.
 func TestMaxFreeFlowSpeedMS(test *testing.T) {
 	roadGraph := loadToyGraphInternal(test)
 	got := maxFreeFlowSpeedMS(roadGraph)
@@ -246,14 +248,14 @@ func TestMaxFreeFlowSpeedMS(test *testing.T) {
 	}
 }
 
-// TestAStarHeuristicAdmissibleOnToyNetwork is the item-3 guarantee that the new
-// chord-based divisor restores admissibility on the REAL toy fixture — the fixture
-// whose hand-written length_m values are SHORTER than the endpoint chord, exactly
-// the geometry quirk that made the old LengthM/FreeFlowS divisor inadmissible there
-// (and the codebase had to route the old admissibility test over a synthetic
-// geo-consistent grid to dodge it). With the divisor derived from endpoint geometry,
-// h ≤ true remaining free-flow time must hold for every reachable node→dst pair on
-// the toy network itself.
+// TestAStarHeuristicAdmissibleOnToyNetwork is the item-3 guarantee that the
+// chord-based divisor keeps the heuristic admissible on the REAL toy fixture. The
+// fixture used to have hand-written length_m values SHORTER than the endpoint chord
+// (the geometry quirk that made the old LengthM/FreeFlowS divisor inadmissible); as
+// of issue #81 the geometry was scaled so length_m >= chord holds, but the divisor is
+// still derived from endpoint geometry rather than length_m, so this admissibility
+// proof does not depend on that invariant. h ≤ true remaining free-flow time must
+// hold for every reachable node→dst pair on the toy network itself.
 func TestAStarHeuristicAdmissibleOnToyNetwork(test *testing.T) {
 	roadGraph := loadToyGraphInternal(test)
 	router := NewAStarRouter(roadGraph)

@@ -35,6 +35,14 @@ type AStarRouter struct {
 	// rather than LengthM/FreeFlowS, so the bound holds even on an edge whose declared
 	// length_m is shorter than its endpoint chord; a smaller divisor would lose
 	// pruning (still admissible), a larger one could make h inadmissible.
+	//
+	// As of issue #81 the loader enforces length_m >= chord on every §2 export (and the
+	// canonical toy fixture was regenerated to satisfy it), so LengthM/FreeFlowS would
+	// now ALSO be admissible on conformant data. We deliberately keep the chord/FreeFlowS
+	// form as defense-in-depth: it is admissible BY CONSTRUCTION from the same endpoint
+	// geometry the heuristic measures, so A* stays correct regardless of any length_m
+	// anomaly — a hand-built test graph, a future loader-bypass, or a contract drift —
+	// without depending on the loader invariant holding. See maxFreeFlowSpeedMS.
 	maxSpeedMS float64
 }
 

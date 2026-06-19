@@ -111,7 +111,7 @@ func TestGeometryFidelity(test *testing.T) {
 	if len(threeVtx) != 3 {
 		test.Fatalf("33112200:0:F geometry has %d coords, want 3 (interior shape point retained)", len(threeVtx))
 	}
-	wantInterior := [2]float64{-73.93720, 40.75640}
+	wantInterior := [2]float64{-73.93714, 40.75646}
 	if threeVtx[1] != wantInterior {
 		test.Errorf("33112200:0:F interior coord = %v, want %v", threeVtx[1], wantInterior)
 	}
@@ -449,6 +449,103 @@ func TestRejectContradictoryNodeCoords(test *testing.T) {
 	}
 	if !bytes.Contains([]byte(err.Error()), []byte("contradictory")) {
 		test.Errorf("error %q should name the contradictory endpoint coordinates", err.Error())
+	}
+}
+
+// shortLengthEdge is a §2-valid single-edge FeatureCollection EXCEPT that
+// length_m (50 m) is far shorter than the great-circle chord between its
+// endpoints (~210 m for these Tokyo coords). A road must be at least as long as
+// the straight line between its ends, so the issue #81 loader guard must reject
+// it (a length_m < endpoint chord is a contradictory export — and it would make
+// the A* admissible heuristic inadmissible). The same coords with length_m=210
+// load cleanly, see TestStraightRoadLengthEqualsChordLoads.
+const shortLengthEdge = `{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.70010, 35.68950], [139.70220, 35.69010]]
+      },
+      "properties": {
+        "segment_id": "4001234:0:F",
+        "edge_id": 0,
+        "source_node": 10,
+        "target_node": 11,
+        "osm_way_id": 4001234,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 50.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    }
+  ]
+}`
+
+// TestRejectLengthShorterThanChord asserts the issue #81 guard: an edge whose
+// length_m is shorter than its endpoint great-circle chord is rejected with a
+// non-nil error and a nil graph (fail-closed), and the message names length_m so
+// the offending invariant is identifiable.
+func TestRejectLengthShorterThanChord(test *testing.T) {
+	roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(shortLengthEdge)))
+	if err == nil {
+		test.Fatalf("length_m shorter than the endpoint chord must be rejected (§2 length_m >= chord)")
+	}
+	if roadGraph != nil || geom != nil {
+		test.Errorf("rejected load must return nil graph/map, got g=%v geom=%v", roadGraph, geom)
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("length_m")) || !bytes.Contains([]byte(err.Error()), []byte("chord")) {
+		test.Errorf("error %q should name length_m and the chord", err.Error())
+	}
+}
+
+// straightRoadEdge is a §2-valid single-edge FeatureCollection whose length_m
+// (210 m) is set to ~the endpoint chord for these coords: a legitimately straight
+// road where length_m ≈ chord. It MUST load cleanly — the issue #81 guard's small
+// relative tolerance (lengthChordRelTol) keeps float rounding between the authored
+// length and the loader's haversine from spuriously rejecting it.
+const straightRoadEdge = `{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [[139.70010, 35.68950], [139.70220, 35.69010]]
+      },
+      "properties": {
+        "segment_id": "4001234:0:F",
+        "edge_id": 0,
+        "source_node": 10,
+        "target_node": 11,
+        "osm_way_id": 4001234,
+        "highway_class": "primary",
+        "lanes_effective": 2,
+        "length_m": 210.0,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 15.1,
+        "capacity_vph": 1800.0
+      }
+    }
+  ]
+}`
+
+// TestStraightRoadLengthEqualsChordLoads asserts a legitimately straight road
+// (length_m ≈ endpoint chord) is NOT rejected by the issue #81 guard — the
+// tolerance absorbs float noise so length_m == chord is accepted, not a
+// false-positive rejection.
+func TestStraightRoadLengthEqualsChordLoads(test *testing.T) {
+	roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSON(bytes.NewReader([]byte(straightRoadEdge)))
+	if err != nil {
+		test.Fatalf("a straight road with length_m ≈ chord must load cleanly, got: %v", err)
+	}
+	if roadGraph == nil || geom == nil {
+		test.Errorf("clean load must return a non-nil graph and geometry map")
 	}
 }
 

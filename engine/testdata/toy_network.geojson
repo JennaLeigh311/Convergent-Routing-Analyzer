@@ -1,13 +1,13 @@
 {
   "type": "FeatureCollection",
   "schema_version": 1,
-  "note": "Toy routing network (#26): a §2-conformant edge_attributes FeatureCollection used as the shared routing test asset for #27 and later phases. 7 directed edges, 6 dense nodes (0..5), dense edge_id 0..6. CORE PROPERTY (lowest-cost != fewest-hops): from origin node 0 to destination node 2 there is BOTH a direct 1-hop edge (edge_id 0, segment 9000001:0:F, residential, 900 m @ 30 km/h, freeflow=108.0 s) AND a 2-hop alternative node0->node1->node2 (edge_id 1 segment 905512:0:F freeflow=18.0 s, then edge_id 2 segment 905512:1:F freeflow=14.4 s; total=32.4 s). The 2-hop path has MORE edges yet a strictly LOWER summed freeflow_time_s (32.4 s < 108.0 s), so a fewest-hops router and a lowest-cost router disagree. capacity_scale=1.0 throughout. Region: NYC-ish, lon [-73.99..-73.95], lat [40.73..40.75]. Overlaps the segment_congestion fixture on 27583001:0:F, 48800123:0:F, 48800123:0:R for a later congestion-overlay demo. See README.md.",
+  "note": "Toy routing network (#26): a §2-conformant edge_attributes FeatureCollection used as the shared routing test asset for #27 and later phases. 7 directed edges, 6 dense nodes (0..5), dense edge_id 0..6. CORE PROPERTY (lowest-cost != fewest-hops): from origin node 0 to destination node 2 there is BOTH a direct 1-hop edge (edge_id 0, segment 9000001:0:F, residential, 900 m @ 30 km/h, freeflow=108.0 s) AND a 2-hop alternative node0->node1->node2 (edge_id 1 segment 905512:0:F freeflow=18.0 s, then edge_id 2 segment 905512:1:F freeflow=14.4 s; total=32.4 s). The 2-hop path has MORE edges yet a strictly LOWER summed freeflow_time_s (32.4 s < 108.0 s), so a fewest-hops router and a lowest-cost router disagree. capacity_scale=1.0 throughout. Region: NYC-ish, lon [-73.975..-73.966], lat [40.737..40.742]. INVARIANT (#81): every edge's length_m >= the great-circle chord between its endpoint nodes (a road is at least as long as the straight line between its ends) — the §2 edge_attributes contract invariant the loader now enforces. The drawn geometry was uniformly scaled toward the network centroid by 0.25 (from the original lon [-73.99..-73.95], lat [40.73..40.75] window) so every chord drops comfortably below its curated length_m (worst ratio chord/length ~0.75 on 48800123:0:F); the curated length_m / maxspeed_kmh / freeflow_time_s / capacity_vph triples are UNCHANGED, so routing costs (and canonical_route.golden) are unaffected. Uniform scaling preserves relative geometry, so nearest-node snapping order is preserved. Overlaps the segment_congestion fixture on 27583001:0:F, 48800123:0:F, 48800123:0:R for a later congestion-overlay demo. See README.md.",
   "features": [
     {
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.99000, 40.73000], [-73.98200, 40.73200], [-73.97000, 40.74000]]
+        "coordinates": [[-73.97491, 40.73736], [-73.97291, 40.73786], [-73.96991, 40.73986]]
       },
       "properties": {
         "segment_id": "9000001:0:F",
@@ -22,13 +22,13 @@
         "freeflow_time_s": 108.0,
         "capacity_vph": 900.0
       },
-      "note": "DIRECT 1-hop origin(node0)->dest(node2). Deliberately SLOW: one-way residential, defaults lanes=1, maxspeed=30. capacity=1*1800*0.5=900; freeflow=900/(30/3.6)=108.0. THREE-vertex LineString: the middle coordinate [-73.98200,40.73200] is a geometry shape point, NOT a graph node (only first/last map to source_node/target_node). This is the edge a fewest-hops router picks but a lowest-cost router avoids."
+      "note": "DIRECT 1-hop origin(node0)->dest(node2). Deliberately SLOW: one-way residential, defaults lanes=1, maxspeed=30. capacity=1*1800*0.5=900; freeflow=900/(30/3.6)=108.0. THREE-vertex LineString: the middle coordinate [-73.97291,40.73786] is a geometry shape point, NOT a graph node (only first/last map to source_node/target_node). This is the edge a fewest-hops router picks but a lowest-cost router avoids."
     },
     {
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.99000, 40.73000], [-73.98000, 40.73500]]
+        "coordinates": [[-73.97491, 40.73736], [-73.97241, 40.73861]]
       },
       "properties": {
         "segment_id": "905512:0:F",
@@ -43,13 +43,13 @@
         "freeflow_time_s": 18.0,
         "capacity_vph": 5400.0
       },
-      "note": "First hop of the FAST 2-hop alternative origin(node0)->node1. One-way motorway sub-segment seq=0, defaults lanes=3, maxspeed=100. capacity=3*1800*1.0=5400; freeflow=500/(100/3.6)=18.0. Shares node0 with edge_id 0 (same endpoint coords [-73.99000,40.73000])."
+      "note": "First hop of the FAST 2-hop alternative origin(node0)->node1. One-way motorway sub-segment seq=0, defaults lanes=3, maxspeed=100. capacity=3*1800*1.0=5400; freeflow=500/(100/3.6)=18.0. Shares node0 with edge_id 0 (same endpoint coords [-73.97491,40.73736])."
     },
     {
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.98000, 40.73500], [-73.97000, 40.74000]]
+        "coordinates": [[-73.97241, 40.73861], [-73.96991, 40.73986]]
       },
       "properties": {
         "segment_id": "905512:1:F",
@@ -64,13 +64,13 @@
         "freeflow_time_s": 14.4,
         "capacity_vph": 5400.0
       },
-      "note": "Second hop of the FAST 2-hop alternative node1->dest(node2). Same motorway way 905512, next sub-segment seq=1 after a pgRouting split. defaults lanes=3, maxspeed=100. capacity=3*1800*1.0=5400; freeflow=400/(100/3.6)=14.4. Shares node2 with edge_id 0 (same endpoint coords [-73.97000,40.74000]). Path total freeflow node0->node1->node2 = 18.0 + 14.4 = 32.4 s < 108.0 s direct."
+      "note": "Second hop of the FAST 2-hop alternative node1->dest(node2). Same motorway way 905512, next sub-segment seq=1 after a pgRouting split. defaults lanes=3, maxspeed=100. capacity=3*1800*1.0=5400; freeflow=400/(100/3.6)=14.4. Shares node2 with edge_id 0 (same endpoint coords [-73.96991,40.73986]). Path total freeflow node0->node1->node2 = 18.0 + 14.4 = 32.4 s < 108.0 s direct."
     },
     {
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.97000, 40.74000], [-73.96500, 40.74200]]
+        "coordinates": [[-73.96991, 40.73986], [-73.96866, 40.74036]]
       },
       "properties": {
         "segment_id": "27583001:0:F",
@@ -91,7 +91,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.96500, 40.74200], [-73.96000, 40.74500]]
+        "coordinates": [[-73.96866, 40.74036], [-73.96741, 40.74111]]
       },
       "properties": {
         "segment_id": "48800123:0:F",
@@ -112,7 +112,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.96000, 40.74500], [-73.96500, 40.74200]]
+        "coordinates": [[-73.96741, 40.74111], [-73.96866, 40.74036]]
       },
       "properties": {
         "segment_id": "48800123:0:R",
@@ -133,7 +133,7 @@
       "type": "Feature",
       "geometry": {
         "type": "LineString",
-        "coordinates": [[-73.96000, 40.74500], [-73.95700, 40.74650], [-73.95500, 40.74800]]
+        "coordinates": [[-73.96741, 40.74111], [-73.96666, 40.74148], [-73.96616, 40.74186]]
       },
       "properties": {
         "segment_id": "33112200:0:F",
@@ -148,7 +148,7 @@
         "freeflow_time_s": 18.0,
         "capacity_vph": 3240.0
       },
-      "note": "One-way trunk, defaults lanes=2, maxspeed=80, exercises class_factor 0.9. capacity=2*1800*0.9=3240; freeflow=400/(80/3.6)=18.0. THREE-vertex LineString: the middle coordinate [-73.95700,40.74650] is a geometry shape point, NOT a graph node. node4->node5."
+      "note": "One-way trunk, defaults lanes=2, maxspeed=80, exercises class_factor 0.9. capacity=2*1800*0.9=3240; freeflow=400/(80/3.6)=18.0. THREE-vertex LineString: the middle coordinate [-73.96666,40.74148] is a geometry shape point, NOT a graph node. node4->node5."
     }
   ]
 }
