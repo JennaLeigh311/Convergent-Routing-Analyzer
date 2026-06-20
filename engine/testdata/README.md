@@ -150,3 +150,49 @@ The loader does **not** reject disconnected graphs; reachability is a routing-la
 concern. See `docs/architecture.md` → "Graph connectedness: unreachability is a
 routing-layer concern, not a loader rejection (issue #73)" for the full decision and
 rationale.
+
+## `toy_network_pigou.geojson`
+
+A third, §2-conformant `edge_attributes` fixture authored for issue #89 to give the
+Phase-4 benchmark a network with a **genuine Price of Anarchy (PoA > 1)** — the
+property `toy_network.geojson` (PoA ≈ 1) cannot provide, which is exactly why
+`engine/internal/routing/systemoptimal_test.go` (`TestSystemOptimalNoWorseThanUE`)
+defers the strict-PoA demonstration to here. It loads cleanly through the same `#25`
+loader and is exercised by `engine/internal/benchmark/poa_test.go`. Its `osm_way_id`s
+are fresh `91000xx` ids, disjoint from the other two fixtures and the congestion
+fixture.
+
+### Topology — the classic Pigou two-link network
+
+A single origin **node 0** and destination **node 1**, joined by **two one-way
+directed edges in parallel** (both `0→1`, sharing endpoint nodes):
+
+| edge_id | segment_id   | from→to | class       | length_m | maxspeed_kmh | lanes | capacity_vph | freeflow_time_s |
+|---------|--------------|---------|-------------|----------|--------------|-------|--------------|-----------------|
+| 0       | 9100001:0:F  | 0→1     | residential | 600.0    | 60.0         | 1     | 900.0        | 36.0            |
+| 1       | 9100002:0:F  | 0→1     | motorway    | 600.0    | 30.0         | 4     | 7200.0       | 72.0            |
+
+Node positions (`[lon, lat]`): node 0 `[-73.97000, 40.74000]`, node 1
+`[-73.96500, 40.74300]`. Both edges' `length_m` (600 m) is **≥** the ~537 m
+great-circle endpoint chord, satisfying the `#81`/`#87` loader guard. Edge 1 carries
+an interior geometry shape point so the two parallel edges have distinct LineStrings;
+that point is **not** a graph node (`NodeCount` = 2) and does not affect the chord.
+Derivation (`capacity_vph = lanes × 1800 × class_factor`,
+`freeflow_time_s = length_m / (maxspeed_kmh / 3.6)`): edge 0 residential
+`1×1800×0.5 = 900`, edge 1 motorway `4×1800×1.0 = 7200`.
+
+### The Pigou structure (why PoA > 1)
+
+- **Edge 0 is the cheap, low-capacity link:** lower free-flow time (36.0 s) so the
+  free-flow `naive` router selects it for **every** request, but only 900 vph
+  capacity, so it congests sharply under load.
+- **Edge 1 is the near-constant, high-capacity link:** higher free-flow time
+  (72.0 s) so `naive` never picks it at zero load, but 7200 vph capacity keeps its
+  realized BPR cost ≈ 72 s across the demand range here.
+
+At the congested level **D = 1800 vph** the selfish `naive` assignment piles all
+1800 onto edge 0 (`v/c = 2` ⇒ realized cost `36·(1 + 0.15·2⁴) = 122.4 s`, realized
+total ≈ **220320**), while a system-optimal split moves ~half the demand to edge 1
+(realized total ≈ **101760**) — internalizing edge 0's congestion externality. The
+benchmark therefore measures `PoA(naive) ≈ 2.17 > 1` and `systemoptimal` realized
+total ≤ `naive`'s. See `docs/benchmarks.md` for the metric definitions.
