@@ -27,12 +27,12 @@ package graph
 // Determinism. The whole project requires reproducible output, so this helper is
 // deterministic: the "largest component" tie-break (on equal size) prefers the
 // component containing the lowest node id, and the reported sample of unreachable
-// nodes is sorted ascending. Two loads of the same artifact therefore produce a
-// byte-identical warning.
+// nodes is ascending by construction (the collection loop walks node ids
+// 0..nodeCount-1, appending in order). Two loads of the same artifact therefore
+// produce a byte-identical warning.
 
 import (
 	"log/slog"
-	"sort"
 )
 
 // connectivityCapSample bounds how many unreachable node ids the warning lists.
@@ -67,13 +67,9 @@ func warnIfNotWeaklyConnected(nodes []Node, edges []Edge) {
 	// IGNORING direction, so a one-way edge still merges its two endpoints into
 	// one component. After the full pass, two nodes share a component iff some
 	// chain of edges (in either direction) connects them.
-	parent := make([]int, nodeCount)
-	rank := make([]int, nodeCount)
-	for index := range parent {
-		parent[index] = index
-	}
+	uf := newUnionFind(nodeCount)
 	for index := range edges {
-		union(parent, rank, int(edges[index].From), int(edges[index].To))
+		uf.union(int(edges[index].From), int(edges[index].To))
 	}
 
 	// Tally each component by its canonical root, tracking — deterministically —
@@ -83,7 +79,7 @@ func warnIfNotWeaklyConnected(nodes []Node, edges []Edge) {
 	componentSize := make(map[int]int, nodeCount)
 	lowestID := make(map[int]int, nodeCount)
 	for node := 0; node < nodeCount; node++ {
-		root := find(parent, node)
+		root := uf.find(node)
 		componentSize[root]++
 		if existing, ok := lowestID[root]; !ok || node < existing {
 			lowestID[root] = node
@@ -114,11 +110,10 @@ func warnIfNotWeaklyConnected(nodes []Node, edges []Edge) {
 	// nodes. The full count is reported; the logged sample is capped.
 	unreachable := make([]int, 0, nodeCount-largestSize)
 	for node := 0; node < nodeCount; node++ {
-		if find(parent, node) != largestRoot {
+		if uf.find(node) != largestRoot {
 			unreachable = append(unreachable, node)
 		}
 	}
-	sort.Ints(unreachable) // defensive: keep the sample ascending and reproducible.
 
 	sample := unreachable
 	if len(sample) > connectivityCapSample {
@@ -137,30 +132,45 @@ func warnIfNotWeaklyConnected(nodes []Node, edges []Edge) {
 	)
 }
 
-// find returns the canonical root of x's set, path-compressing as it walks so
-// repeated lookups flatten toward O(1).
-func find(parent []int, x int) int {
-	for parent[x] != x {
-		parent[x] = parent[parent[x]]
-		x = parent[x]
+// unionFind is the weak-connectivity disjoint-set structure: parent holds each
+// node's set link and rank bounds the tree height for union-by-rank. It replaces
+// the two parallel slices previously threaded through the call sites.
+type unionFind struct {
+	parent []int
+	rank   []int
+}
+
+// newUnionFind returns an n-element disjoint-set with every node its own singleton.
+func newUnionFind(n int) *unionFind {
+	parent := make([]int, n)
+	for index := range parent {
+		parent[index] = index
+	}
+	return &unionFind{parent: parent, rank: make([]int, n)}
+}
+
+// find returns the canonical root of x's set, path-halving as it walks.
+func (uf *unionFind) find(x int) int {
+	for uf.parent[x] != x {
+		uf.parent[x] = uf.parent[uf.parent[x]]
+		x = uf.parent[x]
 	}
 	return x
 }
 
-// union merges the sets containing a and b using union-by-rank, so the trees
-// stay shallow. It is a no-op when they already share a root.
-func union(parent, rank []int, a, b int) {
-	rootA, rootB := find(parent, a), find(parent, b)
+// union merges the sets containing a and b using union-by-rank (no-op if already joined).
+func (uf *unionFind) union(a, b int) {
+	rootA, rootB := uf.find(a), uf.find(b)
 	if rootA == rootB {
 		return
 	}
 	switch {
-	case rank[rootA] < rank[rootB]:
-		parent[rootA] = rootB
-	case rank[rootA] > rank[rootB]:
-		parent[rootB] = rootA
+	case uf.rank[rootA] < uf.rank[rootB]:
+		uf.parent[rootA] = rootB
+	case uf.rank[rootA] > uf.rank[rootB]:
+		uf.parent[rootB] = rootA
 	default:
-		parent[rootB] = rootA
-		rank[rootA]++
+		uf.parent[rootB] = rootA
+		uf.rank[rootA]++
 	}
 }

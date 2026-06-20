@@ -52,12 +52,31 @@ func TestConnectivityWarnFiresOnDisconnected(test *testing.T) {
 	if !strings.Contains(logged, "components=2") {
 		test.Errorf("expected the warning to report components=2, got log: %q", logged)
 	}
-	// The island {4,5} is the unreachable set; both ids must appear in the sample.
-	if !strings.Contains(logged, "4") || !strings.Contains(logged, "5") {
-		test.Errorf("expected unreachable sample to include nodes 4 and 5, got log: %q", logged)
+	// The island {4,5} is the unreachable set; assert the exact structured field,
+	// pinning both content and ascending order (slog's text handler quotes the
+	// []int render because it contains a space).
+	if !strings.Contains(logged, `sample_unreachable_nodes="[4 5]"`) {
+		test.Errorf(`expected sample_unreachable_nodes="[4 5]" in the warning, got log: %q`, logged)
 	}
 	if !strings.Contains(logged, "unreachable_nodes=2") {
 		test.Errorf("expected unreachable_nodes=2, got log: %q", logged)
+	}
+}
+
+// TestConnectivityWarnSilentOnConnected asserts the "connected → no warning"
+// promise: toy_network.geojson is exactly one weak component (6 nodes / 7 edges),
+// so with WithConnectivityWarn it must load cleanly AND emit nothing.
+func TestConnectivityWarnSilentOnConnected(test *testing.T) {
+	buf := captureWarn(test)
+	roadGraph, _, err := graph.LoadEdgeAttributesGeoJSONFile("../../testdata/toy_network.geojson", graph.WithConnectivityWarn())
+	if err != nil {
+		test.Fatalf("connected toy_network.geojson must load cleanly with WithConnectivityWarn, got: %v", err)
+	}
+	if roadGraph == nil {
+		test.Fatal("graph must be non-nil")
+	}
+	if logged := buf.String(); logged != "" {
+		test.Errorf("a fully weakly-connected graph must emit NO connectivity warning, got: %q", logged)
 	}
 }
 
