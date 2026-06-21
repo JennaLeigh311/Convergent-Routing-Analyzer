@@ -6,9 +6,10 @@ table and the Phase-5 live API both consume it rather than re-deriving metrics.
 See `project-spec.md §5`, `§R5`.
 
 > Scope: this documents the **metric methodology** implemented in
-> `engine/internal/benchmark` (issue #89). The mesoscopic simulator, the demand
-> sweep, the `make bench` CLI table, and the populated results tables land in later
-> Phase-4 issues and are not covered here yet.
+> `engine/internal/benchmark` — the #89 static realized-time evaluator and the #90
+> discrete-time mesoscopic simulator (below). The demand sweep, the `make bench` CLI
+> table, and the populated results tables land in later Phase-4 issues and are not
+> covered here yet.
 
 ## Routing cost vs realized travel time — the honesty distinction
 
@@ -87,6 +88,64 @@ travel time the optimum does.
 the metric never hardcodes which strategy is the baseline — the caller decides, and the
 same function serves both the CLI table and the live API. Degenerate totals (a
 non-positive reference or selfish total) yield `PoA = 1`, never a `NaN`/`Inf`.
+
+## Discrete-time mesoscopic simulator (`benchmark.Simulate`, `§R5`)
+
+The static `Evaluate` metrics above are honest **only as a static equilibrium**: they
+assume every request is simultaneously present at the converged flow. They do **not**
+model "congestion builds over a peak and then dissipates". `§R5` mandates a
+discrete-time **mesoscopic** simulator for that, implemented by
+`benchmark.Simulate(ctx, g, reqs, cfg, routerFactory, observer)`:
+
+- Requests carry a **`DepartAt`** (seconds from `cfg.StartTime`) and depart on a sim
+  clock that advances in **Δt** steps (`cfg.TickSeconds`, default ≈30s).
+- Each tick, newly-released requests route against the **current per-edge load** — one
+  **immutable congestion snapshot value per tick**, so every request released that tick
+  sees an identical, stable view (the same per-round snapshot discipline the reactive /
+  iterative routers use). The routing is the **router-agnostic** `RouterFactory` seam;
+  `ReactiveBPRFactory` is the congestion-aware default.
+- In-flight vehicles advance along their routed path at the **BPR-derived edge speed**
+  `edge.LengthM / BPR.Cost(edge, load)` (m/s), carrying the remainder across edges; the
+  per-edge load is **re-derived each tick from who is on each edge**, so congestion
+  builds as the peak fills and **dissipates** as it drains.
+- Each vehicle's **realized experienced** travel time is recorded the tick it completes.
+
+### Time-weighted metrics vs the static one-shot — the honesty distinction
+
+`SimResult.MeanRealizedS` / `P95RealizedS` are **time-weighted**: the mean / p95 of the
+times vehicles **actually experienced** as congestion evolved over the run. They are
+**deliberately DISTINCT** from the static-equilibrium `Result.MeanRealizedS` /
+`P95RealizedS`, and must be read and labeled as such. On a congested toy demand the two
+**differ** — staggered departures mean fewer vehicles share an edge at any instant than
+the static all-at-once load implies, so the time-weighted mean comes out materially
+lower than the static number. That difference is the whole point of modeling time, and
+it is what makes the "1,000 requests over a rush hour" narrative defensible. Both
+numbers are computed with the **same #89 evaluator helpers** (`mean`,
+`percentileNearestRank`) — the simulator reuses them rather than re-deriving — so both
+share the empty-batch / finiteness contract; only the **inputs** differ (experienced
+times over the run vs realized times at the converged static flow).
+
+### Per-tick state seam (the Phase-5 `#93` plug point)
+
+`Simulate` streams an immutable **`TickState`** (sim clock instant, per-edge load and
+`v/c`, in-flight / completed counts) to a **`TickObserver`** callback once per tick, in
+strict tick order — the explicit seam the Phase-5 WebSocket backend (`#93`) plugs into to
+animate the evolving congestion. The `cfg.StartTime` **time-of-day/date** origin sets the
+demand/clock and stamps every `TickState.SimTime`, so the frontend's time-of-day slider
+maps straight onto it (shifting `StartTime` shifts every tick's clock, dynamics
+unchanged).
+
+### Determinism (`§R5`)
+
+The OD set is released in a fixed sorted order (`DepartAt`, then input index), the
+per-tick congestion is one immutable snapshot value, the **sharded** per-goroutine route
+accumulation is reduced once per tick in fixed worker-then-edge order (mirroring the
+assignment core's `combineFlows`, with **no shared mutable map under a lock**), and the
+per-tick stream emits in clock order. A fixed seed plus a serialized OD set therefore
+yields a **byte-identical tick-by-tick trace** run to run, and the loop is
+`go test -race` clean. Degenerate inputs are defined: an empty batch runs zero ticks to
+an all-zero-but-finite `SimResult`, and an origin == destination request completes
+immediately at zero travel time.
 
 ### Why a dedicated Pigou fixture
 
