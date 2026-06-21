@@ -98,6 +98,67 @@ func TestRealizedTimesUnknownEdgeAndZeroEdgeRoute(t *testing.T) {
 	}
 }
 
+// TestRealizedTimesShortFlowVector exercises the loadAt out-of-range guard
+// (evaluator.go): a route over a KNOWN edge whose id is past the end of a short (or
+// nil) FinalFlows vector must read that edge's load as 0 — yielding its FREE-FLOW cost
+// — and never panic. This locks the documented panic-safety contract ("a short or nil
+// flow vector never panics, it just yields free-flow costs") that the full-length
+// fixtures elsewhere never reach. Edge 1 at zero load is free-flow 20.0 s
+// (20*(1+0.15*0^4)); edge 0 with an empty flow vector is likewise its free-flow 10.0.
+func TestRealizedTimesShortFlowVector(t *testing.T) {
+	g := handToyGraph(t)
+	result := routing.AssignResult{
+		Routes: []routing.Route{
+			{RequestID: "edge1-shortflow", Edges: []domain.EdgeID{1}}, // id 1 past a len-1 vector ⇒ load 0 ⇒ 20.0
+			{RequestID: "edge0-nilflow", Edges: []domain.EdgeID{0}},   // id 0 past a nil vector  ⇒ load 0 ⇒ 10.0
+		},
+		FinalFlows: []float64{}, // deliberately shorter than EdgeCount(): the guard must absorb it
+	}
+	got := benchmark.RealizedTimes(g, cost.DefaultBPR(), result) // must not panic
+	want := []float64{20.0, 10.0}
+	for i := range want {
+		if math.Abs(got[i]-want[i]) > eps {
+			t.Errorf("RealizedTimes[%d] = %v, want %v (free-flow under a short/nil flow vector)", i, got[i], want[i])
+		}
+	}
+}
+
+// TestEvaluateZeroCapacityEdge exercises the edgeVCRatios non-positive-capacity branch
+// (evaluator.go): an edge with CapacityVPH = 0 — the same case BPR.Cost falls back to
+// free-flow on — must be treated as v/c = 0, NOT +Inf, so MaxVC and GiniVC stay finite
+// even when that edge carries load. Here edge 0 (cap 100, load 100) is v/c = 1 and edge
+// 1 (cap 0, load 500) is v/c = 0, so MaxVC = 1.0 and the aggregates never see a +Inf.
+func TestEvaluateZeroCapacityEdge(t *testing.T) {
+	nodes := []graph.Node{
+		{ID: 0, Pos: domain.LatLon{Lat: 0, Lon: 0}},
+		{ID: 1, Pos: domain.LatLon{Lat: 0, Lon: 1}},
+		{ID: 2, Pos: domain.LatLon{Lat: 0, Lon: 2}},
+	}
+	edges := []graph.Edge{
+		{ID: 0, Segment: "e0", From: 0, To: 1, FreeFlowS: 10, CapacityVPH: 100},
+		{ID: 1, Segment: "e1", From: 1, To: 2, FreeFlowS: 20, CapacityVPH: 0}, // zero capacity
+	}
+	g, err := graph.New(nodes, edges)
+	if err != nil {
+		t.Fatalf("graph.New() error = %v", err)
+	}
+	result := routing.AssignResult{
+		Routes:     []routing.Route{{RequestID: "r", Edges: []domain.EdgeID{0, 1}}},
+		FinalFlows: []float64{100, 500}, // load on the zero-capacity edge must not yield +Inf
+	}
+	got := benchmark.Evaluate(g, cost.DefaultBPR(), "naive", "x", result)
+
+	if math.IsInf(got.MaxVC, 0) || math.IsNaN(got.MaxVC) {
+		t.Errorf("MaxVC = %v, want finite (zero-capacity edge must be v/c = 0, not +Inf)", got.MaxVC)
+	}
+	if math.Abs(got.MaxVC-1.0) > eps {
+		t.Errorf("MaxVC = %v, want 1.0 (edge 0 at v/c=1; the zero-capacity edge 1 contributes v/c=0)", got.MaxVC)
+	}
+	if math.IsInf(got.GiniVC, 0) || math.IsNaN(got.GiniVC) {
+		t.Errorf("GiniVC = %v, want finite", got.GiniVC)
+	}
+}
+
 // TestEvaluateHandComputed pins EVERY aggregate metric on the Result against hand
 // math, with the three-route batch above:
 //

@@ -181,6 +181,12 @@ Derivation (`capacity_vph = lanes × 1800 × class_factor`,
 `freeflow_time_s = length_m / (maxspeed_kmh / 3.6)`): edge 0 residential
 `1×1800×0.5 = 900`, edge 1 motorway `4×1800×1.0 = 7200`.
 
+This is a **math construct, not a realistic road**: edge 1's `maxspeed_kmh = 30` on a
+`motorway` is chosen purely to set `freeflow_time_s = 72 s` (the value the Pigou
+structure needs — higher than edge 0's 36 s so `naive` never picks it at zero load).
+Do not "fix" the speed to something physically plausible; it would change the free-flow
+time and break the `PoA > 1` demonstration.
+
 ### The Pigou structure (why PoA > 1)
 
 - **Edge 0 is the cheap, low-capacity link:** lower free-flow time (36.0 s) so the

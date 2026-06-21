@@ -15,9 +15,13 @@ import (
 // table and the Phase-5 live dashboard consume, so it is BOTH:
 //
 //   - JSON-serializable, with explicit lowercase `json:` tags, for the dashboard
-//     stream and any saved results artifact (the tags are the wire contract — do
-//     not rename a field without bumping the consumers, the same discipline the
-//     §-contracts hold).
+//     stream and any saved results artifact. These tags are an INTERNAL
+//     serialization shape, not (yet) a frozen contract: this package is internal/
+//     and has no serialization consumer today. When the Phase-5 API/dashboard
+//     actually serializes Result over the wire, register this envelope in
+//     docs/contracts.md (owner, version, consumer list) and treat a field rename
+//     with the same bump-and-notify discipline the §-contracts hold; until then a
+//     rename is a local refactor, not a contract break.
 //   - Markdown-renderable, via MarkdownHeader/MarkdownSeparator/MarkdownRow, so docs
 //     and the CLI can assemble a results table without re-knowing the field set.
 //
@@ -113,6 +117,11 @@ func Evaluate(g graph.Graph, bpr cost.BPR, router, demandLevel string, result ro
 
 // markdownColumns is the single source of truth for the table's column order, used
 // by both the header and the row so the two can never drift out of alignment.
+//
+// These human-table column names (mean_s, p95_s, total_s) are intentionally SHORTER
+// than the json tags (mean_realized_s, p95_realized_s, total_network_time_s): the
+// rendered table favors brevity, the wire form favors precision. The divergence is
+// deliberate — do not "align" one to the other; they serve different readers.
 var markdownColumns = []string{
 	"router", "demand", "mean_s", "p95_s", "total_s", "gini_vc", "max_vc", "iters", "converged", "gap",
 }

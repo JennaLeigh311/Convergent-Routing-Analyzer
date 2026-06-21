@@ -34,8 +34,10 @@ implementation rather than re-summing.
 ## The metrics (`benchmark.Result`)
 
 `benchmark.Evaluate(g, bpr, router, demandLevel, assignResult)` returns a `Result`
-per `(router, demand level)`. It is JSON-serializable (lowercase `json:` tags, the
-dashboard wire contract) and Markdown-renderable (`MarkdownHeader` /
+per `(router, demand level)`. It is JSON-serializable (lowercase `json:` tags — an
+internal serialization shape today; to be registered in `docs/contracts.md` as a
+frozen envelope when the Phase-5 API/dashboard serializes it) and Markdown-renderable
+(`MarkdownHeader` /
 `MarkdownSeparator` / `MarkdownRow`). Its fields:
 
 | field | meaning |

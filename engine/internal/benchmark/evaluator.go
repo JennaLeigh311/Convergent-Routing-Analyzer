@@ -178,7 +178,8 @@ func maxOf(values []float64) float64 {
 // It is computed on a SORTED COPY (ascending) via the mean-absolute-difference
 // form Gini = Σ_i Σ_j |x_i − x_j| / (2 n² x̄), evaluated in the O(n log n)
 // sorted-prefix form Σ_i (2i − n + 1) x_i / (n² x̄) over the ascending sort — so the
-// summation order is fixed and the result is deterministic. An empty slice, or one
+// summation order is fixed and the result is deterministic. The code divides by the
+// equivalent n·Σx (since n²·x̄ = n·Σx), which is what the implementation below computes. An empty slice, or one
 // whose values sum to 0 (no flow anywhere ⇒ all v/c = 0 ⇒ perfectly "balanced"),
 // yields 0. Negative inputs cannot occur here (v/c is floored at 0 above), so the
 // classic non-negative Gini definition applies cleanly.
