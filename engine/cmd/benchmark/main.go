@@ -1,174 +1,225 @@
-// Command benchmark is the Phase-1+ routing smoke/timing harness. It is NOT the
-// full convergent-routing comparison across the six algorithms — that harness
-// (demand-aware strategies, realized-time accounting, the headline improvement
-// number) lands in a later phase. What this does today is honest and minimal:
-// load the toy edge_attributes GeoJSON, build the naive (free-flow) router, run
-// a small batch of real routing requests over the toy graph, time it, and print
-// a short factual summary (nodes, edges, requests routed, elapsed). It then runs
-// each of the four Phase-3 routers (incremental, msa, systemoptimal, multipath)
-// over the SAME toy graph and the SAME request batch, each emitting its own
-// deterministic summary line (router Name() + requests_routed). Those routers are
-// on no CLI path, so this harness is the only place CI Lane A exercises them.
+// Command benchmark is the Phase-4 convergent-routing comparison harness: the REAL
+// six-router comparison that replaced the Phase-1 naive-only smoke run. It loads the
+// toy edge_attributes GeoJSON, synthesizes ONE reproducible OD set per demand level
+// (a fixed seed + a target v/c band), and runs ALL SIX routers (naive, reactive,
+// incremental, msa, systemoptimal, multipath) over that same OD set at each level of
+// a demand sweep (v/c ∈ {0.5, 0.8, 1.0, 1.2}, achieved by varying the BPR capacity
+// scale at a fixed total demand). For every (router, level) cell it collects the
+// internal/benchmark.Result metrics (mean/p95/total realized time, utilization,
+// convergence) plus the cross-router columns a lone Result cannot hold: the Price of
+// Anarchy against the level's systemoptimal reference and the §R5 mesoscopic
+// simulator's experienced (over-the-run) mean/p95 realized time. It emits the grid as BOTH JSON (to stdout) and a Markdown
+// comparison table written into docs/benchmarks.md, and logs the per-level PoA and
+// the headline improvement % WITH its demand level.
 //
-// Its job is to make CI Lane A genuinely gate routing: any load error or routing
-// error exits non-zero, so a broken loader/graph/router fails the build rather
-// than slipping through unit tests alone. Lane A also asserts each router name
-// appears and routed the expected batch, so a router silently dropping out of the
-// run (or routing the wrong count) fails the merge gate too.
+// HONESTY (project-spec.md §5, docs/benchmarks.md): on the hand-built toy graph the
+// Price of Anarchy is ≈ 1 at EVERY level — the toy network has no Braess/Pigou
+// structure, so naive and systemoptimal land on the same split. This harness reports
+// that truthful PoA ≈ 1 across all four levels rather than quoting a cherry-picked
+// figure; the strict PoA > 1 demonstration is the dedicated Pigou fixture (issue
+// #89). The improvement % is therefore ≈ 0 on the toy graph, and that honest zero is
+// reported with its level, not hidden.
 //
-// DETERMINISM: every summary line this harness emits must be byte-identical run
-// to run, modulo two wall-clock fields: the slog text handler's own `time=` stamp
-// on every line, and the naive line's `elapsed=` routing duration. The MSA and
-// systemoptimal routers achieve this via sorted
-// node/edge iteration (internal/routing/repro.go), never RNG; the multipath
-// router's randomized split is made reproducible by threading a single fixed seed
-// (benchSeed below) into its constructor — per-request seeding inside the router
-// keeps a fixed seed ⇒ identical split regardless of worker scheduling. The
-// in-process determinism test (main_test.go) runs the whole harness twice and
-// asserts byte-identical output (after normalizing those two wall-clock fields), so
-// any nondeterministic flow/ordering leaking from MSA averaging or the multipath
-// split fails `go test -race ./...`.
+// Its job is to make CI Lane A genuinely gate the six-router comparison: any load or
+// routing error exits non-zero, so a broken loader/graph/router fails the build. Lane
+// A also asserts each of the six router names appears in the output, so a router
+// silently dropping out of the run fails the merge gate.
 //
-// Diagnostics go through the internal slog logger, consistent with the rest of
-// the engine. run() takes the destination writer so the determinism test can
-// capture output in-process; main() wires it to os.Stderr.
+// DETERMINISM: the JSON artifact this harness writes to stdout is byte-identical run
+// to run — it carries no wall-clock field. All randomness flows through fixed seeds
+// (the OD-set seed, the multipath split seed) and the mesoscopic simulator's fixed sim
+// clock, and every benchmark aggregate iterates sorted copies, so two runs marshal identical JSON. The
+// only run-to-run-varying output is the slog logger's own `time=` stamps and the
+// optional `elapsed=` runtime line, both of which go to the LOG writer (stderr), NOT
+// stdout — so the determinism test (main_test.go) diffs stdout directly with no
+// normalization needed. Diagnostics (PoA-by-level, the headline improvement, the
+// docs-refresh confirmation) go through the writer-bound slog logger, consistent with
+// the rest of the engine.
+//
+// run() takes the stdout writer, the log writer, the graph path, and the docs path
+// as parameters so the in-process determinism test can capture stdout, discard logs,
+// and write to a temp docs file; main() wires stdout to os.Stdout, logs to os.Stderr,
+// and the docs path to docsBenchmarksPath.
 package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"time"
 
-	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
-	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/benchmark"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/logging"
-	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/routing"
 )
 
 // toyNetworkPath is the shared toy edge_attributes fixture, resolved relative to
 // engine/ (where `go run ./cmd/benchmark` and `make bench` run from).
 const toyNetworkPath = "testdata/toy_network.geojson"
 
-// benchSeed is the single fixed seed threaded into the multipath router so its
-// randomized probabilistic split is reproducible: a fixed seed ⇒ identical split
-// every run. Pinning it here (rather than seeding from the clock) is what makes
-// the multipath summary line deterministic and lets the in-process determinism
-// test (main_test.go) assert byte-identical output. The value is arbitrary but
-// MUST stay fixed — changing it is a deliberate, reviewable change to the
-// canonical bench run, not an accident of wall-clock time.
+// docsBenchmarksPath is the docs file this harness refreshes with the generated
+// Markdown table, resolved relative to engine/ (one level up to the repo root's
+// docs/). `make bench` runs from engine/, so the doc lives at ../docs/benchmarks.md.
+const docsBenchmarksPath = "../docs/benchmarks.md"
+
+// benchSeed is the single fixed seed threaded into the OD generator and the
+// multipath router so the whole sweep is reproducible: a fixed seed ⇒ identical OD
+// draw and identical multipath split every run. Pinning it here (rather than seeding
+// from the clock) is what makes the JSON artifact byte-identical and lets the
+// in-process determinism test assert it. The value is arbitrary but MUST stay fixed —
+// changing it is a deliberate, reviewable change to the canonical bench run.
 const benchSeed int64 = 20260618
 
-// benchK is the per-request path count for the multipath router's Yen K-shortest
-// split. Three is the same small value the multipath tests exercise — enough to
-// demonstrate a split over the toy graph without enumerating every path. NOTE: on
-// this sparse toy graph an OD pair may have fewer than benchK simple paths, in
-// which case the probabilistic draw collapses onto the single available path and
-// does not actually fan out. The determinism test still gates path-enumeration
-// order and requests_routed here; it does not assert the split itself fires — that
-// is covered by the multipath router's own unit tests (internal/routing).
-const benchK = 3
-
-// toyRequests returns the shared toy request batch every router in this harness
-// routes. The coordinates match the toy fixture's documented endpoints (the toy
-// network is largely one-way): bench-0 is origin node 0 -> destination node 2,
-// exercising the lowest-cost (≠ fewest-hops) path the network was built to
-// demonstrate (intentionally the same demo route as cmd/route's defaults);
-// bench-1 is node 3 -> node 4 over the two-way secondary pair. These are this
-// harness's own batch inputs — it asserts nothing about the resulting paths, so
-// they are deliberately independent of the canonical-route golden.
-func toyRequests() []routing.RouteRequest {
-	return []routing.RouteRequest{
-		{ID: "bench-0", From: domain.LatLon{Lat: 40.73, Lon: -73.99}, To: domain.LatLon{Lat: 40.74, Lon: -73.97}},
-		{ID: "bench-1", From: domain.LatLon{Lat: 40.742, Lon: -73.965}, To: domain.LatLon{Lat: 40.745, Lon: -73.96}},
-	}
-}
+// tableMarker bounds the auto-generated table region in docs/benchmarks.md so the
+// surrounding hand-written methodology prose is preserved across refreshes: run()
+// replaces only the text between the two markers, leaving everything else untouched.
+const (
+	tableBeginMarker = "<!-- BENCH-TABLE:BEGIN (generated by cmd/benchmark — do not edit by hand) -->"
+	tableEndMarker   = "<!-- BENCH-TABLE:END -->"
+)
 
 func main() {
-	// No logging.Setup() here: run() builds its own writer-bound logger and nothing
-	// in the benchmark's call graph logs through slog.Default(), so installing a
-	// global default would be dead configuration. If a router ever starts emitting
-	// via slog.Default(), wire logging.Setup() back in (and thread its config into
-	// run) so that output is captured by the determinism test too.
-	if err := run(os.Stderr, toyNetworkPath); err != nil {
+	if err := run(os.Stdout, os.Stderr, toyNetworkPath, docsBenchmarksPath); err != nil {
 		os.Exit(1)
 	}
 }
 
-// run loads the graph at graphPath, routes the shared batch through the naive
-// router and each Phase-3 router, and writes one summary line per router to w. It
-// returns a non-nil error (and logs it) on any load/routing failure so main can
-// exit non-zero. Output to w is deterministic apart from two wall-clock fields (the
-// slog `time=` stamp on every line and the naive line's `elapsed=`), so the
-// determinism test can run this twice and compare. graphPath is a parameter (not
-// the package const) only so the in-process
-// test can resolve the fixture relative to the test's working directory; main
-// always passes toyNetworkPath.
-func run(w io.Writer, graphPath string) error {
-	// A text logger writing to w, so output is captured in-process by tests and
-	// goes to stderr in production. Info level matches the engine default.
-	logger := logging.New(logging.Config{Writer: w, Format: logging.FormatText})
+// run loads the graph at graphPath, runs the six-router demand sweep over the shared
+// reproducible OD set, writes the JSON report to stdout, refreshes the Markdown table
+// region of docsPath, and logs the per-level PoA + headline improvement to logw. It
+// returns a non-nil error (and logs it) on any load/routing/IO failure so main can
+// exit non-zero. The JSON written to stdout is deterministic (no wall-clock); only
+// logw carries the wall-clock `time=`/`elapsed=` fields, so the determinism test can
+// diff stdout directly.
+func run(stdout, logw io.Writer, graphPath, docsPath string) error {
+	logger := logging.New(logging.Config{Writer: logw, Format: logging.FormatText})
 
-	// Load the toy network. A failure here is fatal: the bench cannot route
-	// without a graph, and CI must see a non-zero exit.
 	roadGraph, _, err := graph.LoadEdgeAttributesGeoJSONFile(graphPath)
 	if err != nil {
 		logger.Error("load toy network failed", "component", "benchmark", "path", graphPath, "err", err)
 		return err
 	}
 
-	reqs := toyRequests()
-
-	// Build the naive free-flow router and route the shared batch. This is the
-	// original Phase-1 run; its summary line (including requests_routed=2) is the
-	// one CI Lane A has greped since Phase 1 and is kept byte-for-byte unchanged.
-	naive := routing.NewNaiveRouter(roadGraph)
 	start := time.Now()
-	routes, err := naive.Assign(context.Background(), reqs)
-	elapsed := time.Since(start)
+	cells, err := benchmark.RunSweep(context.Background(), roadGraph, benchSeed, benchmark.DefaultODCount)
 	if err != nil {
-		logger.Error("routing failed", "component", "benchmark", "err", err)
+		logger.Error("sweep failed", "component", "benchmark", "err", err)
+		return err
+	}
+	elapsed := time.Since(start)
+
+	report := benchmark.BuildReport(benchSeed, benchmark.DefaultODCount, cells)
+
+	// JSON artifact to stdout — the deterministic output the determinism test diffs.
+	if err := report.WriteJSON(stdout); err != nil {
+		logger.Error("write json report failed", "component", "benchmark", "err", err)
 		return err
 	}
 
-	// Honest summary: this is a Phase-1 naive-router run over the toy graph, not
-	// the six-algorithm comparison. Report only what actually happened.
-	logger.Info("phase-1 naive-router toy-graph bench",
-		"component", "benchmark",
-		"router", naive.Name(),
-		"nodes", roadGraph.NodeCount(),
-		"edges", roadGraph.EdgeCount(),
-		"requests_routed", len(routes),
-		"elapsed", elapsed.String(),
-	)
-
-	// The four Phase-3 routers over the SAME graph and SAME batch. Each emits a
-	// deterministic summary line including its Name() and requests_routed — no
-	// `elapsed` field, so these lines are byte-identical run to run and CI can
-	// assert each router name + count directly. DefaultBPR returns a cost.BPR
-	// (which also satisfies cost.CostFunction, used by the multipath router).
-	bpr := cost.DefaultBPR()
-	phase3 := []routing.Router{
-		routing.NewIncrementalRouter(roadGraph, bpr),
-		routing.NewMSARouter(roadGraph, bpr),
-		routing.NewSystemOptimalRouter(roadGraph, bpr),
-		routing.NewMultipathRouter(roadGraph, bpr, benchSeed, benchK),
+	// Refresh the Markdown table region of docs/benchmarks.md (best-effort context in
+	// the log; a write failure is fatal so a stale doc never silently ships).
+	if err := refreshDocs(docsPath, benchmark.RenderMarkdownTable(cells)); err != nil {
+		logger.Error("refresh docs/benchmarks.md failed", "component", "benchmark", "path", docsPath, "err", err)
+		return err
 	}
-	for _, router := range phase3 {
-		routes, err := router.Assign(context.Background(), reqs)
-		if err != nil {
-			logger.Error("routing failed", "component", "benchmark", "router", router.Name(), "err", err)
-			return err
-		}
-		logger.Info("phase-3 router toy-graph bench",
+
+	// Per-level PoA across ALL four levels (never a single figure), then the headline
+	// improvement WITH its demand level. These go to the log writer (they carry the
+	// volatile time= stamp), kept out of the deterministic stdout JSON.
+	for _, lvl := range report.PoAByLevel {
+		logger.Info("price of anarchy by demand level",
 			"component", "benchmark",
-			"router", router.Name(),
-			"nodes", roadGraph.NodeCount(),
-			"edges", roadGraph.EdgeCount(),
-			"requests_routed", len(routes),
+			"demand_level", lvl.DemandLevel,
+			"target_vc", lvl.TargetVC,
+			"poa", lvl.PoA,
 		)
 	}
-
+	h := report.Headline
+	logger.Info("headline improvement (naive vs best of incremental/systemoptimal)",
+		"component", "benchmark",
+		"demand_level", h.DemandLevel,
+		"target_vc", h.TargetVC,
+		"best_router", h.BestRouter,
+		"percent_reduction", fmt.Sprintf("%.4f", h.PercentReduction),
+		"naive_total_s", fmt.Sprintf("%.2f", h.NaiveTotalS),
+		"best_total_s", fmt.Sprintf("%.2f", h.BestTotalS),
+	)
+	logger.Info("six-router demand-sweep bench complete",
+		"component", "benchmark",
+		"nodes", roadGraph.NodeCount(),
+		"edges", roadGraph.EdgeCount(),
+		"routers", len(benchmark.RouterOrder),
+		"levels", len(benchmark.SweepLevels()),
+		"od_count", benchmark.DefaultODCount,
+		"cells", len(cells),
+		"elapsed", elapsed.String(),
+	)
 	return nil
+}
+
+// refreshDocs rewrites the auto-generated table region of the docs file in place,
+// replacing the text between tableBeginMarker and tableEndMarker with the freshly
+// rendered table (re-emitting the markers around it) and leaving all surrounding
+// prose untouched. If the markers are absent (first run against the stub) it appends
+// a fresh marker-bounded section to the end of the file. It returns an error on any
+// read/write failure so a stale or unwritten doc fails the build rather than
+// silently shipping.
+func refreshDocs(path, table string) error {
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	section := tableBeginMarker + "\n\n" + table + "\n" + tableEndMarker
+	updated, err := replaceMarkedRegion(string(existing), section)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+// replaceMarkedRegion returns content with the text between tableBeginMarker and
+// tableEndMarker (inclusive) replaced by section. If the markers are not both
+// present, it appends section (preceded by a blank line) to the end, so the first
+// run against the stub seeds the region and later runs replace it idempotently. A
+// begin marker without a matching end is an error rather than a silent corrupt
+// overwrite.
+func replaceMarkedRegion(content, section string) (string, error) {
+	begin := indexOf(content, tableBeginMarker)
+	end := indexOf(content, tableEndMarker)
+	if begin < 0 && end < 0 {
+		// First run: append the section to the end, ensuring a separating blank line.
+		trimmed := trimTrailingNewlines(content)
+		return trimmed + "\n\n" + section + "\n", nil
+	}
+	if begin < 0 || end < 0 || end < begin {
+		return "", fmt.Errorf("docs benchmark markers malformed: begin=%d end=%d", begin, end)
+	}
+	endClose := end + len(tableEndMarker)
+	return content[:begin] + section + content[endClose:], nil
+}
+
+// indexOf is strings.Index inlined to keep the file's import set minimal; it returns
+// the byte index of sub in s, or -1.
+func indexOf(s, sub string) int {
+	n := len(sub)
+	for i := 0; i+n <= len(s); i++ {
+		if s[i:i+n] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
+// trimTrailingNewlines drops trailing '\n' so the appended section is separated by
+// exactly one blank line, keeping the doc tidy across repeated refreshes.
+func trimTrailingNewlines(s string) string {
+	end := len(s)
+	for end > 0 && s[end-1] == '\n' {
+		end--
+	}
+	return s[:end]
 }

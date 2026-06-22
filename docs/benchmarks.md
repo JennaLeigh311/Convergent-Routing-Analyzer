@@ -7,9 +7,10 @@ See `project-spec.md §5`, `§R5`.
 
 > Scope: this documents the **metric methodology** implemented in
 > `engine/internal/benchmark` — the #89 static realized-time evaluator and the #90
-> discrete-time mesoscopic simulator (below). The demand sweep, the `make bench` CLI
-> table, and the populated results tables land in later Phase-4 issues and are not
-> covered here yet.
+> discrete-time mesoscopic simulator (below) — AND the six-router demand-sweep
+> comparison the Phase-4 `make bench` harness (issue #91) runs on top of it. The
+> generated comparison table at the bottom of this file is refreshed by `make bench`
+> — see [The demand sweep & comparison table](#the-demand-sweep--comparison-table).
 
 ## Routing cost vs realized travel time — the honesty distinction
 
@@ -164,3 +165,109 @@ high-capacity one. At a congested demand level the `naive` router piles all dema
 the cheap link (`v/c = 2`), while `systemoptimal` splits it, giving a measured
 **`PoA(naive) ≈ 2.17`** with `systemoptimal` realized total ≤ `naive`'s. See
 `engine/testdata/README.md` for the fixture's full derivation.
+
+## The demand sweep & comparison table
+
+`make bench` (`engine/cmd/benchmark`, issue #91) runs the **real six-router
+comparison**: all six routers (`naive`, `reactive`, `incremental`, `msa`,
+`systemoptimal`, `multipath`) over the **same reproducible OD set** at every level of
+a demand sweep, on the toy graph in CI Lane A. It emits the grid as JSON (stdout) and
+refreshes the Markdown table below.
+
+**OD set.** `benchmark.GenerateODSet` synthesizes `R = 1000` requests (default) from a
+fixed seed, drawing each request's origin→destination from the graph's **reachable**
+node-pair pool (a deterministic BFS builds the pool, so an unreachable pair is never
+synthesized — the toy network is largely one-way). The set serializes to disk keyed by
+coordinates/labels/node ids, **never** by `EdgeID` (the §2 frozen-contract rule). The
+summed per-request demand is the fixed `SweepDemandVPH = 5000` vph at every level.
+
+**The sweep axis is `CapacityScale`, not the request count.** Total demand is held
+fixed at 5000 vph; the only thing that varies across levels is the BPR
+`CapacityScale` (project-spec.md §R3, the frontend's one global capacity knob). Since
+the effective capacity is `CapacityVPH × CapacityScale` and `v/c` scales inversely
+with it, the four target `v/c` bands are hit by four calibrated scales:
+
+| target `v/c` | `CapacityScale` | realized `max_vc` (naive) |
+|---|---|---|
+| 0.5 | 2.00 | ≈ 0.50 |
+| 0.8 | 1.25 | ≈ 0.80 |
+| 1.0 | 1.00 | ≈ 1.01 |
+| 1.2 | 0.84 | ≈ 1.20 |
+
+The scales are calibrated empirically against the toy graph's busiest corridor; the
+**realized** `max_vc` is reported per row alongside the target, so the small
+calibration drift is visible, not hidden. This is the honest answer to "how is the
+target `v/c` achieved": one fixed OD set seen against four effective capacities.
+
+**Simulator-mode columns (`sim_mean_s`, `sim_p95_s`).** The **experienced
+(over-the-run)** mean / p95 realized travel time from the §R5 discrete-time
+**mesoscopic** simulator (`benchmark.Simulate`, issue #90), run once per level: the
+level's OD set is released on a fixed sim clock (`StartTime`, `Δt = 30 s`) and each
+vehicle advances along its `ReactiveBPRFactory`-routed path at the BPR-derived edge
+speed, the per-edge load re-deriving each tick from who is on each edge, so congestion
+builds and drains over the run (see
+[the mesoscopic simulator section](#discrete-time-mesoscopic-simulator-benchmarksimulate-r5)).
+These are **deliberately distinct** from the static `mean_s` / `p95_s`: those assume
+every request is simultaneously present at the converged flow, whereas these are the
+times vehicles actually experience as the peak fills and drains. Because the OD set
+departs all at `t = 0` (the static all-at-once batch), the simulated peak under-counts a
+genuinely staggered rush hour, but the lagged-by-one-Δt feedback already makes the
+experienced numbers diverge from the static one-shot — they are read as the time-domain
+sanity check beside the static columns. The simulator's router is the
+congestion-aware reactive factory (not the cell's static router), so the columns
+characterize the **level**, attached identically to each router row of that level. The
+run is deterministic (fixed `StartTime`/`Δt`/`MaxTicks` over the reproducible OD set),
+so the columns are byte-identical run to run.
+
+**Headline numbers — honest, with their demand level.** Improvement is `naive` vs. the
+**best of `incremental`/`systemoptimal`**, reported with the demand level at which it
+is largest (never a single cherry-picked figure: PoA peaks at moderate load and → 1 at
+both extremes). On `toy_network.geojson` the network has **no Braess/Pigou structure**,
+so `naive`, `reactive`, and the convergent routers (`incremental`/`msa`/`systemoptimal`)
+all land on the same split: **`PoA ≈ 1.00` at every level and the improvement is ≈ 0%**.
+That is the truthful result on this fixture — the strict `PoA > 1` demonstration is the
+dedicated Pigou fixture above. The one router that diverges is `multipath`, whose
+probabilistic K-shortest split deliberately fans demand onto the slower direct edge,
+realizing `PoA ≈ 1.16–1.18` — a faithful picture of what a randomized split costs when
+the optimum is a single corridor.
+
+**Determinism.** The JSON artifact carries no wall-clock field; all randomness flows
+through fixed seeds (OD draw, multipath split) and the simulator-mode columns run under
+a fixed sim clock (`StartTime`/`Δt`/`MaxTicks`) over the same reproducible OD set, and
+every aggregate iterates sorted copies, so two `make bench` runs produce byte-identical
+JSON. The wall-clock `time=`/`elapsed=` fields go to stderr (the log), out of the
+diffable stdout JSON.
+
+The table below is **generated** — `make bench` rewrites everything between the
+markers. Do not edit it by hand.
+
+<!-- BENCH-TABLE:BEGIN (generated by cmd/benchmark — do not edit by hand) -->
+
+| router | demand | cap_scale | target_vc | max_vc | mean_s | p95_s | total_s | poa | sim_mean_s | sim_p95_s | gini_vc | iters | converged | gap |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| naive | vc0.5 | 2.00 | 0.50 | 0.5030 | 33.98 | 78.01 | 169894.56 | 1.0000 | 33.85 | 77.76 | 0.4184 | 1 | true | 0 |
+| reactive | vc0.5 | 2.00 | 0.50 | 0.5030 | 33.98 | 78.01 | 169894.56 | 1.0000 | 33.85 | 77.76 | 0.4184 | 1 | true | 0 |
+| incremental | vc0.5 | 2.00 | 0.50 | 0.5030 | 33.98 | 78.01 | 169894.56 | 1.0000 | 33.85 | 77.76 | 0.4184 | 4 | true | 1.7130525183456236e-16 |
+| msa | vc0.5 | 2.00 | 0.50 | 0.5030 | 33.98 | 78.01 | 169894.56 | 1.0000 | 33.85 | 77.76 | 0.4184 | 2 | true | 1.7130525183456236e-16 |
+| systemoptimal | vc0.5 | 2.00 | 0.50 | 0.5030 | 33.98 | 78.01 | 169894.56 | 1.0000 | 33.85 | 77.76 | 0.4184 | 2 | true | 3.3737938372105614e-16 |
+| multipath | vc0.5 | 2.00 | 0.50 | 0.5030 | 40.18 | 135.64 | 200897.80 | 1.1825 | 33.85 | 77.76 | 0.3320 | 1 | true | 0 |
+| naive | vc0.8 | 1.25 | 0.80 | 0.8048 | 34.71 | 79.42 | 173551.94 | 1.0000 | 33.85 | 77.76 | 0.4184 | 1 | true | 0 |
+| reactive | vc0.8 | 1.25 | 0.80 | 0.8048 | 34.71 | 79.42 | 173551.94 | 1.0000 | 33.85 | 77.76 | 0.4184 | 1 | true | 0 |
+| incremental | vc0.8 | 1.25 | 0.80 | 0.8048 | 34.71 | 79.42 | 173551.94 | 1.0000 | 33.85 | 77.76 | 0.4184 | 4 | true | 3.353904335759908e-16 |
+| msa | vc0.8 | 1.25 | 0.80 | 0.8048 | 34.71 | 79.42 | 173551.94 | 1.0000 | 33.85 | 77.76 | 0.4184 | 2 | true | 3.353904335759908e-16 |
+| systemoptimal | vc0.8 | 1.25 | 0.80 | 0.8048 | 34.71 | 79.42 | 173551.94 | 1.0000 | 33.85 | 77.76 | 0.4184 | 2 | true | 1.5252324258202472e-16 |
+| multipath | vc0.8 | 1.25 | 0.80 | 0.8048 | 40.92 | 137.20 | 204595.42 | 1.1789 | 33.85 | 77.76 | 0.3320 | 1 | true | 0 |
+| naive | vc1.0 | 1.00 | 1.00 | 1.0060 | 35.95 | 81.82 | 179772.97 | 1.0000 | 33.85 | 77.77 | 0.4184 | 1 | true | 0 |
+| reactive | vc1.0 | 1.00 | 1.00 | 1.0060 | 35.95 | 81.82 | 179772.97 | 1.0000 | 33.85 | 77.77 | 0.4184 | 1 | true | 0 |
+| incremental | vc1.0 | 1.00 | 1.00 | 1.0060 | 35.95 | 81.82 | 179772.97 | 1.0000 | 33.85 | 77.77 | 0.4184 | 4 | true | 0 |
+| msa | vc1.0 | 1.00 | 1.00 | 1.0060 | 35.95 | 81.82 | 179772.97 | 1.0000 | 33.85 | 77.77 | 0.4184 | 2 | true | 0 |
+| systemoptimal | vc1.0 | 1.00 | 1.00 | 1.0060 | 35.95 | 81.82 | 179772.97 | 1.0000 | 33.85 | 77.77 | 0.4184 | 2 | true | 1.3114510281200742e-16 |
+| multipath | vc1.0 | 1.00 | 1.00 | 1.0060 | 42.18 | 139.86 | 210884.87 | 1.1731 | 33.85 | 77.77 | 0.3320 | 1 | true | 0 |
+| naive | vc1.2 | 0.84 | 1.20 | 1.1976 | 38.08 | 85.92 | 190400.03 | 1.0000 | 33.85 | 77.77 | 0.4184 | 1 | true | 0 |
+| reactive | vc1.2 | 0.84 | 1.20 | 1.1976 | 38.08 | 85.92 | 190400.03 | 1.0000 | 33.85 | 77.77 | 0.4184 | 1 | true | 0 |
+| incremental | vc1.2 | 0.84 | 1.20 | 1.1976 | 38.08 | 85.92 | 190400.03 | 1.0000 | 33.85 | 77.77 | 0.4184 | 4 | true | 3.057124495466421e-16 |
+| msa | vc1.2 | 0.84 | 1.20 | 1.1976 | 38.08 | 85.92 | 190400.03 | 1.0000 | 33.85 | 77.77 | 0.4184 | 2 | true | 3.057124495466421e-16 |
+| systemoptimal | vc1.2 | 0.84 | 1.20 | 1.1976 | 38.08 | 85.92 | 190400.03 | 1.0000 | 33.85 | 77.77 | 0.4184 | 2 | true | 2.1162099537297466e-16 |
+| multipath | vc1.2 | 0.84 | 1.20 | 1.1976 | 44.33 | 144.39 | 221628.84 | 1.1640 | 33.85 | 77.77 | 0.3320 | 1 | true | 0 |
+
+<!-- BENCH-TABLE:END -->

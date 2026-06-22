@@ -44,7 +44,7 @@ help:
 	@echo "  clean        down -v + remove built images and Go build/test cache"
 	@echo "  test         cd engine && go test -race ./..."
 	@echo "  route        cd engine && go run ./cmd/route (toy graph; flag passthrough)"
-	@echo "  bench        cd engine && go run ./cmd/benchmark (naive router over the toy graph)"
+	@echo "  bench        cd engine && go run ./cmd/benchmark (six-router demand sweep; refreshes docs/benchmarks.md)"
 	@echo "  replay       cd engine && go run ./cmd/replay (stub today)"
 	@echo "  lint         cd engine && gofmt check + go vet ./... + golangci-lint (required)"
 	@echo "  vuln         cd engine && govulncheck ./... (pinned scanner; matches CI)"
@@ -87,9 +87,13 @@ test:
 route:
 	cd engine && go run ./cmd/route $(ARGS)
 
-## bench: run the naive free-flow router over the toy graph and print a real
-## timing summary (nodes, edges, requests routed, elapsed). Phase-1 minimal run,
-## not the six-algorithm comparison harness; exits non-zero on any failure.
+## bench: run the Phase-4 six-router convergent-routing comparison over the toy
+## graph — all six routers over the SAME reproducible OD set across the v/c demand
+## sweep {0.5,0.8,1.0,1.2}. Prints the JSON report to stdout, logs the per-level
+## Price of Anarchy + the headline improvement (with its demand level) to stderr,
+## and refreshes the generated Markdown table in docs/benchmarks.md. Exits non-zero
+## on any load/routing/IO failure. Output is deterministic run-to-run (the JSON
+## carries no wall-clock; only the stderr log does).
 bench:
 	cd engine && go run ./cmd/benchmark
 
