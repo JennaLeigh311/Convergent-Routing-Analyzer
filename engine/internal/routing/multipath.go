@@ -282,7 +282,7 @@ func (router *MultipathRouter) AssignMultipath(ctx context.Context, reqs []Route
 
 		route := Route{RequestID: req.ID, Edges: entry.paths[choice].edges, CostS: entry.paths[choice].cost}
 		routes[index] = route
-		addRouteFlow(flows, route, requestWeight(req))
+		addRouteFlow(flows, route, RequestWeight(req))
 	}
 
 	// Materialize the provenance from the accumulated per-OD counts.

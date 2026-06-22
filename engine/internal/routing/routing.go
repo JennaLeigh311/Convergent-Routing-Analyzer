@@ -20,18 +20,21 @@ type RouteRequest struct {
 
 	// Weight is how many vehicles/hour of demand this request represents on each
 	// edge of its chosen path — the per-request contribution AssignResult.FinalFlows
-	// accumulates. A zero (unset) Weight is treated as 1.0 by requestWeight, so a
+	// accumulates. A zero (unset) Weight is treated as 1.0 by RequestWeight, so a
 	// batch built without weights is the conventional "one vehicle per request"
 	// flow; a negative Weight is also floored to 1.0 (a request can never subtract
 	// flow). Set it explicitly to model a request standing in for many vehicles.
 	Weight float64
 }
 
-// requestWeight is the effective flow contribution of a request: its Weight when
+// RequestWeight is the effective flow contribution of a request: its Weight when
 // set to a positive value, else the 1.0 default. Centralized here so naive,
 // reactive, and every Phase-3 iterative router accumulate FinalFlows the same
-// way and the zero-value/negative handling lives in one place.
-func requestWeight(req RouteRequest) float64 {
+// way and the zero-value/negative handling lives in one place. It is EXPORTED so
+// the §R5 mesoscopic simulator (benchmark.Simulate) derives a vehicle's per-edge
+// load contribution the same way the routers accumulate FinalFlows, rather than
+// keeping a byte-copy of this rule.
+func RequestWeight(req RouteRequest) float64 {
 	if req.Weight > 0 {
 		return req.Weight
 	}

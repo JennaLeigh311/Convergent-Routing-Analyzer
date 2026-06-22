@@ -147,14 +147,14 @@ func TestRelativeGapPositiveAwayFromEquilibrium(test *testing.T) {
 // TestWorkersForBounds pins the fan-out worker-count policy: at least 1 (even for an
 // empty batch), never more than the request count.
 func TestWorkersForBounds(test *testing.T) {
-	if got := workersFor(0); got != 1 {
-		test.Errorf("workersFor(0) = %d, want 1", got)
+	if got := WorkersFor(0); got != 1 {
+		test.Errorf("WorkersFor(0) = %d, want 1", got)
 	}
-	if got := workersFor(-5); got != 1 {
-		test.Errorf("workersFor(-5) = %d, want 1", got)
+	if got := WorkersFor(-5); got != 1 {
+		test.Errorf("WorkersFor(-5) = %d, want 1", got)
 	}
-	if got := workersFor(1); got != 1 {
-		test.Errorf("workersFor(1) = %d, want 1 (never more workers than requests)", got)
+	if got := WorkersFor(1); got != 1 {
+		test.Errorf("WorkersFor(1) = %d, want 1 (never more workers than requests)", got)
 	}
 }
 

@@ -106,6 +106,20 @@ func NewProvider(messages []domain.SegmentCongestion, index SegmentEdgeIndex, ed
 	return &Provider{store: store, skipped: skipped}, nil
 }
 
+// NewFromSnapshot builds a static, read-only Provider that serves a FROZEN per-edge
+// load snapshot directly — the message-free counterpart to NewProvider for a caller
+// that already holds a computed LoadSnapshot rather than raw congestion messages (e.g.
+// the §R5 mesoscopic simulator, which freezes one immutable per-tick load value every
+// released request routes against). It is the canonical "serve this exact frozen load
+// through the CongestionProvider port" constructor, so callers reuse this provider's
+// vetted Load/Snapshot/View contract instead of re-implementing a one-off frozen
+// adapter. It copies the snapshot (NewLoadStoreFromSnapshot), so the provider is
+// insulated from any later mutation of the passed slice, and SkippedCount is 0 (no
+// segment join happened). A nil snapshot yields an all-zero provider.
+func NewFromSnapshot(snapshot congestion.LoadSnapshot) *Provider {
+	return &Provider{store: congestion.NewLoadStoreFromSnapshot(snapshot)}
+}
+
 // SkippedCount returns how many deduped segment winners were dropped because
 // their segment_id did not map to an edge in the graph (an unknown / unmapped
 // segment is skipped and counted per §3, not fatal).

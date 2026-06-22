@@ -110,15 +110,18 @@ discrete-time **mesoscopic** simulator for that, implemented by
   builds as the peak fills and **dissipates** as it drains.
 - Each vehicle's **realized experienced** travel time is recorded the tick it completes.
 
-### Time-weighted metrics vs the static one-shot — the honesty distinction
+### Experienced (over-the-run) metrics vs the static one-shot — the honesty distinction
 
-`SimResult.MeanRealizedS` / `P95RealizedS` are **time-weighted**: the mean / p95 of the
-times vehicles **actually experienced** as congestion evolved over the run. They are
-**deliberately DISTINCT** from the static-equilibrium `Result.MeanRealizedS` /
-`P95RealizedS`, and must be read and labeled as such. On a congested toy demand the two
-**differ** — staggered departures mean fewer vehicles share an edge at any instant than
-the static all-at-once load implies, so the time-weighted mean comes out materially
-lower than the static number. That difference is the whole point of modeling time, and
+`SimResult.MeanRealizedS` / `P95RealizedS` are the **experienced (over-the-run)** metrics:
+a plain arithmetic **mean** / nearest-rank **p95** over each vehicle's experienced trip
+time as congestion evolved across the run — **not** a duration/occupancy/weight-weighted
+average. They are **deliberately DISTINCT** from the static-equilibrium
+`Result.MeanRealizedS` / `P95RealizedS`, and must be read and labeled as such. The
+distinction is **experienced-over-the-run vs static-equilibrium**, not weighted-vs-
+unweighted. On a congested toy demand the two **differ** — staggered departures mean
+fewer vehicles share an edge at any instant than the static all-at-once load implies, so
+the experienced (over-the-run) mean comes out materially lower than the static number.
+That difference is the whole point of modeling time, and
 it is what makes the "1,000 requests over a rush hour" narrative defensible. Both
 numbers are computed with the **same #89 evaluator helpers** (`mean`,
 `percentileNearestRank`) — the simulator reuses them rather than re-deriving — so both
@@ -137,15 +140,18 @@ unchanged).
 
 ### Determinism (`§R5`)
 
-The OD set is released in a fixed sorted order (`DepartAt`, then input index), the
-per-tick congestion is one immutable snapshot value, the **sharded** per-goroutine route
-accumulation is reduced once per tick in fixed worker-then-edge order (mirroring the
-assignment core's `combineFlows`, with **no shared mutable map under a lock**), and the
-per-tick stream emits in clock order. A fixed seed plus a serialized OD set therefore
-yields a **byte-identical tick-by-tick trace** run to run, and the loop is
-`go test -race` clean. Degenerate inputs are defined: an empty batch runs zero ticks to
-an all-zero-but-finite `SimResult`, and an origin == destination request completes
-immediately at zero travel time.
+The OD set is **released in a fixed total order** (`DepartAt`, then input index); each
+tick takes **one immutable frozen snapshot** every released request routes against; the
+concurrent route fan-out writes each route **by its stable batch index**
+(`routeBatchConcurrent` — **no shared accumulator, no lock, and no `combineFlows`-style
+reduction**); and the per-edge load is **re-derived serially** on the simulation
+goroutine after the fan-out has fully joined, with the per-tick stream emitted in clock
+order. A serialized OD set therefore yields a **byte-identical tick-by-tick trace** run
+to run — verified on both the single-edge corridor and the route-choice toy network (two
+runs plus reversed input, comparing the full per-tick trace, not just the aggregates) —
+and the loop is `go test -race` clean. Degenerate inputs are defined: an empty batch runs
+zero ticks to an all-zero-but-finite `SimResult`, and an origin == destination request
+completes immediately at zero travel time.
 
 ### Why a dedicated Pigou fixture
 

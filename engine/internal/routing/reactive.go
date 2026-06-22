@@ -192,7 +192,7 @@ func (router *ReactiveRouter) AssignResult(ctx context.Context, reqs []RouteRequ
 			return AssignResult{}, err
 		}
 		routes[index] = route
-		addRouteFlow(flows, route, requestWeight(req))
+		addRouteFlow(flows, route, RequestWeight(req))
 	}
 	return AssignResult{
 		Routes:     routes,

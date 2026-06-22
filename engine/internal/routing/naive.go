@@ -106,7 +106,7 @@ func (router *NaiveRouter) AssignResult(ctx context.Context, reqs []RouteRequest
 		}
 		route := Route{RequestID: req.ID, Edges: path, CostS: cost}
 		routes[index] = route
-		addRouteFlow(flows, route, requestWeight(req))
+		addRouteFlow(flows, route, RequestWeight(req))
 	}
 	return AssignResult{
 		Routes:     routes,

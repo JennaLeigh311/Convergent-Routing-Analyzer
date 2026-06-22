@@ -19,7 +19,7 @@ import (
 // congestible edge. A long edge (so a vehicle takes several ≈30s ticks to traverse,
 // giving the simulator real time-evolution to model) with a small capacity (so
 // stacking departures onto it raises its v/c and BPR cost sharply). Free-flow time
-// 120 s (= 1200 m at 10 m/s) and capacity 100 vph make the static-vs-time-weighted
+// 120 s (= 1200 m at 10 m/s) and capacity 100 vph make the static-vs-experienced
 // difference large and hand-reasonable.
 func corridorGraph(t *testing.T) *graph.AdjacencyGraph {
 	t.Helper()
@@ -79,7 +79,7 @@ func (r *recorder) observe(s benchmark.TickState) {
 
 // staticMeanRealized computes the Phase-3 STATIC-equilibrium mean realized time for
 // the same OD set: route all requests at once (naive, all simultaneous) and apply
-// the #89 evaluator. This is the number the time-weighted mean must come out
+// the #89 evaluator. This is the number the experienced (over-the-run) mean must come out
 // DISTINCT from — the honesty distinction. We use the public benchmark.Evaluate so
 // the comparison is against the exact static metric the project reports.
 func staticMeanRealized(t *testing.T, g graph.Graph, bpr cost.BPR, reqs []routing.RouteRequest) float64 {
@@ -92,18 +92,18 @@ func staticMeanRealized(t *testing.T, g graph.Graph, bpr cost.BPR, reqs []routin
 	return benchmark.Evaluate(g, bpr, "naive", "static", res).MeanRealizedS
 }
 
-// TestSimulateTimeWeightedDistinctFromStatic is the headline acceptance criterion:
-// on a congested toy demand the TIME-WEIGHTED mean/p95 the mesoscopic simulator
+// TestSimulateExperiencedDistinctFromStatic is the headline acceptance criterion:
+// on a congested toy demand the EXPERIENCED (over-the-run) mean/p95 the mesoscopic simulator
 // reports must be DIFFERENT from the static-equilibrium one-shot number, and both
 // must be finite and labeled. We stagger departures across the run so congestion
 // builds and drains over time — exactly the dynamic the static all-at-once number
 // cannot capture — and assert the two means differ by a non-trivial margin.
-func TestSimulateTimeWeightedDistinctFromStatic(t *testing.T) {
+func TestSimulateExperiencedDistinctFromStatic(t *testing.T) {
 	g := corridorGraph(t)
 	bpr := cost.DefaultBPR()
 
 	// 20 requests, all on the single corridor. STATIC: all 20 present at once ⇒ a
-	// very high constant v/c on the edge. TIME-WEIGHTED: spread the departures over
+	// very high constant v/c on the edge. EXPERIENCED (over-the-run): spread the departures over
 	// the run so only a few share the edge at any tick ⇒ each driver sees less
 	// congestion than the static all-at-once load implies. The two means must differ.
 	departAt := []float64{0, 60, 120, 180, 240, 300, 360, 420, 480, 540}
@@ -125,20 +125,20 @@ func TestSimulateTimeWeightedDistinctFromStatic(t *testing.T) {
 		t.Fatalf("Completed = %d, want all %d vehicles to drain", res.Completed, len(reqs))
 	}
 	if !isFinite(res.MeanRealizedS) || !isFinite(res.P95RealizedS) {
-		t.Fatalf("time-weighted metrics must be finite, got mean=%v p95=%v", res.MeanRealizedS, res.P95RealizedS)
+		t.Fatalf("experienced (over-the-run) metrics must be finite, got mean=%v p95=%v", res.MeanRealizedS, res.P95RealizedS)
 	}
 	if res.MeanRealizedS <= 0 || res.P95RealizedS <= 0 {
-		t.Fatalf("time-weighted metrics must be positive on a real demand, got mean=%v p95=%v", res.MeanRealizedS, res.P95RealizedS)
+		t.Fatalf("experienced (over-the-run) metrics must be positive on a real demand, got mean=%v p95=%v", res.MeanRealizedS, res.P95RealizedS)
 	}
 	// The whole point of modeling time: the two numbers DIFFER. Staggered departures
-	// mean the time-weighted mean is LOWER than the static all-at-once mean (less
+	// mean the experienced (over-the-run) mean is LOWER than the static all-at-once mean (less
 	// concurrent congestion), and by a clear margin, not float noise.
 	relDiff := math.Abs(res.MeanRealizedS-staticMean) / staticMean
 	if relDiff < 0.05 {
-		t.Errorf("time-weighted mean (%v) must be distinct from static mean (%v); relative diff %.4f too small",
+		t.Errorf("experienced (over-the-run) mean (%v) must be distinct from static mean (%v); relative diff %.4f too small",
 			res.MeanRealizedS, staticMean, relDiff)
 	}
-	t.Logf("time-weighted mean = %.2f s, static-equilibrium mean = %.2f s (rel diff %.1f%%)",
+	t.Logf("experienced (over-the-run) mean = %.2f s, static-equilibrium mean = %.2f s (rel diff %.1f%%)",
 		res.MeanRealizedS, staticMean, relDiff*100)
 }
 
@@ -191,6 +191,141 @@ func TestSimulatePerTickDeterminism(t *testing.T) {
 		if s.Tick != i+1 {
 			t.Errorf("tick %d emitted out of order (got Tick=%d)", i+1, s.Tick)
 		}
+	}
+}
+
+// loadToyNetwork loads the shared toy fixture (the real multi-route network: node
+// 0→2 either over the direct residential edge or the faster 0→1→2 motorway pair).
+// It is the same load pattern TestSimulateOnToyNetwork uses; factored out so the
+// determinism test can route over a network that has GENUINE route choice (which the
+// single-edge corridor cannot), so the concurrent route fan-out is actually exercised.
+func loadToyNetwork(t *testing.T) *graph.AdjacencyGraph {
+	t.Helper()
+	g, _, err := graph.LoadEdgeAttributesGeoJSONFile("../../testdata/toy_network.geojson", graph.WithExpectedBounds(-74, -73, 40, 41))
+	if err != nil {
+		t.Fatalf("toy_network.geojson must load with zero error, got: %v", err)
+	}
+	return g
+}
+
+// toyDemand builds n node0→node2 requests over the toy network at the given weight,
+// each departing at departAt[i%len(departAt)] seconds.
+func toyDemand(t *testing.T, g graph.Graph, n int, weight float64, departAt []float64) []routing.RouteRequest {
+	t.Helper()
+	n0, _ := g.Node(0)
+	n2, _ := g.Node(2)
+	reqs := make([]routing.RouteRequest, n)
+	for i := range reqs {
+		reqs[i] = routing.RouteRequest{
+			ID:       fmt.Sprintf("r%d", i),
+			From:     n0.Pos,
+			To:       n2.Pos,
+			Weight:   weight,
+			DepartAt: departAt[i%len(departAt)],
+		}
+	}
+	return reqs
+}
+
+// TestSimulatePerTickDeterminismToyNetwork is the determinism criterion on the REAL
+// multi-route toy network. Unlike the corridor (one route, so the route fan-out has
+// no choice to make), the toy net has actual route choice (0→2 direct vs 0→1→2), so
+// running many staggered requests concurrently genuinely exercises the per-tick
+// concurrent fan-out and proves it introduces NO nondeterminism: two same-OD runs and
+// one with the input slice REVERSED must all produce a byte-identical per-tick trace
+// AND an identical SimResult. The reversed run pins that the sorted-OD release makes
+// the result independent of input slice order.
+func TestSimulatePerTickDeterminismToyNetwork(t *testing.T) {
+	g := loadToyNetwork(t)
+	bpr := cost.DefaultBPR()
+
+	// 24 staggered requests — enough to stride across the fan-out's worker pool so a
+	// nondeterministic reduction would surface as a trace divergence.
+	departAt := []float64{0, 30, 60, 90, 120, 150, 180, 210}
+	reqs := toyDemand(t, g, 24, 80, departAt)
+
+	cfg := benchmark.SimConfig{
+		StartTime:   time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC),
+		TickSeconds: 30,
+		BPR:         bpr,
+	}
+
+	var rec1, rec2, rec3 recorder
+	res1, err := benchmark.Simulate(context.Background(), g, reqs, cfg, benchmark.ReactiveBPRFactory(g, bpr), rec1.observe)
+	if err != nil {
+		t.Fatalf("run 1 error = %v", err)
+	}
+	res2, err := benchmark.Simulate(context.Background(), g, reqs, cfg, benchmark.ReactiveBPRFactory(g, bpr), rec2.observe)
+	if err != nil {
+		t.Fatalf("run 2 error = %v", err)
+	}
+
+	// Reverse the input order for run 3; the sorted release must yield the identical
+	// trace and result regardless of slice order.
+	reversed := make([]routing.RouteRequest, len(reqs))
+	for i := range reqs {
+		reversed[i] = reqs[len(reqs)-1-i]
+	}
+	res3, err := benchmark.Simulate(context.Background(), g, reversed, cfg, benchmark.ReactiveBPRFactory(g, bpr), rec3.observe)
+	if err != nil {
+		t.Fatalf("run 3 (reversed) error = %v", err)
+	}
+
+	if rec1.trace != rec2.trace {
+		t.Errorf("per-tick traces differ across two identical runs (determinism violated)\nrun1:\n%s\nrun2:\n%s", rec1.trace, rec2.trace)
+	}
+	if rec1.trace != rec3.trace {
+		t.Errorf("per-tick trace depends on input slice order (sorted release violated)\nrun1:\n%s\nreversed:\n%s", rec1.trace, rec3.trace)
+	}
+	if !reflect.DeepEqual(res1, res2) {
+		t.Errorf("SimResult differs across two identical runs: %+v vs %+v", res1, res2)
+	}
+	if !reflect.DeepEqual(res1, res3) {
+		t.Errorf("SimResult depends on input slice order: %+v vs %+v", res1, res3)
+	}
+	if len(rec1.states) == 0 {
+		t.Fatal("expected a non-empty per-tick stream on the toy network")
+	}
+	if res1.Completed != len(reqs) {
+		t.Errorf("Completed = %d, want all %d to drain on the toy network", res1.Completed, len(reqs))
+	}
+}
+
+// TestSimulateMaxTicksCutoff pins the documented budget-exhaustion path: a run whose
+// demand CANNOT drain within MaxTicks stops at the cap with Completed < Released and
+// never hangs. With MaxTicks=1 and a 120 s free-flow corridor edge, a single 30 s tick
+// cannot move any vehicle to completion, so every released vehicle is still in flight
+// when the budget is spent — the SimResult.Completed < total / Ticks == MaxTicks path.
+func TestSimulateMaxTicksCutoff(t *testing.T) {
+	g := corridorGraph(t)
+	bpr := cost.DefaultBPR()
+
+	// Several requests on the corridor whose 120 s free-flow edge needs multiple 30 s
+	// ticks to traverse; with only one tick of budget none can complete.
+	reqs := corridorDemand(g, 6, 40, []float64{0})
+
+	cfg := benchmark.SimConfig{
+		StartTime:   time.Date(2026, 6, 20, 8, 0, 0, 0, time.UTC),
+		TickSeconds: 30,
+		MaxTicks:    1,
+		BPR:         bpr,
+	}
+	res, err := benchmark.Simulate(context.Background(), g, reqs, cfg, benchmark.ReactiveBPRFactory(g, bpr), nil)
+	if err != nil {
+		t.Fatalf("Simulate error = %v", err)
+	}
+
+	if res.Ticks != 1 {
+		t.Errorf("Ticks = %d, want 1 (the MaxTicks cap)", res.Ticks)
+	}
+	if res.Released == 0 {
+		t.Fatalf("expected requests to be released within the single tick, Released = %d", res.Released)
+	}
+	if res.Completed >= res.Released {
+		t.Errorf("Completed (%d) must be < Released (%d): the budget cuts the run short with vehicles still in flight", res.Completed, res.Released)
+	}
+	if !isFinite(res.MeanRealizedS) || !isFinite(res.P95RealizedS) {
+		t.Errorf("metrics must be finite even when the budget is exhausted, got mean=%v p95=%v", res.MeanRealizedS, res.P95RealizedS)
 	}
 }
 

@@ -2,10 +2,12 @@ package benchmark
 
 import (
 	"context"
+	"math"
 	"sort"
 	"time"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/static"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
@@ -18,8 +20,8 @@ import (
 // departed at once and the flow settled, what would the network look like", this
 // simulator answers the question §R5 actually requires: requests DEPART ON A
 // CLOCK, congestion BUILDS as the peak fills and DISSIPATES as it drains, and the
-// travel time a driver experiences depends on WHEN they were on each edge. That
-// time-evolution is what makes the "1,000 requests over a rush hour" narrative
+// travel time a driver EXPERIENCES OVER THE RUN depends on WHEN they were on each
+// edge. That time-evolution is what makes the "1,000 requests over a rush hour" narrative
 // defensible, and it is the data source the Phase-5 live frontend animates
 // (project-outline.md "Functionality clarification"; this issue, #90).
 //
@@ -45,12 +47,14 @@ import (
 //     next tick routes and moves against the load this tick produced.
 //  5. RECORD each vehicle's realized experienced travel time the tick it completes.
 //
-// Determinism (§R5): the OD set is processed in a fixed sorted order, the per-tick
-// congestion snapshot is one immutable value, the sharded route accumulation is
-// reduced once per tick in fixed worker-then-edge order (mirroring routing's
-// combineFlows), and the per-tick state stream is emitted in clock order. A fixed
-// seed plus a serialized OD set therefore yields a BYTE-IDENTICAL tick-by-tick
-// trace run to run, and the loop is `go test -race` clean.
+// Determinism (§R5): the OD set is RELEASED in a fixed total order (DepartAt, then
+// input index); each tick takes ONE immutable frozen congestion snapshot every
+// released request routes against; the concurrent route fan-out writes each route by
+// its STABLE batch index (routeBatchConcurrent — no shared accumulator, no lock, and
+// NO combineFlows-style reduction); and the per-edge load is re-derived SERIALLY on
+// the simulation goroutine after the fan-out has fully joined, with the per-tick
+// state stream emitted in clock order. A serialized OD set therefore yields a
+// BYTE-IDENTICAL tick-by-tick trace run to run, and the loop is `go test -race` clean.
 
 // defaultTickSeconds is the simulator's default Δt: 30 simulated seconds per tick
 // (§R5 "Δt≈30s"). A tick is the granularity at which requests are released, loads
@@ -86,8 +90,8 @@ type SimConfig struct {
 	// SimResult.Completed < total, never a hang.
 	MaxTicks int
 
-	// BPR is the cost function speeds and the time-weighted realized times are
-	// derived from. Pass a constructed BPR (cost.DefaultBPR); the zero BPR is not
+	// BPR is the cost function speeds and the experienced (over-the-run) realized
+	// times are derived from. Pass a constructed BPR (cost.DefaultBPR); the zero BPR is not
 	// usable (its zero CapacityScale collapses every edge to free-flow).
 	BPR cost.BPR
 }
@@ -161,32 +165,44 @@ type TickState struct {
 // channel-based consumer wraps this trivially (send ts on a channel inside the
 // callback); a recorder appends ts to a slice. A nil observer means "no per-tick
 // stream" — the run still produces its end-of-run SimResult.
+//
+// IMPORTANT: the callback runs ON THE SIMULATION GOROUTINE and BLOCKS the model —
+// the next tick does not advance until observer returns. A consumer (the Phase-5 #93
+// WebSocket backend) must therefore NOT do blocking I/O directly inside it: wrap or
+// buffer (e.g. send ts on a buffered channel, or append to a slice and flush off the
+// hot path) so a slow/stalled consumer cannot stall — or deadlock — the simulation.
 type TickObserver func(state TickState)
 
-// SimResult is the outcome of one mesoscopic run: the TIME-WEIGHTED realized-time
-// aggregates plus the run's bookkeeping. Its mean/p95 are DISTINCT from the Phase-3
-// static-equilibrium one-shot number and MUST be read and labeled as such (the §R5
-// honesty distinction): the static number assumes every request is simultaneously
-// present at the converged flow, whereas these are the times vehicles ACTUALLY
-// experienced as congestion built and drained over the run. On a congested toy
-// demand the two differ — that difference is the whole point of modeling time.
+// SimResult is the outcome of one mesoscopic run: the EXPERIENCED (over-the-run)
+// realized-time aggregates plus the run's bookkeeping. Its mean/p95 are DISTINCT
+// from the Phase-3 static-equilibrium one-shot number and MUST be read and labeled
+// as such (the §R5 honesty distinction): the static number assumes every request is
+// simultaneously present at the converged flow, whereas these are the times vehicles
+// ACTUALLY experienced as congestion built and drained over the run. The aggregates
+// are a plain arithmetic mean / nearest-rank p95 over each vehicle's experienced
+// trip time — NOT a duration- or occupancy-weighted average; the distinction from
+// the static number is experienced-over-the-run vs static-equilibrium, not
+// weighted-vs-unweighted. On a congested toy demand the two differ — that difference
+// is the whole point of modeling time.
 //
 // All fields are finite and defined on the EMPTY batch (no requests ⇒ zero
 // completions ⇒ mean/p95 default to 0 via the reused evaluator helpers, Ticks 0),
 // so a SimResult is always safe to serialize and render.
 type SimResult struct {
-	// MeanRealizedS is the TIME-WEIGHTED mean realized travel time over the run, in
-	// seconds: the mean of every completed vehicle's experienced trip time. It is
-	// computed with the #89 evaluator's mean helper over the realized times the
-	// simulator accumulated — NOT re-derived — so it shares the empty-batch contract.
-	// It is labeled time-weighted to keep it explicitly distinct from the static
+	// MeanRealizedS is the EXPERIENCED (over-the-run) mean realized travel time, in
+	// seconds: a plain arithmetic mean of every completed vehicle's experienced trip
+	// time. It is computed with the #89 evaluator's mean helper over the realized
+	// times the simulator accumulated — NOT re-derived, and NOT duration/occupancy-
+	// weighted — so it shares the empty-batch contract. It is labeled experienced-
+	// over-the-run to keep it explicitly distinct from the static-equilibrium
 	// MeanRealizedS in benchmark.Result.
 	MeanRealizedS float64
 
-	// P95RealizedS is the TIME-WEIGHTED 95th-percentile realized travel time, by the
-	// evaluator's nearest-rank percentileNearestRank — the unlucky driver in the
-	// peak. Like the mean it is the over-the-run experienced time, distinct from the
-	// static p95.
+	// P95RealizedS is the EXPERIENCED (over-the-run) 95th-percentile realized travel
+	// time, by the evaluator's nearest-rank percentileNearestRank over each vehicle's
+	// experienced trip time — the unlucky driver in the peak. Like the mean it is the
+	// realized-over-the-run experienced time (not a weighted average), distinct from
+	// the static p95.
 	P95RealizedS float64
 
 	// Completed is the number of vehicles that finished within the run. Equal to the
@@ -217,8 +233,8 @@ type vehicle struct {
 	requestIndex int
 
 	// weight is the request's flow contribution (vehicles/hour) on every edge it
-	// occupies — requestWeight semantics surfaced into the sim so a request can
-	// stand for many vehicles. Defaults to 1 for an unset/negative weight.
+	// occupies — routing.RequestWeight semantics surfaced into the sim so a request
+	// can stand for many vehicles. Defaults to 1 for an unset/negative weight.
 	weight float64
 
 	// edges is the routed path (ordered EdgeIDs). An empty path is an origin ==
@@ -234,7 +250,7 @@ type vehicle struct {
 
 	// experiencedS is the travel time the vehicle has accumulated so far (seconds),
 	// the sum over the portions of each tick it spent moving. On completion it is the
-	// realized travel time recorded for the run's time-weighted aggregates.
+	// realized travel time recorded for the run's experienced (over-the-run) aggregates.
 	experiencedS float64
 
 	// done is true once the vehicle has traversed its whole path; a done vehicle is
@@ -243,9 +259,9 @@ type vehicle struct {
 }
 
 // Simulate runs one discrete-time mesoscopic simulation over reqs and returns the
-// time-weighted SimResult, streaming each tick's state to observer (nil for no
-// stream). It is the package's §R5 entry point — the time-domain counterpart to
-// benchmark.Evaluate's static metrics.
+// experienced (over-the-run) SimResult, streaming each tick's state to observer (nil
+// for no stream). It is the package's §R5 entry point — the time-domain counterpart
+// to benchmark.Evaluate's static metrics.
 //
 // reqs is the departure-time OD set: each request's DepartAt (seconds from
 // cfg.StartTime) sets when it is released and its Weight its per-edge flow
@@ -256,6 +272,17 @@ type vehicle struct {
 // routerFactory builds the routing strategy each tick (ReactiveBPRFactory for the
 // congestion-aware default). It is called once per tick over that tick's frozen
 // provider; a nil factory is a usage error and returns an error rather than panicking.
+// ONLY the router's single-request Route path is exercised (the per-tick fan-out calls
+// router.Route once per newly-released request) — the simulator never invokes an
+// AssignResult/MSA/equilibrium iteration, so a factory wired to an iterative router
+// would NOT get its iterated behavior here; pass a single-shot router (reactive/naive).
+//
+// CONGESTION FEEDBACK IS LAGGED BY ONE Δt: advance reads the load the tick STARTED
+// with (the same snapshot routing saw), and the load is re-derived from occupancy only
+// AFTER the advance. So tick 1 always runs free-flow (the load is still all-zero before
+// the first re-derivation), and the peak congestion a driver experiences is under-
+// counted by one tick of feedback. This is an intentional, documented modeling choice
+// (one-step explicit update), not a bug; a finer Δt shrinks the lag.
 //
 // Degenerate inputs are defined, never a panic: an empty/nil reqs runs zero ticks
 // and returns an all-zero-but-finite SimResult; an origin == destination request
@@ -298,7 +325,7 @@ func Simulate(
 	completed := 0
 
 	// realized collects each completed vehicle's experienced travel time, in
-	// completion order, for the time-weighted aggregates. It is the input the reused
+	// completion order, for the experienced (over-the-run) aggregates. It is the input the reused
 	// #89 evaluator helpers (mean, percentileNearestRank) reduce — NOT re-derived here.
 	realized := make([]float64, 0, len(reqs))
 
@@ -307,6 +334,12 @@ func Simulate(
 	// concurrently — only the single simulation goroutine writes it, between the
 	// concurrent route fan-out and the next tick.
 	load := congestion.NewLoadStore(edgeCount)
+
+	// occupied tracks the edges that held a vehicle at the end of the PREVIOUS tick, so
+	// loadFromVehicles zeroes only those (O(occupied)) rather than every edge each tick.
+	// It is reused across ticks (loadFromVehicles returns this tick's occupied set,
+	// sharing the backing array). Empty before tick 1: nothing is occupied yet.
+	var occupied []domain.EdgeID
 
 	for tick := 1; tick <= maxTicks; tick++ {
 		if err := ctx.Err(); err != nil {
@@ -324,11 +357,12 @@ func Simulate(
 		newlyReleased := order[releaseStart:nextPending]
 
 		// (b) ROUTE the newly-released batch against the CURRENT load — ONE immutable
-		// snapshot value for the whole tick (frozenProvider). Every request released
-		// this tick sees the identical, stable view (§R5 per-round snapshot). The
-		// fan-out owns per-worker state; no shared mutable map under a lock.
+		// snapshot value for the whole tick, served through the shared static.Provider
+		// frozen adapter (static.NewFromSnapshot). Every request released this tick sees
+		// the identical, stable view (§R5 per-round snapshot). The fan-out owns
+		// per-worker state; no shared mutable map under a lock.
 		if len(newlyReleased) > 0 {
-			provider := frozenProvider{snapshot: load.Snapshot()}
+			provider := static.NewFromSnapshot(load.Snapshot())
 			router := routerFactory(provider)
 			routes, err := routeBatchConcurrent(ctx, router, reqs, newlyReleased)
 			if err != nil {
@@ -337,7 +371,7 @@ func Simulate(
 			for i, reqIndex := range newlyReleased {
 				inFlight = append(inFlight, &vehicle{
 					requestIndex: reqIndex,
-					weight:       requestWeight(reqs[reqIndex]),
+					weight:       routing.RequestWeight(reqs[reqIndex]),
 					edges:        routes[i].Edges,
 				})
 			}
@@ -362,8 +396,10 @@ func Simulate(
 
 		// (d) RE-DERIVE the per-edge load from who is on each edge AFTER the advance,
 		// so the NEXT tick routes and moves against the load this tick produced. This
-		// single-goroutine write happens after the route fan-out has fully joined.
-		loadFromVehicles(load, inFlight)
+		// single-goroutine write happens after the route fan-out has fully joined. It
+		// zeroes only last tick's occupied edges and returns this tick's, threaded back
+		// for next tick — an O(occupied), not O(EdgeCount), clear.
+		occupied = loadFromVehicles(load, inFlight, occupied)
 
 		// Emit this tick's immutable state to the per-tick seam (Phase-5 #93) in
 		// strict tick order, after the load is settled for the tick.
@@ -457,24 +493,41 @@ func advance(veh *vehicle, roadGraph graph.Graph, bpr cost.BPR, load *congestion
 }
 
 // loadFromVehicles re-derives the per-edge load (vehicles/hour) from the vehicles
-// currently in flight: each vehicle contributes its weight to the single edge it
-// occupies this tick. It clears the store to zero first (every edge that no longer
-// has a vehicle drops to 0, so congestion DISSIPATES as the peak drains — the
-// time-evolution that distinguishes this from the static one-shot). It is a single-
-// goroutine write, called after the concurrent route fan-out has joined, so there is
-// no shared mutable load under a lock. A vehicle past its last edge (done) is not in
-// the in-flight slice and contributes nothing.
-func loadFromVehicles(load *congestion.LoadStore, inFlight []*vehicle) {
-	for index := 0; index < load.Len(); index++ {
-		load.Set(domain.EdgeID(index), 0)
+// currently in flight: each vehicle contributes its full weight (vph) to the single
+// edge it occupies this tick, and that instantaneous weighted occupancy is what the
+// BPR cost function is then fed as an hourly flow rate. This is a MESOSCOPIC
+// APPROXIMATION — absolute v/c is occupancy-as-flow-rate, not a true hourly
+// throughput count — but it is internally consistent with how the static routers
+// accumulate FinalFlows (each request adds RequestWeight to every edge of its path),
+// so the simulator's loads and the routers' loads are on the same scale.
+//
+// It clears the store to zero first (every edge that no longer has a vehicle drops to
+// 0, so congestion DISSIPATES as the peak drains — the time-evolution that
+// distinguishes this from the static one-shot), but only over the edges that were
+// OCCUPIED LAST TICK (passed in lastOccupied), not all |EdgeCount| edges: vehicles
+// occupy at most |inFlight| edges, so the clear is O(occupied) rather than O(edges).
+// Clearing to 0 is order-independent and the current occupancy is then added in the
+// fixed inFlight order, so the resulting load values — and the per-tick trace — are
+// byte-identical to a full-store clear. It returns the set of edges occupied THIS
+// tick, to be cleared next tick; the caller threads it back in.
+//
+// It is a single-goroutine write, called after the concurrent route fan-out has
+// joined, so there is no shared mutable load under a lock. A vehicle past its last
+// edge (done) is not in the in-flight slice and contributes nothing.
+func loadFromVehicles(load *congestion.LoadStore, inFlight []*vehicle, lastOccupied []domain.EdgeID) []domain.EdgeID {
+	for _, edgeID := range lastOccupied {
+		load.Set(edgeID, 0)
 	}
+	occupied := lastOccupied[:0]
 	for _, veh := range inFlight {
 		if veh.edgeIndex < 0 || veh.edgeIndex >= len(veh.edges) {
 			continue
 		}
 		edgeID := veh.edges[veh.edgeIndex]
 		load.Set(edgeID, load.Load(edgeID)+veh.weight)
+		occupied = append(occupied, edgeID)
 	}
+	return occupied
 }
 
 // buildTickState assembles the immutable TickState for one tick: the sim clock
@@ -484,13 +537,18 @@ func loadFromVehicles(load *congestion.LoadStore, inFlight []*vehicle) {
 // v/c agrees exactly with the static metric's definition.
 func buildTickState(tick int, cfg SimConfig, tickSeconds float64, inFlight, completed int, load *congestion.LoadStore, roadGraph graph.Graph) TickState {
 	elapsed := time.Duration(float64(tick) * tickSeconds * float64(time.Second))
+	// One snapshot serves both fields: the TickState.Load owned copy AND the v/c
+	// derivation. edgeVCRatios only reads its flows argument (never retains/mutates
+	// it), and snap is itself an owned copy, so handing the same value to both is safe
+	// — and it halves the per-tick allocation versus snapshotting twice.
+	snap := load.Snapshot()
 	return TickState{
 		Tick:      tick,
 		SimTime:   cfg.StartTime.Add(elapsed),
 		InFlight:  inFlight,
 		Completed: completed,
-		Load:      load.Snapshot(),
-		VC:        edgeVCRatios(roadGraph, cfg.BPR, load.Snapshot()),
+		Load:      snap,
+		VC:        edgeVCRatios(roadGraph, cfg.BPR, snap),
 	}
 }
 
@@ -526,10 +584,15 @@ func derivedMaxTicks(reqs []routing.RouteRequest, tickSeconds float64) int {
 			latestDepart = req.DepartAt
 		}
 	}
-	// Ticks to reach the last departure, plus a fixed travel allowance. The allowance
-	// is large (the toy network's longest free-flow path is well under it) so a
-	// healthy run drains via the early exit, not this cap.
+	// Ticks to reach the last departure, plus a TIME-BASED travel allowance. The
+	// allowance is a generous fixed budget of SIMULATED SECONDS converted to ticks
+	// (ceil(budget / tickSeconds)), so a small TickSeconds still buys the same amount
+	// of simulated time to drain — a flat tick allowance would, at a tiny Δt, cap the
+	// run after only a few simulated seconds and cut off vehicles still mid-trip. The
+	// budget is large (the toy network's longest free-flow path is minutes, well under
+	// it), so a healthy run drains via the early exit, not this cap.
+	const travelAllowanceSeconds = 300000.0 // ≈83h of simulated travel headroom
 	departTicks := int(latestDepart/tickSeconds) + 1
-	const travelAllowanceTicks = 10000
-	return departTicks + travelAllowanceTicks
+	allowanceTicks := int(math.Ceil(travelAllowanceSeconds / tickSeconds))
+	return departTicks + allowanceTicks
 }
