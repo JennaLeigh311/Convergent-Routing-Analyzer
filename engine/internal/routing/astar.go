@@ -204,7 +204,7 @@ func (router *AStarRouter) Assign(ctx context.Context, reqs []RouteRequest) ([]R
 // It snaps every request's endpoints to graph node ids ONCE up front (prefetchOD)
 // rather than re-snapping inside the per-request loop — the shared OD-prefetch
 // substrate — then runs one A* per pair, accumulating each chosen path into
-// FinalFlows via addRouteFlow weighted by requestWeight(req). It checks ctx.Err()
+// FinalFlows via addRouteFlow weighted by RequestWeight(req). It checks ctx.Err()
 // before each request so a cancelled or deadline-exceeded context stops the batch
 // promptly; on the first routing error it returns a zero AssignResult and that
 // error (never a partial result).
@@ -226,7 +226,7 @@ func (router *AStarRouter) AssignResult(ctx context.Context, reqs []RouteRequest
 		}
 		route := Route{RequestID: req.ID, Edges: path, CostS: cost}
 		routes[index] = route
-		addRouteFlow(flows, route, requestWeight(req))
+		addRouteFlow(flows, route, RequestWeight(req))
 	}
 	return AssignResult{
 		Routes:     routes,

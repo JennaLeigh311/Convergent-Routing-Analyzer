@@ -101,8 +101,8 @@ func TestRequestWeight(test *testing.T) {
 		{weight: 2.5, want: 2.5},
 	}
 	for _, testCase := range cases {
-		if got := requestWeight(RouteRequest{Weight: testCase.weight}); got != testCase.want {
-			test.Errorf("requestWeight(Weight=%v) = %v, want %v", testCase.weight, got, testCase.want)
+		if got := RequestWeight(RouteRequest{Weight: testCase.weight}); got != testCase.want {
+			test.Errorf("RequestWeight(Weight=%v) = %v, want %v", testCase.weight, got, testCase.want)
 		}
 	}
 }

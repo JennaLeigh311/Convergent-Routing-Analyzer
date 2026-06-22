@@ -200,7 +200,7 @@ func assignAONConcurrent(
 	edgeCount := roadGraph.EdgeCount()
 	routes := make([]Route, len(pairs))
 
-	workerCount := workersFor(len(pairs))
+	workerCount := WorkersFor(len(pairs))
 	shards := make([][]float64, workerCount)
 	totals := make([]float64, workerCount)
 
@@ -234,7 +234,7 @@ func assignAONConcurrent(
 				}
 				route := Route{RequestID: reqs[index].ID, Edges: path, CostS: pathCost}
 				routes[index] = route // distinct index per request: no data race
-				w := requestWeight(reqs[index])
+				w := RequestWeight(reqs[index])
 				addRouteFlow(shard, route, w)
 				localTotal += w * pathCost
 			}
@@ -256,12 +256,14 @@ func assignAONConcurrent(
 	return assignOutcome{routes: routes, flows: flows, totalSP: totalSP}, nil
 }
 
-// workersFor picks the worker count for a fan-out of n requests: at most GOMAXPROCS,
+// WorkersFor picks the worker count for a fan-out of n requests: at most GOMAXPROCS,
 // never more workers than requests, and at least 1 (so an empty batch still spins one
 // no-op worker rather than dividing by zero). Capping at the request count avoids
 // idle goroutines for small batches; capping at GOMAXPROCS avoids oversubscription on
-// the large (1,000-request) demand batch.
-func workersFor(n int) int {
+// the large (1,000-request) demand batch. It is EXPORTED so the §R5 mesoscopic
+// simulator's route fan-out (benchmark.routeBatchConcurrent) caps the same way the
+// assignment core does, rather than keeping a byte-copy of this rule.
+func WorkersFor(n int) int {
 	if n <= 0 {
 		return 1
 	}

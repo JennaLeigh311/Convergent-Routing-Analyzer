@@ -28,6 +28,18 @@ func NewLoadStore(edgeCount int) *LoadStore {
 	return &LoadStore{loads: make(LoadSnapshot, edgeCount)}
 }
 
+// NewLoadStoreFromSnapshot returns a LoadStore initialized to an OWNED copy of the
+// given per-edge loads, so a frozen snapshot (e.g. a per-tick congestion value) can be
+// served through any LoadStore-backed CongestionProvider without re-deriving it from
+// messages. It copies, so a later mutation of either the snapshot or the store does not
+// affect the other — the disjoint-backing-array contract Snapshot also guarantees. A
+// nil snapshot yields an empty store (Set still grows on demand).
+func NewLoadStoreFromSnapshot(snapshot LoadSnapshot) *LoadStore {
+	loads := make(LoadSnapshot, len(snapshot))
+	copy(loads, snapshot)
+	return &LoadStore{loads: loads}
+}
+
 // Len returns the number of dense edge slots currently backed. Callers iterate
 // indices 0..Len()-1 (ascending EdgeID order) to evolve every backed edge.
 func (store *LoadStore) Len() int { return len(store.loads) }
