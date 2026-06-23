@@ -76,7 +76,7 @@ func SweepLevels() []SweepLevel {
 	}
 }
 
-// RouterName is the canonical ordering of the six routers in the comparison table.
+// RouterOrder is the canonical ordering of the six routers in the comparison table.
 // Held in one place so the table, the CI assertions, and the determinism test all
 // agree on which routers must appear and in what order.
 var RouterOrder = []string{"naive", "reactive", "incremental", "msa", "systemoptimal", "multipath"}
@@ -163,7 +163,8 @@ const simMaxTicks = 10000
 // router at that level sees the identical demand), (2) builds the level's BPR from
 // its CapacityScale, (3) routes the OD set through each of the six routers, (4)
 // evaluates each into a Result, (5) computes PoA against the level's systemoptimal
-// total and the time-weighted simulator total. A routing error from any router is
+// total and runs the §R5 mesoscopic simulator once for the level's experienced
+// (over-the-run) mean/p95 realized time. A routing error from any router is
 // returned (never a partial grid) so CI fails the build rather than publishing a
 // half table. count is the per-level request count (DefaultODCount for the
 // canonical run).

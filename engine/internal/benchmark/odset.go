@@ -88,14 +88,13 @@ type ODSet struct {
 }
 
 // reachablePairPool returns the fixed pool of origin→destination node pairs that
-// are KNOWN reachable on the graph, each carrying its resolved endpoint LatLon and
-// a derived label. It is built by a single deterministic BFS-free reachability
-// scan: for every ordered (from, to) node pair it asks the naive router whether a
-// path exists, keeping only the reachable ones, in ascending (from, to) node-id
-// order. Unreachable pairs (the toy network is largely one-way) are dropped here so
-// the generator never synthesizes a request that would fail to route — the
-// "unreachable OD pairs handled cleanly, never panic/NaN" criterion is satisfied by
-// construction.
+// are KNOWN reachable on the graph, each carrying its node ids and a derived label.
+// It is built by a deterministic scan: for every ordered (from, to) node pair it
+// runs reachable (a BFS over OutEdgeIDs in ascending edge-id order), keeping only
+// the reachable ones, in ascending (from, to) node-id order. Unreachable pairs (the
+// toy network is largely one-way) are dropped here so the generator never
+// synthesizes a request that would fail to route — the "unreachable OD pairs handled
+// cleanly, never panic/NaN" criterion is satisfied by construction.
 //
 // The pool excludes self-pairs (from == to): a zero-edge route realizes 0 s and
 // carries no demand, so it would only dilute the sweep without exercising any edge.
@@ -110,13 +109,14 @@ func reachablePairPool(g graph.Graph) []ODPair {
 			if !reachable(g, domain.NodeID(from), domain.NodeID(to)) {
 				continue
 			}
-			fromNode, fromOK := g.Node(domain.NodeID(from))
-			toNode, toOK := g.Node(domain.NodeID(to))
-			if !fromOK || !toOK {
+			// Confirm both endpoints resolve; the resolved positions are re-fetched
+			// in GenerateODSet when a request actually draws this pair.
+			if _, fromOK := g.Node(domain.NodeID(from)); !fromOK {
 				continue
 			}
-			_ = fromNode
-			_ = toNode
+			if _, toOK := g.Node(domain.NodeID(to)); !toOK {
+				continue
+			}
 			pairs = append(pairs, ODPair{
 				FromNode: domain.NodeID(from),
 				ToNode:   domain.NodeID(to),
