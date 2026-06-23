@@ -6,15 +6,32 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/api"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/metrics"
 )
 
-// TestNewMuxRoutes pins the routing-server's Phase-0 route table — the server's
-// entire public contract this phase — so a future edit to newMux that drops or
-// mis-paths an endpoint fails CI instead of passing silently. /metrics is a
-// one-line wiring of a library handler whose only real risk IS the wiring, and
-// the health endpoints are exercised nowhere else.
+// newTestMux builds the full server mux the binary serves, over the embedded
+// graph, so the route-table assertions exercise the real wiring (health +
+// metrics + the REST surface) without binding a listener. A construction failure
+// is fatal — the embedded graph must always load.
+func newTestMux(t *testing.T) *http.ServeMux {
+	t.Helper()
+	reg := metrics.NewRegistry()
+	apiServer, err := api.NewDefaultServer(reg, nil)
+	if err != nil {
+		t.Fatalf("NewDefaultServer: %v", err)
+	}
+	return newMux(reg, apiServer)
+}
+
+// TestNewMuxRoutes pins the routing-server's route table — the server's public
+// contract — so a future edit to newMux that drops or mis-paths an endpoint
+// fails CI instead of passing silently. It covers the health/metrics endpoints
+// (owned by this binary) and that the REST surface is mounted; the per-endpoint
+// behavior is tested in internal/api.
 func TestNewMuxRoutes(test1 *testing.T) {
-	server := httptest.NewServer(newMux())
+	server := httptest.NewServer(newTestMux(test1))
 	defer server.Close()
 
 	test1.Run("healthz and readyz return 200 ok", func(test2 *testing.T) {
@@ -65,6 +82,35 @@ func TestNewMuxRoutes(test1 *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			test4.Errorf("GET /metrics/extra: status = %d, want 404", resp.StatusCode)
+		}
+	})
+
+	// The REST surface is mounted: each endpoint is reachable (not 404) over the
+	// real mux. The detailed request/response behavior lives in internal/api; here
+	// we only assert the wiring exists, so a dropped Handle call fails CI.
+	test1.Run("rest surface is mounted", func(test5 *testing.T) {
+		cases := []struct {
+			method, path string
+		}{
+			{http.MethodGet, "/route?from=40.73,-73.99&to=40.74,-73.97"},
+			{http.MethodGet, "/compare?from=40.73,-73.99&to=40.74,-73.97"},
+			{http.MethodGet, "/congestion"},
+			{http.MethodGet, "/graph"},
+			{http.MethodPost, "/benchmark"},
+		}
+		for _, tc := range cases {
+			req, err := http.NewRequest(tc.method, server.URL+tc.path, strings.NewReader(""))
+			if err != nil {
+				test5.Fatalf("%s %s: build request: %v", tc.method, tc.path, err)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				test5.Fatalf("%s %s: %v", tc.method, tc.path, err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusNotFound {
+				test5.Errorf("%s %s: got 404, want the endpoint mounted", tc.method, tc.path)
+			}
 		}
 	})
 }
