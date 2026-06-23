@@ -146,39 +146,42 @@ jobs:
             *) echo "route CLI: unexpected error message: $err"; exit 1 ;;
           esac
 
-      - name: bench (naive + the four Phase-3 routers over the toy graph; real run, not the six-algorithm harness)
-        # Real but minimal: loads the toy network, runs the naive free-flow router
-        # AND each of the four Phase-3 routers (incremental, msa, systemoptimal,
-        # multipath) over the same toy graph + request batch, and exits non-zero on
-        # any load/routing failure. Those four routers are on no CLI/bench path of
-        # their own, so this is the only place Lane A exercises them end-to-end.
+      - name: bench (Phase-4 six-router demand sweep over the toy graph; the real comparison)
+        # The REAL six-router comparison (issue #91): loads the toy network, runs ALL
+        # SIX routers (naive, reactive, incremental, msa, systemoptimal, multipath)
+        # over the SAME reproducible OD set across the v/c demand sweep, emits the JSON
+        # report to stdout, logs the per-level PoA + headline improvement to stderr,
+        # and refreshes docs/benchmarks.md. It exits non-zero on any load/routing/IO
+        # failure. This is the only place Lane A exercises the full comparison harness.
         #
-        # We assert: (1) the naive summary still reports requests_routed=2 (the
-        # original Phase-1 gate, byte-for-byte unchanged), and (2) EACH Phase-3
-        # router appears in the output on a line that also reports requests_routed=2
-        # — so a router silently dropping out of the run, or routing the wrong
-        # count, fails the merge gate (not merely a non-crashing process). The
-        # in-process determinism + summary-shape contract is pinned by
-        # cmd/benchmark/main_test.go under `go test -race` above; this step gates the
-        # real binary's output. The full convergent-routing comparison lands later.
+        # We assert: (1) the binary exits 0 and emits valid JSON to stdout; (2) EACH of
+        # the six routers appears in the report; (3) the run is DETERMINISTIC — two
+        # invocations produce byte-identical stdout JSON (the JSON carries no
+        # wall-clock; only the stderr log does). The in-process determinism +
+        # JSON-shape + docs-refresh contracts are pinned by cmd/benchmark/main_test.go
+        # under `go test -race` above; this step gates the real binary end-to-end.
         run: |
-          out="$(go run ./cmd/benchmark 2>&1)"
-          printf '%s\n' "$out"
-          case "$out" in
-            *requests_routed=2*) echo "bench: routed the expected batch OK" ;;
-            *) echo "bench: did not route the expected batch (want requests_routed=2)"; exit 1 ;;
-          esac
-          # Each Phase-3 router must appear on a line that ALSO routed the batch
-          # (router=<name> ... requests_routed=2 on the same line). grep -E one line
-          # per router so a missing router OR a wrong count fails (exit 1).
-          for router in incremental msa systemoptimal multipath; do
-            if printf '%s\n' "$out" | grep -Eq "router=${router}([^a-z]|$).*requests_routed=2"; then
-              echo "bench: ${router} router routed the expected batch OK"
+          json1="$(go run ./cmd/benchmark 2>/tmp/bench.log)"
+          cat /tmp/bench.log
+          # (1) valid JSON
+          printf '%s' "$json1" | python3 -c 'import json,sys; json.load(sys.stdin)' \
+            && echo "bench: stdout is valid JSON OK" \
+            || { echo "bench: stdout is not valid JSON"; exit 1; }
+          # (2) each of the six routers must appear in the report
+          for router in naive reactive incremental msa systemoptimal multipath; do
+            if printf '%s' "$json1" | grep -q "\"router\": \"${router}\""; then
+              echo "bench: ${router} router present in report OK"
             else
-              echo "bench: ${router} router missing or did not route the expected batch (want router=${router} ... requests_routed=2)"
-              exit 1
+              echo "bench: ${router} router missing from report"; exit 1
             fi
           done
+          # (3) determinism: a second run must produce byte-identical stdout JSON.
+          json2="$(go run ./cmd/benchmark 2>/dev/null)"
+          if [ "$json1" = "$json2" ]; then
+            echo "bench: stdout JSON deterministic across two runs OK"
+          else
+            echo "bench: stdout JSON differs across runs (non-deterministic)"; exit 1
+          fi
 
   lane-b:
     name: Lane B

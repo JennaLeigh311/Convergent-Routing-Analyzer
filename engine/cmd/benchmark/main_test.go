@@ -2,166 +2,180 @@ package main
 
 import (
 	"bytes"
-	"regexp"
+	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // toyGraphFromTestDir is the toy fixture resolved relative to this package's
-// directory (go test runs with the package dir as cwd), mirroring cmd/route's
-// test. main passes the engine-relative toyNetworkPath instead.
+// directory (go test runs with the package dir as cwd). main passes the
+// engine-relative toyNetworkPath instead.
 const toyGraphFromTestDir = "../../testdata/toy_network.geojson"
 
-// volatileFields normalizes the two run-to-run-varying tokens out of the bench
-// output so determinism can be asserted on the parts that MUST be stable:
-//
-//   - time=...   the slog text handler stamps every line with wall-clock time.
-//   - elapsed=... the naive line reports its own wall-clock routing duration.
-//
-// The leading \b anchors each alternative to a key boundary so only the exact
-// `time=` and `elapsed=` tokens are stripped: a future structured field whose key
-// merely starts with those words (e.g. `elapsed_ms=` or `time_to_route=`) is NOT
-// stripped, so its value still participates in the determinism check rather than
-// being silently masked.
-//
-// Everything else (router names, node/edge counts, requests_routed, field
-// ordering) is the deterministic content this harness exists to gate. A router
-// leaking nondeterminism (MSA averaging order, multipath split without the fixed
-// seed) would change requests_routed or the line set, which survives this
-// normalization and fails the byte-identical check below.
-var volatileFields = regexp.MustCompile(`\b(?:time|elapsed)=\S+`)
-
-func normalize(out string) string {
-	return volatileFields.ReplaceAllString(out, "")
-}
-
-// runOnce executes the harness in-process and returns its captured output, failing
-// the test on any load/routing error (which in production exits non-zero).
+// runOnce executes the harness in-process against the toy graph, capturing the
+// deterministic stdout JSON and writing the table into a per-test temp docs file
+// (so the real docs/benchmarks.md is never touched by the test). Logs are
+// discarded — they carry the volatile time=/elapsed= fields the JSON deliberately
+// excludes. It fails the test on any load/routing/IO error (which in production
+// exits non-zero).
 func runOnce(t *testing.T) string {
 	t.Helper()
-	var buf bytes.Buffer
-	if err := run(&buf, toyGraphFromTestDir); err != nil {
+	var stdout bytes.Buffer
+	docsPath := filepath.Join(t.TempDir(), "benchmarks.md")
+	// Seed the temp doc with the marker region so the harness replaces it in place,
+	// exercising the same path the real doc takes.
+	seed := tableBeginMarker + "\n\n(placeholder)\n\n" + tableEndMarker + "\n"
+	if err := os.WriteFile(docsPath, []byte(seed), 0o644); err != nil {
+		t.Fatalf("seed temp docs: %v", err)
+	}
+	if err := run(&stdout, io.Discard, toyGraphFromTestDir, docsPath); err != nil {
 		t.Fatalf("run() returned error: %v", err)
 	}
-	return buf.String()
+	return stdout.String()
 }
 
 // TestBenchDeterministic runs the whole harness twice in-process and asserts the
-// output is byte-identical after normalizing the wall-clock fields. This is the
-// determinism invariant: MSA/systemoptimal must be deterministic via sorted
-// iteration (not RNG), and multipath via the fixed benchSeed. Any run-to-run
-// drift in flow/ordering/counts fails here — and because this runs under
-// `go test -race ./...` (Lane A), it auto-gates the merge.
-//
-// SCOPE: both runs execute in one process, so they share GOMAXPROCS. The iterative
-// routers shard work by index % workerCount (workerCount caps at GOMAXPROCS), so a
-// host with a different core count could in principle accumulate per-shard flow in
-// a different order. That is invisible here and harmless today because the summary
-// lines expose only requests_routed and the router name, never flow values. If a
-// flow-sensitive field is ever added to the summary, the routers must combine
-// shards in a fixed (GOMAXPROCS-independent) order and this test should be
-// re-evaluated for cross-core determinism.
+// stdout JSON is BYTE-IDENTICAL. The JSON carries no wall-clock field (those go to
+// the log writer, discarded here), so no normalization is needed — any run-to-run
+// drift in OD draw, flow accumulation, the multipath split, or the simulator-mode
+// total fails here. Because this runs under `go test -race ./...` (Lane A), it
+// auto-gates the merge.
 func TestBenchDeterministic(t *testing.T) {
-	first := normalize(runOnce(t))
-	second := normalize(runOnce(t))
+	first := runOnce(t)
+	second := runOnce(t)
 	if first != second {
-		t.Fatalf("bench output is not deterministic across two runs:\n--- first ---\n%s\n--- second ---\n%s", first, second)
+		t.Fatalf("bench JSON is not deterministic across two runs:\n--- first ---\n%s\n--- second ---\n%s", first, second)
 	}
 }
 
-// TestBenchSummaryShape pins the summary output shape: the exact set of summary
-// lines, each router's name, and the field set + ordering on every line. A golden
-// string is brittle against the volatile time/elapsed tokens, so this asserts the
-// stable structure explicitly (which doubles as the human-readable contract for
-// what Lane A greps).
-func TestBenchSummaryShape(t *testing.T) {
-	lines := strings.Split(strings.TrimRight(runOnce(t), "\n"), "\n")
-	if len(lines) != 5 {
-		t.Fatalf("want 5 summary lines (naive + 4 phase-3 routers), got %d:\n%s", len(lines), strings.Join(lines, "\n"))
+// TestBenchJSONShape decodes the stdout JSON and pins the comparison grid's shape:
+// six routers × four demand levels = 24 cells, the four per-level PoA entries, and a
+// headline improvement carrying a demand level. This is the structural contract Lane
+// A's "every router appears" assertion gates the binary on.
+func TestBenchJSONShape(t *testing.T) {
+	var report struct {
+		Seed    int64 `json:"seed"`
+		ODCount int   `json:"od_count"`
+		Cells   []struct {
+			Result struct {
+				Router      string `json:"router"`
+				DemandLevel string `json:"demand_level"`
+			} `json:"result"`
+			PoA float64 `json:"poa"`
+		} `json:"cells"`
+		PoAByLevel []struct {
+			DemandLevel string  `json:"demand_level"`
+			PoA         float64 `json:"poa"`
+		} `json:"poa_by_level"`
+		Headline struct {
+			DemandLevel string `json:"demand_level"`
+		} `json:"headline_improvement"`
+	}
+	if err := json.Unmarshal([]byte(runOnce(t)), &report); err != nil {
+		t.Fatalf("decode bench JSON: %v", err)
 	}
 
-	// The naive line keeps its original message + field ordering byte-for-byte
-	// (CI Lane A has greped requests_routed=2 from it since Phase 1). It is the
-	// only line carrying elapsed; the four phase-3 lines must not.
-	naive := lines[0]
-	for _, want := range []string{
-		`msg="phase-1 naive-router toy-graph bench"`,
-		`component=benchmark`,
-		`router=naive`,
-		`nodes=6`,
-		`edges=7`,
-		`requests_routed=2`,
-		`elapsed=`,
-	} {
-		if !strings.Contains(naive, want) {
-			t.Errorf("naive summary line missing %q:\n%s", want, naive)
-		}
+	if got, want := len(report.Cells), 24; got != want {
+		t.Errorf("cell count = %d, want %d (6 routers × 4 levels)", got, want)
 	}
-	// Field ordering on the naive line is part of the contract.
-	if got := fieldOrder(naive); got != "component router nodes edges requests_routed elapsed" {
-		t.Errorf("naive line field order drifted: %q", got)
+	// Every one of the six routers must appear at every level.
+	wantRouters := []string{"naive", "reactive", "incremental", "msa", "systemoptimal", "multipath"}
+	wantLevels := []string{"vc0.5", "vc0.8", "vc1.0", "vc1.2"}
+	seen := make(map[string]bool, len(report.Cells))
+	for _, c := range report.Cells {
+		seen[c.Result.Router+"@"+c.Result.DemandLevel] = true
 	}
-
-	// The four phase-3 routers, in this exact order, each on its own line with the
-	// same deterministic field set and NO elapsed.
-	wantRouters := []string{"incremental", "msa", "systemoptimal", "multipath"}
-	for i, name := range wantRouters {
-		line := lines[i+1]
-		for _, want := range []string{
-			`msg="phase-3 router toy-graph bench"`,
-			`component=benchmark`,
-			"router=" + name,
-			`nodes=6`,
-			`edges=7`,
-			`requests_routed=2`,
-		} {
-			if !strings.Contains(line, want) {
-				t.Errorf("%s summary line missing %q:\n%s", name, want, line)
+	for _, r := range wantRouters {
+		for _, l := range wantLevels {
+			if !seen[r+"@"+l] {
+				t.Errorf("missing cell for router %q at level %q", r, l)
 			}
 		}
-		if strings.Contains(line, "elapsed=") {
-			t.Errorf("%s summary line must not carry a volatile elapsed= field:\n%s", name, line)
-		}
-		if got := fieldOrder(line); got != "component router nodes edges requests_routed" {
-			t.Errorf("%s line field order drifted: %q", name, got)
-		}
+	}
+	if got := len(report.PoAByLevel); got != len(wantLevels) {
+		t.Errorf("poa_by_level entries = %d, want %d", got, len(wantLevels))
+	}
+	if report.Headline.DemandLevel == "" {
+		t.Error("headline improvement is missing its demand level")
 	}
 }
 
-// TestBenchBadGraphPath covers run()'s load-failure branch: a nonexistent graph
-// path must return a non-nil error (which main turns into a non-zero exit), so a
+// TestBenchDocsRefresh asserts the harness rewrites ONLY the marker-bounded region
+// of the docs file, leaving surrounding prose intact, and that the refreshed region
+// holds the rendered table header.
+func TestBenchDocsRefresh(t *testing.T) {
+	docsPath := filepath.Join(t.TempDir(), "benchmarks.md")
+	const prose = "# Title\n\nKeep me.\n\n"
+	seed := prose + tableBeginMarker + "\n\n(placeholder)\n\n" + tableEndMarker + "\n\nAlso keep me.\n"
+	if err := os.WriteFile(docsPath, []byte(seed), 0o644); err != nil {
+		t.Fatalf("seed temp docs: %v", err)
+	}
+	if err := run(io.Discard, io.Discard, toyGraphFromTestDir, docsPath); err != nil {
+		t.Fatalf("run() returned error: %v", err)
+	}
+	got, err := os.ReadFile(docsPath)
+	if err != nil {
+		t.Fatalf("read refreshed docs: %v", err)
+	}
+	out := string(got)
+	for _, want := range []string{"Keep me.", "Also keep me.", "| router | demand | cap_scale |"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("refreshed docs missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "(placeholder)") {
+		t.Errorf("refreshed docs still contains the placeholder; region not replaced:\n%s", out)
+	}
+	// Exactly one marker pair survives a refresh (idempotent region replacement).
+	if n := strings.Count(out, tableBeginMarker); n != 1 {
+		t.Errorf("begin marker count = %d, want 1", n)
+	}
+	if n := strings.Count(out, tableEndMarker); n != 1 {
+		t.Errorf("end marker count = %d, want 1", n)
+	}
+}
+
+// TestBenchDocsRefreshIdempotent runs the refresh twice over the same temp doc and
+// asserts the file is byte-identical the second time — a re-run must not duplicate
+// the table region or drift the surrounding prose.
+func TestBenchDocsRefreshIdempotent(t *testing.T) {
+	docsPath := filepath.Join(t.TempDir(), "benchmarks.md")
+	seed := "# T\n\n" + tableBeginMarker + "\n\n(x)\n\n" + tableEndMarker + "\n"
+	if err := os.WriteFile(docsPath, []byte(seed), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := run(io.Discard, io.Discard, toyGraphFromTestDir, docsPath); err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	afterFirst, _ := os.ReadFile(docsPath)
+	if err := run(io.Discard, io.Discard, toyGraphFromTestDir, docsPath); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	afterSecond, _ := os.ReadFile(docsPath)
+	if !bytes.Equal(afterFirst, afterSecond) {
+		t.Fatalf("docs refresh is not idempotent:\n--- first ---\n%s\n--- second ---\n%s", afterFirst, afterSecond)
+	}
+}
+
+// TestBenchBadGraphPath covers run()'s load-failure branch: a nonexistent graph path
+// must return a non-nil error (which main turns into a non-zero exit), so a
 // missing/unreadable network fails the build rather than silently routing nothing.
 func TestBenchBadGraphPath(t *testing.T) {
-	var buf bytes.Buffer
-	if err := run(&buf, "../../testdata/does-not-exist.geojson"); err == nil {
+	docsPath := filepath.Join(t.TempDir(), "benchmarks.md")
+	if err := run(io.Discard, io.Discard, "../../testdata/does-not-exist.geojson", docsPath); err == nil {
 		t.Fatal("run() with a nonexistent graph path returned nil error; want non-nil")
 	}
 }
 
-// fieldKey matches the slog text-handler key=value tokens AFTER the leading
-// time/level/msg, capturing the field key. msg= can contain quoted spaces, so we
-// only collect keys that appear after it; the structured fields this harness emits
-// are all unquoted key=value, so a simple key regex over the tail is sufficient.
-var fieldKey = regexp.MustCompile(`(\w+)=`)
-
-// fieldOrder returns the space-joined sequence of structured field keys on a
-// summary line, excluding the handler's own time/level/msg, so a field reordering
-// (which would silently change what CI greps) is caught.
-func fieldOrder(line string) string {
-	// Drop everything up to and including the msg="..." token so the quoted
-	// message body never contributes spurious keys.
-	if idx := strings.Index(line, `msg=`); idx >= 0 {
-		// msg value is quoted; advance past the closing quote.
-		rest := line[idx+len(`msg=`):]
-		if strings.HasPrefix(rest, `"`) {
-			if end := strings.Index(rest[1:], `"`); end >= 0 {
-				line = rest[end+2:]
-			}
-		}
+// TestBenchBadDocsPath covers the docs-write failure branch: a docs path inside a
+// nonexistent directory must return a non-nil error so a doc that cannot be
+// refreshed fails the build rather than silently shipping stale.
+func TestBenchBadDocsPath(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "no-such-dir", "benchmarks.md")
+	if err := run(io.Discard, io.Discard, toyGraphFromTestDir, bad); err == nil {
+		t.Fatal("run() with an unwritable docs path returned nil error; want non-nil")
 	}
-	var keys []string
-	for _, m := range fieldKey.FindAllStringSubmatch(line, -1) {
-		keys = append(keys, m[1])
-	}
-	return strings.Join(keys, " ")
 }
