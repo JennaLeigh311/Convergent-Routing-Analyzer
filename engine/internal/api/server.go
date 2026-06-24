@@ -24,8 +24,10 @@ import (
 // toyNetworkGeoJSON is the toy edge_attributes graph compiled into the binary so
 // the distroless container (which copies only the binaries, not the testdata
 // tree) can load a graph with no filesystem dependency. It is a verbatim copy of
-// testdata/toy_network.geojson; the engine treats it as the immutable Phase-5
-// network until the real road network lands. NewDefaultServer loads from it.
+// testdata/toy_network.geojson — TestEmbeddedGraphMatchesTestdata asserts the two
+// stay byte-identical so the copy cannot silently drift. The engine treats it as
+// the immutable Phase-5 network until the real road network lands.
+// NewDefaultServer loads from it.
 //
 //go:embed toy_network.geojson
 var toyNetworkFS embed.FS
@@ -45,8 +47,11 @@ type Server struct {
 	// geom is the segment_id → geometry map the loader returned; it is the source
 	// of /graph's GeoJSON and is never mutated after load.
 	geom map[domain.SegmentID]graph.LineString
-	// bpr is the cost function the congestion-aware routers weight edges with.
-	bpr cost.BPR
+	// graphBody is the /graph GeoJSON marshaled ONCE at construction. The geometry
+	// is immutable after load and the body carries no congestion, so it never
+	// changes — the handler writes these cached bytes instead of rebuilding and
+	// re-marshaling the FeatureCollection on every request.
+	graphBody []byte
 	// congestion is the shared, read-only congestion snapshot the reactive router
 	// best-responds to and /congestion reports. Built via the shared source seam
 	// (deterministic simulator, fixed seed) so the snapshot is stable across the
@@ -63,7 +68,19 @@ type Server struct {
 	naive    routing.Router
 	reactive routing.Router
 
-	jobs    *jobStore
+	jobs *jobStore
+	// sweepSlots is a counting semaphore bounding in-flight async benchmark sweeps
+	// to its capacity (maxConcurrentSweeps): a POST acquires a slot before
+	// launching a sweep and the goroutine releases it on completion, so distinct
+	// tuples cannot spawn unbounded concurrent CPU-heavy sweeps.
+	sweepSlots chan struct{}
+	// sweepFn is the benchmark seam (defaultSweep = benchmark.RunSweep) tests
+	// override to exercise the failure / panic / capacity paths.
+	sweepFn sweepFunc
+	// metrics may be nil when NewServer is built with a nil registry (test/embed
+	// paths). That is intentional and safe: RoutingMetrics.Observe has a
+	// nil-receiver guard, so writeJSON's s.metrics.Observe(...) is a no-op rather
+	// than a panic. Keep that guard if Observe is ever refactored.
 	metrics *metrics.RoutingMetrics
 	logger  *slog.Logger
 }
@@ -125,15 +142,25 @@ func NewServer(roadGraph graph.Graph, geom map[domain.SegmentID]graph.LineString
 		routingMetrics = metrics.NewRoutingMetrics(reg)
 	}
 
+	// Marshal the static /graph body once: the geometry is immutable and carries
+	// no congestion, so the response never changes and need not be rebuilt per
+	// request. A marshal failure here is a construction-time bug, not a runtime one.
+	graphBody, err := json.Marshal(buildGraphResponse(geom))
+	if err != nil {
+		return nil, fmt.Errorf("api: marshal graph body: %w", err)
+	}
+
 	return &Server{
 		graph:         roadGraph,
 		geom:          geom,
-		bpr:           bpr,
+		graphBody:     graphBody,
 		congestion:    provider,
 		segmentByEdge: segmentByEdge,
 		naive:         routing.NewNaiveRouter(roadGraph),
 		reactive:      routing.NewReactiveRouter(roadGraph, bpr, provider),
-		jobs:          newJobStore(),
+		jobs:          newJobStore(maxBenchmarkJobs),
+		sweepSlots:    make(chan struct{}, maxConcurrentSweeps),
+		sweepFn:       defaultSweep,
 		metrics:       routingMetrics,
 		logger:        logger,
 	}, nil
@@ -176,6 +203,22 @@ func (s *Server) writeJSON(w http.ResponseWriter, endpoint string, status int, p
 		_, _ = w.Write([]byte(`{"error":"internal error encoding response"}`))
 		return
 	}
+	outcome := outcomeOK
+	if status >= http.StatusBadRequest {
+		outcome = outcomeError
+	}
+	s.metrics.Observe(endpoint, outcome)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+// writeRawJSON writes an already-marshaled JSON body at the given status and
+// records the outcome against the endpoint counter. It is the cached-body path
+// (the static /graph response is marshaled once at construction), so it skips the
+// per-request json.Marshal that writeJSON performs while keeping the same
+// Content-Type, status, and metric bookkeeping.
+func (s *Server) writeRawJSON(w http.ResponseWriter, endpoint string, status int, body []byte) {
 	outcome := outcomeOK
 	if status >= http.StatusBadRequest {
 		outcome = outcomeError

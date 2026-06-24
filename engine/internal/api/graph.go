@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 )
 
 // endpointGraph is the metric label for the geometry endpoint.
@@ -46,27 +47,34 @@ type graphFeatureProps struct {
 }
 
 // handleGraph serves GET /graph: the network as a GeoJSON FeatureCollection
-// keyed by segment_id. Features are emitted in segment_id order so the body is
-// deterministic (Go map iteration is randomized; the geometry source must be
-// stable for client caching/diffing). The response carries no congestion — the
-// client colors by joining /congestion to these segment_ids (§R2).
+// keyed by segment_id. The body is built and marshaled ONCE at construction (see
+// buildGraphResponse / s.graphBody) because the geometry is immutable and carries
+// no congestion, so the handler just writes the cached bytes. The client colors
+// by joining /congestion to these segment_ids (§R2).
 func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeError(w, endpointGraph, http.StatusMethodNotAllowed, "method not allowed: use GET")
 		return
 	}
+	s.writeRawJSON(w, endpointGraph, http.StatusOK, s.graphBody)
+}
 
-	segments := make([]domain.SegmentID, 0, len(s.geom))
-	for segment := range s.geom {
+// buildGraphResponse assembles the GeoJSON FeatureCollection from the loader's
+// geometry. Features are emitted in segment_id order so the body is deterministic
+// (Go map iteration is randomized; the geometry source must be stable for client
+// caching/diffing). Each feature copies the loader's LineString into a fresh
+// [][2]float64 so the marshaled body never aliases the immutable retained
+// geometry. Called once at construction; the result is marshaled and cached.
+func buildGraphResponse(geom map[domain.SegmentID]graph.LineString) graphResponse {
+	segments := make([]domain.SegmentID, 0, len(geom))
+	for segment := range geom {
 		segments = append(segments, segment)
 	}
 	sort.Slice(segments, func(i, j int) bool { return segments[i] < segments[j] })
 
 	features := make([]graphFeature, 0, len(segments))
 	for _, segment := range segments {
-		line := s.geom[segment]
-		// Copy the loader's LineString into a fresh [][2]float64 so the response
-		// owns its coordinates and never aliases the immutable retained geometry.
+		line := geom[segment]
 		coords := make([][2]float64, len(line))
 		copy(coords, line)
 		features = append(features, graphFeature{
@@ -76,8 +84,8 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	s.writeJSON(w, endpointGraph, http.StatusOK, graphResponse{
+	return graphResponse{
 		Type:     "FeatureCollection",
 		Features: features,
-	})
+	}
 }

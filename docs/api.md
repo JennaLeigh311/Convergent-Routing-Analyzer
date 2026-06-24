@@ -178,18 +178,28 @@ capacity_scale, requestCount, seed)`:
 
 | Field            | Default          | Description                                            |
 | ---------------- | ---------------- | ------------------------------------------------------ |
-| `algorithm`      | `"all"`          | Router under test (the harness runs the full six-router sweep). |
-| `alpha`          | `0.15`           | BPR α coefficient.                                      |
-| `beta`           | `4`              | BPR β coefficient.                                      |
-| `capacity_scale` | `1.0`            | §R3 capacity knob (must be `> 0`).                      |
-| `request_count`  | `1000`           | Per-level OD request count R (must be `>= 0`).         |
+| `algorithm`      | `"all"`          | Router under test. **Accepted but inert today** (see below). |
+| `alpha`          | `0.15`           | BPR α coefficient. **Accepted but inert today.**       |
+| `beta`           | `4`              | BPR β coefficient. **Accepted but inert today.**       |
+| `capacity_scale` | `1.0`            | §R3 capacity knob (must be `> 0`). **Accepted but inert today.** |
+| `request_count`  | `1000`           | Per-level OD request count R (must be `0 <= R <= 100000`). |
 | `seed`           | `0`              | Fixed RNG seed for a reproducible run.                  |
 
 Unknown fields are rejected (`400`). The tuple is the **cache key** (§R6): the
-six-router demand sweep (`benchmark.RunSweep`) consumes `seed` and `request_count`
-and sweeps the capacity axis itself; the remaining fields participate in the cache
-identity and are echoed back. A repeat POST with the same effective tuple returns
-the **same job** rather than launching a duplicate run.
+six-router demand sweep (`benchmark.RunSweep`) consumes **only** `seed` and
+`request_count` and sweeps the capacity axis itself. The remaining fields
+(`algorithm`, `alpha`, `beta`, `capacity_scale`) participate in the cache identity
+and are echoed back in `params`, but **do not change the sweep's result today** —
+two POSTs differing only in `alpha` run identical sweeps under distinct cache
+entries. They are reserved for a future single-algorithm benchmark mode. A repeat
+POST with the same effective tuple returns the **same job** rather than launching a
+duplicate run.
+
+**Resource bounds.** The sweep is CPU-heavy and the job store is long-lived, so
+the endpoint is bounded: `request_count` is capped at `100000`; at most a handful
+of sweeps run concurrently — a POST that would exceed that is rejected with `503`
+(retry shortly), not queued; and the job store retains a bounded number of jobs,
+evicting the oldest completed one as needed.
 
 **`202 Accepted` response**
 
@@ -201,8 +211,11 @@ the **same job** rather than launching a duplicate run.
 }
 ```
 
-The job id is a random, unguessable token. A bad tuple (e.g. `capacity_scale <= 0`)
-is a `400`; a non-`POST` is a `405`.
+The job id is a random, unguessable token. A bad tuple (e.g. `capacity_scale <= 0`,
+or `request_count` over the cap) is a `400`; a non-`POST` is a `405`; a POST that
+would exceed the concurrent-sweep cap is a `503` (retry shortly). A tuple whose
+previous run **failed** is re-runnable: a repeat POST starts a fresh job rather
+than returning the stuck failure.
 
 ### `GET /benchmark/{id}`
 

@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/benchmark"
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 )
 
 // endpointBenchmark and endpointBenchmarkStatus are the metric labels for the
@@ -30,6 +31,22 @@ const (
 	statusFailed  jobStatus = "failed"
 )
 
+// Async benchmark resource bounds. The job store is long-lived and the sweep is
+// CPU-heavy, so the endpoint is bounded on three axes so an unauthenticated
+// caller cannot exhaust the process by varying the §R6 tuple:
+//
+//	maxRequestCount     — ceiling on the per-level OD count R, so one POST cannot
+//	                      size an arbitrarily large (memory/CPU) sweep.
+//	maxConcurrentSweeps — cap on in-flight async sweeps; a POST that would exceed
+//	                      it gets a clean 503 instead of oversubscribing the box.
+//	maxBenchmarkJobs    — cap on retained jobs; the store evicts the oldest
+//	                      completed job (FIFO) rather than growing without bound.
+const (
+	maxRequestCount     = 100_000
+	maxConcurrentSweeps = 4
+	maxBenchmarkJobs    = 256
+)
+
 // benchmarkParams is the §R6 parameter tuple a /benchmark run is keyed by:
 // (algorithm, α, β, capacity_scale, requestCount, seed). It is BOTH the request
 // body and the cache key — two POSTs with the same tuple return the SAME job
@@ -41,10 +58,12 @@ const (
 // scale as its axis). Seed and RequestCount are what it reads; Algorithm, Alpha,
 // Beta, and CapacityScale are carried in the tuple so the cache key matches the
 // §R6 contract and the response echoes the request, but they parameterize the
-// CACHE IDENTITY, not RunSweep's internal sweep. When a future single-algorithm
-// benchmark mode lands, those fields drive it; today they are validated and keyed
-// on. This keeps the endpoint a faithful composition over the existing harness
-// rather than a reimplementation.
+// CACHE IDENTITY, not RunSweep's internal sweep — today they are validated and
+// keyed on but DO NOT change the sweep's result (two POSTs differing only in
+// alpha run identical sweeps under distinct cache entries). When a future
+// single-algorithm benchmark mode lands, those fields drive it. docs/api.md flags
+// them as accepted-but-inert today. This keeps the endpoint a faithful
+// composition over the existing harness rather than a reimplementation.
 type benchmarkParams struct {
 	// Algorithm is the router under test ("" / "all" means the full six-router
 	// sweep, the harness default).
@@ -109,6 +128,9 @@ func (p benchmarkParams) validate() error {
 	if d.RequestCount < 0 {
 		return fmt.Errorf("request_count must be >= 0")
 	}
+	if d.RequestCount > maxRequestCount {
+		return fmt.Errorf("request_count must be <= %d", maxRequestCount)
+	}
 	return nil
 }
 
@@ -127,41 +149,108 @@ type job struct {
 // jobStore is the in-process registry of benchmark jobs: it maps a job id to its
 // state and a §R6 cache key to the job that ran (or is running) that tuple, so a
 // repeat POST returns the existing job instead of launching a duplicate
-// systemoptimal sweep. It guards both maps with one mutex; the long-running sweep
+// systemoptimal sweep. It guards its maps with one mutex; the long-running sweep
 // itself runs OUTSIDE the lock (the lock is held only to read/swap state), so a
 // running benchmark never blocks a status poll.
+//
+// The store is BOUNDED: order tracks insertion order so that, once byID reaches
+// maxJobs, the oldest COMPLETED job is evicted to make room — the maps cannot
+// grow without bound as a caller varies the tuple. Running jobs are never evicted
+// (their sweep is still writing back), but the concurrency cap keeps the running
+// set tiny relative to maxJobs, so room is always reclaimable.
 type jobStore struct {
-	mu    sync.Mutex
-	byID  map[string]*job
-	byKey map[string]string // cache key -> job id
+	mu      sync.Mutex
+	byID    map[string]*job
+	byKey   map[string]string // cache key -> job id
+	order   []string          // job ids in insertion order, for FIFO eviction
+	maxJobs int
 }
 
-func newJobStore() *jobStore {
+func newJobStore(maxJobs int) *jobStore {
 	return &jobStore{
-		byID:  make(map[string]*job),
-		byKey: make(map[string]string),
+		byID:    make(map[string]*job),
+		byKey:   make(map[string]string),
+		maxJobs: maxJobs,
 	}
 }
 
 // getOrCreate returns the existing job for params' cache key (cached or still
 // running) and created=false, or registers a new running job and returns
 // created=true. It is the dedupe point: the caller launches the sweep only when
-// created is true, so the §R6 tuple maps to at most one run.
-func (st *jobStore) getOrCreate(params benchmarkParams, id string) (j *job, created bool) {
+// created is true, so the §R6 tuple maps to at most one run. When the store is at
+// capacity it first evicts the oldest completed job (see evictOldestDoneLocked).
+//
+// It returns the job's id, status, and params BY VALUE (read under the lock) so
+// the caller never reads the shared *job's fields off-lock — the async sweep
+// mutates that job through complete() concurrently, so the handler must render
+// its response from these copies, not from the live struct.
+func (st *jobStore) getOrCreate(params benchmarkParams, id string) (gotID string, status jobStatus, gotParams benchmarkParams, created bool) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	key := params.cacheKey()
 	if existingID, ok := st.byKey[key]; ok {
-		return st.byID[existingID], false
+		j := st.byID[existingID]
+		return j.ID, j.Status, j.Params, false
 	}
-	j = &job{ID: id, Params: params.withDefaults(), Status: statusRunning}
+	if st.maxJobs > 0 && len(st.byID) >= st.maxJobs {
+		st.evictOldestDoneLocked()
+	}
+	j := &job{ID: id, Params: params.withDefaults(), Status: statusRunning}
 	st.byID[id] = j
 	st.byKey[key] = id
-	return j, true
+	st.order = append(st.order, id)
+	return j.ID, j.Status, j.Params, true
+}
+
+// evictOldestDoneLocked removes the oldest job that is no longer running, freeing
+// a store slot (and its retained Report). It is a no-op if every tracked job is
+// still running — which the concurrency cap makes effectively impossible, since
+// maxConcurrentSweeps is far below maxBenchmarkJobs. The caller must hold st.mu.
+func (st *jobStore) evictOldestDoneLocked() {
+	for i, id := range st.order {
+		j, ok := st.byID[id]
+		if ok && j.Status == statusRunning {
+			continue
+		}
+		st.order = append(st.order[:i:i], st.order[i+1:]...)
+		st.deleteLocked(id, j)
+		return
+	}
+}
+
+// deleteLocked drops a job from byID and, when byKey still points at it, byKey.
+// It does not touch order (the caller owns that). The caller must hold st.mu.
+func (st *jobStore) deleteLocked(id string, j *job) {
+	delete(st.byID, id)
+	if j != nil {
+		if curID, ok := st.byKey[j.Params.cacheKey()]; ok && curID == id {
+			delete(st.byKey, j.Params.cacheKey())
+		}
+	}
+}
+
+// remove drops a job entirely (byID, byKey, and order). It is the rollback path
+// for a job that was created but could not be started (no sweep capacity), so a
+// reserved-but-never-run job does not linger as a permanently "running" entry.
+func (st *jobStore) remove(id string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	j := st.byID[id]
+	for i, oid := range st.order {
+		if oid == id {
+			st.order = append(st.order[:i:i], st.order[i+1:]...)
+			break
+		}
+	}
+	st.deleteLocked(id, j)
 }
 
 // complete records a finished sweep's report (or error) under the lock. A nil
-// report with a non-empty errMsg marks the job failed; otherwise it is done.
+// report with a non-empty errMsg marks the job failed; otherwise it is done. On
+// failure it also drops the cache mapping for the tuple so the SAME params can be
+// retried: a later POST starts a fresh run rather than returning this stuck
+// failure forever. The failed job itself stays in byID (so a client already
+// holding its id still polls the failure) until FIFO eviction reclaims it.
 func (st *jobStore) complete(id string, report *benchmark.Report, errMsg string) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -172,6 +261,9 @@ func (st *jobStore) complete(id string, report *benchmark.Report, errMsg string)
 	if errMsg != "" {
 		j.Status = statusFailed
 		j.Err = errMsg
+		if curID, ok := st.byKey[j.Params.cacheKey()]; ok && curID == id {
+			delete(st.byKey, j.Params.cacheKey())
+		}
 		return
 	}
 	j.Status = statusDone
@@ -227,34 +319,57 @@ func (s *Server) handleBenchmark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	j, created := s.jobs.getOrCreate(params, id)
+	jobID, status, jobParams, created := s.jobs.getOrCreate(params, id)
 	if created {
-		s.runBenchmarkAsync(j.ID, j.Params)
+		// A fresh tuple needs a sweep slot. Reserve one without blocking; if the
+		// box is already running maxConcurrentSweeps, roll the just-created job back
+		// (so it does not linger as a never-completing "running" entry) and tell the
+		// client to retry rather than oversubscribing CPU. The goroutine releases
+		// the slot when the sweep finishes.
+		select {
+		case s.sweepSlots <- struct{}{}:
+			s.runBenchmarkAsync(jobID, jobParams)
+		default:
+			s.jobs.remove(jobID)
+			s.writeError(w, endpointBenchmark, http.StatusServiceUnavailable,
+				"benchmark capacity reached, please retry shortly")
+			return
+		}
 	}
 
 	s.writeJSON(w, endpointBenchmark, http.StatusAccepted, benchmarkStartResponse{
-		JobID:  j.ID,
-		Status: j.Status,
-		Params: j.Params,
+		JobID:  jobID,
+		Status: status,
+		Params: jobParams,
 	})
 }
 
-// runBenchmarkAsync launches the #91 harness for the job in a goroutine and
-// records the result on completion. It uses context.Background() (NOT the
-// request's context) so a client disconnecting after the immediate job-id
-// response does not cancel an in-flight sweep — the job runs to completion and is
-// cached for the next poll. A panic in the harness is recovered and recorded as a
-// failed job rather than crashing the server.
+// sweepFunc is the seam runBenchmarkAsync runs the harness through: in production
+// it is benchmark.RunSweep, and tests substitute a stub to exercise the failure,
+// panic, and capacity paths without launching a real (slow) six-router sweep.
+type sweepFunc func(ctx context.Context, g graph.Graph, seed int64, count int) ([]benchmark.SweepCell, error)
+
+// defaultSweep is the production sweep: the canonical #91 six-router demand sweep.
+var defaultSweep sweepFunc = benchmark.RunSweep
+
+// runBenchmarkAsync launches the harness for the job in a goroutine and records
+// the result on completion. It uses context.Background() (NOT the request's
+// context) so a client disconnecting after the immediate job-id response does not
+// cancel an in-flight sweep — the job runs to completion and is cached for the
+// next poll. A panic in the harness is recovered and recorded as a failed job
+// rather than crashing the server. The caller has already reserved a sweep slot;
+// this goroutine releases it on exit so the next queued POST can start.
 func (s *Server) runBenchmarkAsync(id string, params benchmarkParams) {
 	go func() {
 		defer func() {
+			<-s.sweepSlots
 			if rec := recover(); rec != nil {
 				s.logger.Error("benchmark job panicked", "endpoint", endpointBenchmark, "job_id", id, "panic", rec)
 				s.jobs.complete(id, nil, "benchmark failed")
 			}
 		}()
 
-		cells, err := benchmark.RunSweep(context.Background(), s.graph, params.Seed, params.RequestCount)
+		cells, err := s.sweepFn(context.Background(), s.graph, params.Seed, params.RequestCount)
 		if err != nil {
 			s.logger.Error("benchmark sweep failed", "endpoint", endpointBenchmark, "job_id", id, "err", err)
 			s.jobs.complete(id, nil, "benchmark failed")
