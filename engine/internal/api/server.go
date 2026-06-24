@@ -179,6 +179,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/graph", s.handleGraph)
 	mux.HandleFunc("/benchmark", s.handleBenchmark)
 	mux.HandleFunc("/benchmark/", s.handleBenchmarkStatus)
+	mux.HandleFunc("/stream", s.handleStream)
 	return mux
 }
 

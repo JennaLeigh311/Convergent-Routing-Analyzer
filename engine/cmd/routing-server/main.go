@@ -11,6 +11,7 @@
 //	GET  /graph       network geometry as GeoJSON (segment_id-keyed; the §R2 join source)
 //	POST /benchmark   start an async #91 sweep; returns a job id immediately
 //	GET  /benchmark/{id}  poll a benchmark job's status/result
+//	GET  /stream      WebSocket: six algorithms simulated in parallel, snapshot + bucketed deltas (#93)
 //
 // alongside the liveness/readiness/observability endpoints §R7/§R0 mandate:
 //
@@ -23,10 +24,13 @@
 // run function). main owns only the mux wiring and the process lifecycle —
 // graph load, signal handling, graceful shutdown — and the server timeouts.
 //
-// The WebSocket congestion stream lands in #93; it needs the WriteTimeout caveat
-// noted on the http.Server below addressed (a long-lived connection does not want
-// a WriteTimeout), so this binary keeps the timeout and the request/response
-// surface only.
+// The WebSocket congestion stream (/stream, #93) is a LONG-LIVED connection and so
+// does NOT want the http.Server's WriteTimeout (it would kill a healthy stream). The
+// coder/websocket library handles this by hijacking the connection on Accept and
+// managing its own per-write deadlines (internal/api enforces a short deadline per
+// frame), so the connection-level WriteTimeout no longer applies once the upgrade
+// completes — the server's request/response timeouts stay as-is and the stream is
+// unaffected. See internal/api/stream.go (writeFrame) for the per-frame deadline.
 package main
 
 import (
@@ -70,11 +74,12 @@ func main() {
 		Handler: newMux(reg, apiServer),
 		// Bound every phase of a request so a slow or idle client can't pin a
 		// connection on the published port. ReadHeaderTimeout predates the other
-		// three; the rest landed alongside /metrics. These will need revisiting
-		// when WebSocket snapshots/deltas arrive in #93 — long-lived connections
-		// don't want a WriteTimeout. /benchmark sidesteps this already: it returns a
-		// job id immediately and runs the sweep async, so no handler blocks past the
-		// WriteTimeout waiting on a systemoptimal run.
+		// three; the rest landed alongside /metrics. /benchmark sidesteps the
+		// WriteTimeout by returning a job id immediately and running the sweep async,
+		// so no handler blocks past it waiting on a systemoptimal run. /stream (#93)
+		// also sidesteps it: coder/websocket hijacks the connection on Accept and
+		// manages its own per-write deadlines, so the connection-level WriteTimeout no
+		// longer applies to the long-lived stream once the upgrade completes.
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
@@ -90,7 +95,7 @@ func main() {
 	srvErr := make(chan error, 1)
 	go func() {
 		logger.Info("routing server listening", "addr", addr,
-			"endpoints", "/route,/compare,/congestion,/graph,/benchmark,/healthz,/readyz,/metrics")
+			"endpoints", "/route,/compare,/congestion,/graph,/benchmark,/stream,/healthz,/readyz,/metrics")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			srvErr <- err
 		}
@@ -135,7 +140,7 @@ func newMux(reg *prometheus.Registry, apiServer *api.Server) *http.ServeMux {
 	// health/metrics endpoints (owned here) and the api endpoints share one server
 	// mux without the api package re-declaring patterns it doesn't own.
 	apiMux := apiServer.Routes()
-	for _, pattern := range []string{"/route", "/compare", "/congestion", "/graph", "/benchmark", "/benchmark/"} {
+	for _, pattern := range []string{"/route", "/compare", "/congestion", "/graph", "/benchmark", "/benchmark/", "/stream"} {
 		mux.Handle(pattern, apiMux)
 	}
 
