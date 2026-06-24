@@ -267,7 +267,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.metrics.Observe(endpointStream, outcomeOK)
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	if err := s.runStream(r.Context(), conn, params); err != nil {
 		s.logger.Info("stream: connection ended", "err", err)

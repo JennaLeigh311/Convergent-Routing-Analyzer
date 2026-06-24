@@ -218,7 +218,7 @@ func TestStreamEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	snapshots := make(map[string]bool)
 	deltas := 0
