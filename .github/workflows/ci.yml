@@ -273,12 +273,15 @@ jobs:
           # multi-stage (node build -> nginx serve), so both FROM lines are checked.
           grep -Eq '^FROM .+:[^ ]+' Dockerfile \
             || { echo "web/Dockerfile FROM is not pinned to a tag"; exit 1; }
-          grep -q 'index.html' Dockerfile \
-            || { echo "web/Dockerfile does not reference index.html"; exit 1; }
+          # The serve stage must copy the build output from the build stage (this is
+          # what puts the compiled SPA, index.html included, into the image). Assert
+          # the real COPY, not a comment, so the check can't pass on prose alone.
+          grep -Eq '^COPY --from=build ' Dockerfile \
+            || { echo "web/Dockerfile does not COPY the build stage output"; exit 1; }
           if grep -Eq '^FROM .+:latest' Dockerfile; then
             echo "web/Dockerfile pins a floating :latest tag"; exit 1
           fi
-          echo "web/Dockerfile: pinned base(s) + references index.html"
+          echo "web/Dockerfile: pinned base(s) + copies the build output"
 
   ci-passed:
     # The single required status check for branch protection. Runs after both

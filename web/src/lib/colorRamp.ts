@@ -35,8 +35,3 @@ export function bucketColor(bucket: number): RGB {
   const hi = STOPS[i + 1];
   return [lerp(lo[0], hi[0], t), lerp(lo[1], hi[1], t), lerp(lo[2], hi[2], t)];
 }
-
-/** Color for a segment given its bucket map; absent => free-flow (bucket 0). */
-export function segmentColor(buckets: Map<string, number>, segmentId: string): RGB {
-  return bucketColor(buckets.get(segmentId) ?? 0);
-}

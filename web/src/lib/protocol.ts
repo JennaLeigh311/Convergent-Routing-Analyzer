@@ -76,10 +76,13 @@ export type StreamFrame = SnapshotFrame | DeltaFrame;
 /** Narrowing guard for an incoming parsed frame. */
 export function isStreamFrame(x: unknown): x is StreamFrame {
   if (typeof x !== "object" || x === null) return false;
-  const f = x as { type?: unknown; algo?: unknown };
-  return (
-    (f.type === "snapshot" || f.type === "delta") &&
-    typeof f.algo === "string" &&
-    (ROUTER_ORDER as readonly string[]).includes(f.algo)
-  );
+  const f = x as { type?: unknown; algo?: unknown; segments?: unknown; changed?: unknown };
+  if (typeof f.algo !== "string" || !(ROUTER_ORDER as readonly string[]).includes(f.algo)) {
+    return false;
+  }
+  // Validate the payload array too, so a well-typed-but-incomplete frame can't slip
+  // past the guard and throw in the reducer's for…of (the reducer trusts the shape).
+  if (f.type === "snapshot") return Array.isArray(f.segments);
+  if (f.type === "delta") return Array.isArray(f.changed);
+  return false;
 }
