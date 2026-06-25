@@ -209,12 +209,7 @@ func RunSweep(ctx context.Context, g graph.Graph, seed int64, count int) ([]Swee
 		// it returns characterize the LEVEL (a single time-domain sanity check beside the
 		// static one-shot), so they are attached identically to every router cell of the
 		// level — the simulator's router is the factory, not the cell's static router.
-		sim, err := Simulate(ctx, g, reqs, SimConfig{
-			StartTime:   simStartTime,
-			TickSeconds: simTickSeconds,
-			MaxTicks:    simMaxTicks,
-			BPR:         bpr,
-		}, ReactiveBPRFactory(g, bpr), nil)
+		sim, err := simLevel(ctx, g, reqs, bpr)
 		if err != nil {
 			return nil, fmt.Errorf("sweep: level %q simulate: %w", level.Label, err)
 		}
@@ -233,6 +228,145 @@ func RunSweep(ctx context.Context, g graph.Graph, seed int64, count int) ([]Swee
 		}
 	}
 	return cells, nil
+}
+
+// simLevel runs the §R5 mesoscopic simulator ONCE over a level's OD set under the
+// PINNED sim clock (simStartTime / simTickSeconds / simMaxTicks) and the given BPR,
+// driven by the congestion-aware ReactiveBPRFactory. Both RunSweep and RunSingle call
+// it so the simulator-mode columns are wired identically in one place — a change to the
+// SimConfig, the driving factory, or the observer lands here once rather than drifting
+// across two parallel blocks. The experienced (over-the-run) mean/p95 it returns
+// characterize the LEVEL and are attached to every router cell of that level. The caller
+// wraps the error with its own (sweep-level vs single) context.
+func simLevel(ctx context.Context, g graph.Graph, reqs []routing.RouteRequest, bpr cost.BPR) (SimResult, error) {
+	return Simulate(ctx, g, reqs, SimConfig{
+		StartTime:   simStartTime,
+		TickSeconds: simTickSeconds,
+		MaxTicks:    simMaxTicks,
+		BPR:         bpr,
+	}, ReactiveBPRFactory(g, bpr), nil)
+}
+
+// singleLevelLabel is the demand-level column identity a single-algorithm run
+// (RunSingle) carries. The four-level sweep labels each cell by its target v/c band
+// (vc0.5 … vc1.2); a single run pins capacity_scale to the client's value rather
+// than sweeping it, so there is no band to name — "single" makes the one synthesized
+// level self-describing in the Result/OD set, and RunSingle reports the realized v/c
+// (Result.MaxVC) so the actual utilization is still visible per cell.
+const singleLevelLabel = "single"
+
+// singleTargetVC is the OD-generator target-v/c label a single-algorithm run tags
+// its OD set and cell with. It is METADATA ONLY: GenerateODSet uses targetVC purely
+// as a recorded label (the realized load is set by SweepDemandVPH spread evenly over
+// the requests and the client's capacity_scale, NOT by targetVC), so its value does
+// not change which requests are drawn or what they realize. We pin it to 1.0 — the
+// saturated reference band — as an honest neutral default: it documents "this run was
+// not calibrated to a particular v/c band" rather than implying a calibration RunSingle
+// does not perform. The realized v/c the client actually sees is Result.MaxVC, driven
+// by their capacity_scale.
+const singleTargetVC = 1.0
+
+// RunSingle runs ONE named router (plus the systemoptimal reference, so the reported
+// Price of Anarchy is honest) over a single reproducible OD set, under a cost.BPR
+// built FROM THE CLIENT'S α/β/capacity_scale. It is the single-algorithm benchmark
+// mode behind POST /benchmark when `algorithm` names a specific router (one of
+// RouterOrder) rather than the default "all": unlike RunSweep — whose axis IS
+// capacity_scale, swept across four levels — RunSingle PINS capacity_scale to the
+// caller's value and runs exactly one level, so α/β/capacity_scale actually flow into
+// the cost function and two runs differing only in those params return different
+// metrics (the §R6 params are no longer inert).
+//
+// It returns the named router's SweepCell followed, when the named router is NOT
+// systemoptimal, by the systemoptimal reference cell — both at the synthesized
+// "single" level. The reference cell is included (rather than discarded after the PoA
+// divide) so the returned grid is self-describing and BuildReport's per-level helpers
+// see the same naive/systemoptimal shape they do for the sweep. When the named router
+// IS systemoptimal, only one cell is returned and its PoA is 1 by construction (it is
+// its own reference). The named router's cell is ALWAYS present and first.
+//
+// Determinism matches RunSweep: the OD set is drawn with the fixed seed, the BPR is
+// built from fixed params, and the §R5 simulator runs under the same pinned clock, so
+// two RunSingle calls with identical arguments return byte-identical cells. A routing
+// error from either router is returned (never a partial grid). name must be one of
+// RouterOrder; an unknown name is a clean error (the API rejects it as a 400 before
+// reaching here, but RunSingle guards it too rather than trusting the caller).
+func RunSingle(ctx context.Context, g graph.Graph, seed int64, count int, alpha, beta, capacityScale float64, name string) ([]SweepCell, error) {
+	if _, ok := routerIndex[name]; !ok {
+		return nil, fmt.Errorf("benchmark: RunSingle unknown router %q", name)
+	}
+
+	// ONE BPR from the client's params — the whole point of single mode: α/β and the
+	// pinned capacity_scale drive the cost curve, so the metrics reflect the request.
+	bpr := cost.NewBPR(alpha, beta, capacityScale)
+
+	set := GenerateODSet(g, seed, count, singleLevelLabel, singleTargetVC, SweepDemandVPH)
+	reqs := set.RouteRequests()
+
+	// The named router plus systemoptimal (the PoA reference). Deduped: if the named
+	// router IS systemoptimal we route it once and PoA is 1 by construction.
+	names := []string{name}
+	if name != "systemoptimal" {
+		names = append(names, "systemoptimal")
+	}
+
+	results := make(map[string]routing.AssignResult, len(names))
+	for _, n := range names {
+		// Same frozen all-zero-load snapshot RunSweep uses: reactive reads it as a
+		// free-flow snapshot; the other routers ignore the provider.
+		router, err := buildRouter(n, g, bpr, static.NewFromSnapshot(nil), seed)
+		if err != nil {
+			return nil, err
+		}
+		res, err := router.AssignResult(ctx, reqs)
+		if err != nil {
+			return nil, fmt.Errorf("single: router %q: %w", n, err)
+		}
+		results[n] = res
+	}
+
+	referenceTotal := routing.TotalNetworkTime(g, bpr, results["systemoptimal"].FinalFlows)
+
+	// Run the §R5 mesoscopic simulator ONCE for the level (same pinned clock/config as
+	// RunSweep, via the shared simLevel helper) so the experienced-over-the-run columns
+	// are populated and the cells are shaped exactly like a sweep cell.
+	sim, err := simLevel(ctx, g, reqs, bpr)
+	if err != nil {
+		return nil, fmt.Errorf("single: simulate: %w", err)
+	}
+
+	cells := make([]SweepCell, 0, len(names))
+	for _, n := range names {
+		result := Evaluate(g, bpr, n, singleLevelLabel, results[n])
+		cells = append(cells, SweepCell{
+			Result:           result,
+			CapacityScale:    capacityScale,
+			TargetVC:         singleTargetVC,
+			PoA:              PriceOfAnarchy(result.TotalNetworkTimeS, referenceTotal),
+			SimMeanRealizedS: sim.MeanRealizedS,
+			SimP95RealizedS:  sim.P95RealizedS,
+		})
+	}
+	return cells, nil
+}
+
+// routerIndex is the membership set of canonical router names (RouterOrder), built
+// once so RunSingle and any caller can validate a router name in O(1) without
+// re-scanning the slice. It is the single source of "is this a known router".
+var routerIndex = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(RouterOrder))
+	for _, n := range RouterOrder {
+		m[n] = struct{}{}
+	}
+	return m
+}()
+
+// IsRouter reports whether name is one of the six canonical routers (RouterOrder).
+// The API's benchmark validation uses it to reject an unknown `algorithm` with a
+// clean 400 (alongside the "all" default it accepts separately), so the membership
+// rule lives in one place beside RouterOrder rather than being re-listed in the API.
+func IsRouter(name string) bool {
+	_, ok := routerIndex[name]
+	return ok
 }
 
 // buildRouter constructs the named router over the graph with the given BPR. It is
