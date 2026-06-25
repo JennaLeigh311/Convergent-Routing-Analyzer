@@ -209,12 +209,7 @@ func RunSweep(ctx context.Context, g graph.Graph, seed int64, count int) ([]Swee
 		// it returns characterize the LEVEL (a single time-domain sanity check beside the
 		// static one-shot), so they are attached identically to every router cell of the
 		// level — the simulator's router is the factory, not the cell's static router.
-		sim, err := Simulate(ctx, g, reqs, SimConfig{
-			StartTime:   simStartTime,
-			TickSeconds: simTickSeconds,
-			MaxTicks:    simMaxTicks,
-			BPR:         bpr,
-		}, ReactiveBPRFactory(g, bpr), nil)
+		sim, err := simLevel(ctx, g, reqs, bpr)
 		if err != nil {
 			return nil, fmt.Errorf("sweep: level %q simulate: %w", level.Label, err)
 		}
@@ -233,6 +228,23 @@ func RunSweep(ctx context.Context, g graph.Graph, seed int64, count int) ([]Swee
 		}
 	}
 	return cells, nil
+}
+
+// simLevel runs the §R5 mesoscopic simulator ONCE over a level's OD set under the
+// PINNED sim clock (simStartTime / simTickSeconds / simMaxTicks) and the given BPR,
+// driven by the congestion-aware ReactiveBPRFactory. Both RunSweep and RunSingle call
+// it so the simulator-mode columns are wired identically in one place — a change to the
+// SimConfig, the driving factory, or the observer lands here once rather than drifting
+// across two parallel blocks. The experienced (over-the-run) mean/p95 it returns
+// characterize the LEVEL and are attached to every router cell of that level. The caller
+// wraps the error with its own (sweep-level vs single) context.
+func simLevel(ctx context.Context, g graph.Graph, reqs []routing.RouteRequest, bpr cost.BPR) (SimResult, error) {
+	return Simulate(ctx, g, reqs, SimConfig{
+		StartTime:   simStartTime,
+		TickSeconds: simTickSeconds,
+		MaxTicks:    simMaxTicks,
+		BPR:         bpr,
+	}, ReactiveBPRFactory(g, bpr), nil)
 }
 
 // singleLevelLabel is the demand-level column identity a single-algorithm run
@@ -315,14 +327,9 @@ func RunSingle(ctx context.Context, g graph.Graph, seed int64, count int, alpha,
 	referenceTotal := routing.TotalNetworkTime(g, bpr, results["systemoptimal"].FinalFlows)
 
 	// Run the §R5 mesoscopic simulator ONCE for the level (same pinned clock/config as
-	// RunSweep) so the experienced-over-the-run columns are populated and the cells are
-	// shaped exactly like a sweep cell.
-	sim, err := Simulate(ctx, g, reqs, SimConfig{
-		StartTime:   simStartTime,
-		TickSeconds: simTickSeconds,
-		MaxTicks:    simMaxTicks,
-		BPR:         bpr,
-	}, ReactiveBPRFactory(g, bpr), nil)
+	// RunSweep, via the shared simLevel helper) so the experienced-over-the-run columns
+	// are populated and the cells are shaped exactly like a sweep cell.
+	sim, err := simLevel(ctx, g, reqs, bpr)
 	if err != nil {
 		return nil, fmt.Errorf("single: simulate: %w", err)
 	}

@@ -179,7 +179,7 @@ capacity_scale, requestCount, seed)`:
 
 | Field            | Default          | Description                                            |
 | ---------------- | ---------------- | ------------------------------------------------------ |
-| `algorithm`      | `"all"`          | Dispatch: `"all"` runs the six-router sweep; one of `naive`, `reactive`, `incremental`, `msa`, `systemoptimal`, `multipath` runs single-algorithm mode (see below). Any other value is a `400`. |
+| `algorithm`      | `"all"`          | Dispatch: `"all"` runs the six-router sweep; one of `naive`, `reactive`, `incremental`, `msa`, `systemoptimal`, `multipath` runs single-algorithm mode (see below). Matched **case-sensitively** (`"Naive"`/`"ALL"` are a `400`). Any other value is a `400`. |
 | `alpha`          | `0.15`           | BPR α coefficient. **Drives the cost function in single-algorithm mode.** |
 | `beta`           | `4`              | BPR β coefficient. **Drives the cost function in single-algorithm mode.** |
 | `capacity_scale` | `1.0`            | §R3 capacity knob (must be `> 0`). **Drives the cost function in single-algorithm mode** (the level it pins to). |

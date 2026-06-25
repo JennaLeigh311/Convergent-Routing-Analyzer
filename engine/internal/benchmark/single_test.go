@@ -131,6 +131,24 @@ func TestRunSingleUnknownRouter(t *testing.T) {
 	}
 }
 
+// TestRunSingleContextCancelled asserts a routing error mid-run propagates out of
+// RunSingle (it returns the error and no partial grid) rather than being swallowed.
+// A pre-cancelled context makes the first router's AssignResult return ctx.Err() on
+// the non-empty OD set — exercising RunSingle's per-router error-return path, which
+// the unknown-router guard alone does not reach.
+func TestRunSingleContextCancelled(t *testing.T) {
+	g := loadToy(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the run so the very first AssignResult bails.
+	cells, err := benchmark.RunSingle(ctx, g, 20260618, 300, 0.15, 4, 1.0, "naive")
+	if err == nil {
+		t.Fatalf("RunSingle with cancelled context: err = nil, want a propagated error")
+	}
+	if cells != nil {
+		t.Errorf("RunSingle returned %d cells alongside an error, want no partial grid", len(cells))
+	}
+}
+
 // TestIsRouter asserts the membership helper the API validation uses agrees with
 // RouterOrder and excludes "all".
 func TestIsRouter(t *testing.T) {
