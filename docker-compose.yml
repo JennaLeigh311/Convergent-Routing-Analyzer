@@ -45,13 +45,24 @@ services:
     restart: unless-stopped
 
   web:
-    # Phase-0 placeholder: nginx serving a static page (real React app = Phase 10).
+    # The Vite + React + deck.gl live congestion map (issue #100). Multi-stage
+    # build: node compiles the SPA, nginx serves it AND reverse-proxies the engine
+    # surface (/api -> engine REST, /stream -> engine WebSocket) so the browser only
+    # talks to its own origin — the engine base is never baked into the bundle.
     build:
       context: ./web
       dockerfile: Dockerfile
-    image: cra/web:phase0
+    image: cra/web:phase6
+    environment:
+      # The engine upstream nginx proxies /api + /stream to. Defaults to the engine
+      # service on its in-container port; overridable via .env without a rebuild.
+      ENGINE_UPSTREAM: ${ENGINE_UPSTREAM:-engine:8080}
     ports:
       - "${WEB_PORT:-3000}:80"
+    depends_on:
+      # Wait for the engine to be healthy so the first /graph + /stream calls land.
+      engine:
+        condition: service_healthy
     healthcheck:
       # nginx:alpine ships wget (busybox). 200 on / => healthy.
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]

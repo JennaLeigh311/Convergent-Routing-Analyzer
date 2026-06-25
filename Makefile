@@ -33,7 +33,8 @@ COMPOSE ?= docker compose
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up-core up-full down clean test route bench replay integration lint vuln protect-main
+.PHONY: help up-core up-full down clean test route bench replay integration lint vuln protect-main \
+        web-install web-dev web-lint web-test web-build web-check
 
 ## help: list the available targets
 help:
@@ -48,6 +49,8 @@ help:
 	@echo "  replay       cd engine && go run ./cmd/replay (stub today)"
 	@echo "  lint         cd engine && gofmt check + go vet ./... + golangci-lint (required)"
 	@echo "  vuln         cd engine && govulncheck ./... (pinned scanner; matches CI)"
+	@echo "  web-dev      cd web && npm run dev (Vite dev server; proxies the engine)"
+	@echo "  web-check    cd web && npm ci + lint + test + build (the same gate lane B runs)"
 	@echo "  integration  boot full, smoke (engine /healthz /readyz, web /), tear down"
 	@echo "  protect-main apply main's branch-protection rule (repo admin; post-CI)"
 
@@ -68,7 +71,7 @@ down:
 ## clean: down -v (also drop named volumes) + remove built images + Go caches
 clean:
 	$(COMPOSE) --profile full down -v --remove-orphans
-	-docker image rm cra/engine:phase0 cra/web:phase0 cra/pipeline:phase0 2>/dev/null
+	-docker image rm cra/engine:phase0 cra/web:phase6 cra/pipeline:phase0 2>/dev/null
 	cd engine && go clean -cache -testcache
 
 # ---- Go toolchain (no infra; what lane A runs) ------------------------------
@@ -146,6 +149,32 @@ vuln:
 	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 	@echo ">> govulncheck ./..."
 	cd engine && govulncheck ./...
+
+# ---- web app (no infra; what lane B runs) -----------------------------------
+
+## web-install: install the web app's dependencies from the lockfile (npm ci).
+web-install:
+	cd web && npm ci
+
+## web-dev: run the Vite dev server (proxies /api + /stream to the engine on :8080).
+## Run the engine alongside it: (cd engine && go run ./cmd/routing-server).
+web-dev:
+	cd web && npm run dev
+
+## web-lint: eslint the web app (matches lane B).
+web-lint:
+	cd web && npm run lint
+
+## web-test: vitest the web app, incl. the snapshot/delta delta-correctness invariant.
+web-test:
+	cd web && npm test
+
+## web-build: tsc -b + vite build -> web/dist (matches lane B).
+web-build:
+	cd web && npm run build
+
+## web-check: the full web gate lane B runs (install + lint + test + build).
+web-check: web-install web-lint web-test web-build
 
 # ---- integration smoke (what lane C runs) -----------------------------------
 
