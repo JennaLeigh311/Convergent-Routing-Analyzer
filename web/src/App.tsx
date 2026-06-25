@@ -1,12 +1,17 @@
-// App — wires the live congestion map together: load /graph geometry once, open the
-// /stream socket, and render the selected algorithm's bucketed congestion over the
-// static geometry. The algorithm selector switches which already-streaming algo the
-// map paints; the metrics panel shows that algo's per-tick figures.
+// App — wires the live congestion UI together: load /graph geometry once, open the
+// /stream socket (all six algos fold concurrently into the store), and render either
+// the single-algorithm map (#100) or the six-up comparison view (#101). The view
+// toggle switches between them; the single view's selector picks which already-
+// streaming algo that map paints, while the comparison view shows all six at once.
+
+import { useState } from "react";
 
 import { CongestionMap } from "./components/CongestionMap";
+import { ComparisonView } from "./components/ComparisonView";
 import { AlgoSelector } from "./components/AlgoSelector";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { Legend } from "./components/Legend";
+import { ViewToggle, type AppView } from "./components/ViewToggle";
 import { useCongestionSocket } from "./hooks/useCongestionSocket";
 import { useGraph } from "./hooks/useGraph";
 import { useAppStore } from "./store";
@@ -22,13 +27,18 @@ const STATUS_LABEL: Record<string, string> = {
 export default function App() {
   const { geometry, loading, error: graphError } = useGraph();
 
+  // `view` is transient render-branch state local to App (no other component reads it),
+  // so it stays in useState rather than the store — unlike `selectedAlgo`, which is
+  // live-data-adjacent store state from #100 that the socket/store layer owns.
+  const [view, setView] = useState<AppView>("single");
+
   const selectedAlgo = useAppStore((s) => s.selectedAlgo);
   const setSelectedAlgo = useAppStore((s) => s.setSelectedAlgo);
   const status = useAppStore((s) => s.status);
   const streamError = useAppStore((s) => s.error);
 
-  // The selected algo's live state. Subscribing to just these slices means a delta
-  // for a non-selected algorithm doesn't re-render the map.
+  // The selected algo's live state, for the single-algo view. Subscribing to just
+  // these slices means a delta for a non-selected algorithm doesn't re-render it.
   const buckets = useAppStore((s) => s.congestion.buckets[selectedAlgo]);
   const tick = useAppStore((s) => s.congestion.tick[selectedAlgo]);
   const simTime = useAppStore((s) => s.congestion.simTime[selectedAlgo]);
@@ -45,8 +55,13 @@ export default function App() {
       </header>
 
       <aside className="sidebar">
-        <AlgoSelector selected={selectedAlgo} onSelect={setSelectedAlgo} />
-        <MetricsPanel tick={tick} simTime={simTime} metrics={metrics} />
+        <ViewToggle view={view} onChange={setView} />
+        {view === "single" && (
+          <>
+            <AlgoSelector selected={selectedAlgo} onSelect={setSelectedAlgo} />
+            <MetricsPanel tick={tick} simTime={simTime} metrics={metrics} />
+          </>
+        )}
         <Legend />
         {streamError && <p className="error">stream: {streamError}</p>}
       </aside>
@@ -60,7 +75,12 @@ export default function App() {
             Is the engine running and reachable?
           </div>
         )}
-        {geometry && <CongestionMap geometry={geometry} buckets={buckets} />}
+        {geometry &&
+          (view === "single" ? (
+            <CongestionMap geometry={geometry} buckets={buckets} />
+          ) : (
+            <ComparisonView geometry={geometry} />
+          ))}
       </main>
     </div>
   );

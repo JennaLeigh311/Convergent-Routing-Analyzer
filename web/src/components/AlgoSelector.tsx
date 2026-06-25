@@ -3,17 +3,8 @@
 // All six stream concurrently over the one socket, so switching is instant: it just
 // points the map at a different already-populated bucket map.
 
+import { ALGO_LABELS } from "../lib/algoLabels";
 import { ROUTER_ORDER, type Algo } from "../lib/protocol";
-
-/** Human labels for the canonical router ids. */
-const LABELS: Record<Algo, string> = {
-  naive: "Naive (free-flow)",
-  reactive: "Reactive (BPR)",
-  incremental: "Incremental",
-  msa: "MSA",
-  systemoptimal: "System-optimal",
-  multipath: "Multipath",
-};
 
 interface Props {
   selected: Algo;
@@ -33,7 +24,7 @@ export function AlgoSelector({ selected, onSelect }: Props) {
             checked={algo === selected}
             onChange={() => onSelect(algo)}
           />
-          {LABELS[algo]}
+          {ALGO_LABELS[algo]}
         </label>
       ))}
     </fieldset>

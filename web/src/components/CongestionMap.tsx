@@ -10,11 +10,10 @@
 
 import { useMemo } from "react";
 import DeckGL from "@deck.gl/react";
-import { PathLayer } from "@deck.gl/layers";
-import type { Color, PickingInfo } from "@deck.gl/core";
+import type { PickingInfo } from "@deck.gl/core";
 
-import { bucketColor } from "../lib/colorRamp";
-import { boundsCenter, type GraphGeometry, type SegmentGeometry } from "../lib/graph";
+import { buildCongestionLayer } from "../lib/congestionLayer";
+import { initialViewState, type GraphGeometry, type SegmentGeometry } from "../lib/graph";
 import type { BucketMap } from "../lib/congestion";
 
 interface Props {
@@ -23,40 +22,17 @@ interface Props {
   buckets: BucketMap;
 }
 
-/** Fit the initial camera to the network bounds. */
-function initialViewState(geometry: GraphGeometry) {
-  const [lon, lat] = boundsCenter(geometry.bounds);
-  const [minLon, minLat, maxLon, maxLat] = geometry.bounds;
-  // A rough zoom from the bounds span; the toy graph is small so this is generous.
-  const span = Math.max(maxLon - minLon, maxLat - minLat, 1e-4);
-  const zoom = Math.min(18, Math.max(10, Math.log2(360 / span)));
-  return { longitude: lon, latitude: lat, zoom, pitch: 0, bearing: 0 };
-}
-
 export function CongestionMap({ geometry, buckets }: Props) {
   const view = useMemo(() => initialViewState(geometry), [geometry]);
 
-  // The PathLayer. `data` is the immutable geometry table. getColor reads the live
-  // bucket map by segment_id; updateTriggers.getColor changes identity whenever the
-  // bucket map reference changes, so deck.gl recomputes colors WITHOUT rebuilding
-  // the path geometry.
-  const layer = new PathLayer<SegmentGeometry>({
+  // The recolor-only PathLayer (shared recipe — see lib/congestionLayer.ts). The full
+  // map is the interactive one: wide strokes and pickable for the tooltip below.
+  const layer = buildCongestionLayer({
     id: "congestion-paths",
-    data: geometry.segments,
+    segments: geometry.segments,
+    buckets,
+    width: 4,
     pickable: true,
-    widthUnits: "pixels",
-    getWidth: 4,
-    capRounded: true,
-    jointRounded: true,
-    getPath: (d) => d.path,
-    getColor: (d): Color => {
-      const [r, g, b] = bucketColor(buckets.get(d.segmentId) ?? 0);
-      return [r, g, b, 230];
-    },
-    updateTriggers: {
-      // Recolor-only trigger: identity changes per new bucket-map reference.
-      getColor: buckets,
-    },
   });
 
   return (
