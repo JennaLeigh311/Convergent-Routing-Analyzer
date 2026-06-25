@@ -61,3 +61,17 @@ export function buildGeometry(fc: GraphFeatureCollection): GraphGeometry {
 export function boundsCenter(bounds: [number, number, number, number]): [number, number] {
   return [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2];
 }
+
+/**
+ * Fit a deck.gl camera to the network bounds. Shared by the single-algo map and the
+ * comparison view's small multiples so every panel frames the same network identically
+ * (the only thing that differs between panels is the live coloring, not the geometry).
+ */
+export function initialViewState(geometry: GraphGeometry) {
+  const [lon, lat] = boundsCenter(geometry.bounds);
+  const [minLon, minLat, maxLon, maxLat] = geometry.bounds;
+  // A rough zoom from the bounds span; the toy graph is small so this is generous.
+  const span = Math.max(maxLon - minLon, maxLat - minLat, 1e-4);
+  const zoom = Math.min(18, Math.max(10, Math.log2(360 / span)));
+  return { longitude: lon, latitude: lat, zoom, pitch: 0, bearing: 0 };
+}

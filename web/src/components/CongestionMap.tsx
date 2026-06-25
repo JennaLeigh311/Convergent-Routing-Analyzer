@@ -14,23 +14,13 @@ import { PathLayer } from "@deck.gl/layers";
 import type { Color, PickingInfo } from "@deck.gl/core";
 
 import { bucketColor } from "../lib/colorRamp";
-import { boundsCenter, type GraphGeometry, type SegmentGeometry } from "../lib/graph";
+import { initialViewState, type GraphGeometry, type SegmentGeometry } from "../lib/graph";
 import type { BucketMap } from "../lib/congestion";
 
 interface Props {
   geometry: GraphGeometry;
   /** segment_id -> bucket for the currently selected algorithm. */
   buckets: BucketMap;
-}
-
-/** Fit the initial camera to the network bounds. */
-function initialViewState(geometry: GraphGeometry) {
-  const [lon, lat] = boundsCenter(geometry.bounds);
-  const [minLon, minLat, maxLon, maxLat] = geometry.bounds;
-  // A rough zoom from the bounds span; the toy graph is small so this is generous.
-  const span = Math.max(maxLon - minLon, maxLat - minLat, 1e-4);
-  const zoom = Math.min(18, Math.max(10, Math.log2(360 / span)));
-  return { longitude: lon, latitude: lat, zoom, pitch: 0, bearing: 0 };
 }
 
 export function CongestionMap({ geometry, buckets }: Props) {

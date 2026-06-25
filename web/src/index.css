@@ -151,10 +151,144 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.view-toggle {
+  display: flex;
+  gap: 0.25rem;
+  background: #2a2f3d;
+  border-radius: 8px;
+  padding: 0.2rem;
+}
+.view-toggle button {
+  flex: 1;
+  border: none;
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.view-toggle button.active {
+  background: var(--accent);
+  color: #0b0d12;
+  font-weight: 600;
+}
+
 .map-area {
   grid-area: map;
   position: relative;
   background: #0b0d12;
+}
+
+/* Comparison view: six small multiples in a grid, metrics table below. */
+.comparison {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.comparison-maps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+}
+
+.mini-map {
+  margin: 0;
+  border: 1px solid #2a2f3d;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.mini-map.reference {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.mini-map-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+}
+.mini-map-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+.mini-map-poa {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mini-map-canvas {
+  position: relative;
+  height: 200px;
+  background: #0b0d12;
+}
+
+.ref-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #0b0d12;
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+/* Per-algorithm metrics table. */
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.metrics-table caption {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-bottom: 0.5rem;
+}
+.metrics-table th[scope="col"] {
+  text-align: right;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid #2a2f3d;
+  padding: 0.3rem 0.6rem;
+}
+.metrics-table th[scope="col"]:first-child {
+  text-align: left;
+}
+.metrics-table th[scope="row"] {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+}
+.metrics-table th[scope="row"] .ref-badge {
+  margin-left: 0.4rem;
+}
+.metrics-table td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding: 0.3rem 0.6rem;
+}
+.metrics-table .metrics-row {
+  border-bottom: 1px solid #21262f;
+}
+.metrics-table .metrics-row.reference {
+  background: rgba(78, 161, 255, 0.1);
+}
+.metrics-table .rel-poa {
+  color: var(--accent);
 }
 
 .overlay {
