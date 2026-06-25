@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -25,20 +26,25 @@ import (
 // realized-traffic metrics. It is the data source the Phase-6 comparison frontend
 // animates (project-outline.md "Functionality clarification").
 //
-// THE THREE CLOCKS (decoupled, §R6).
+// THE TWO CLOCKS AND THE TWO KNOBS THAT RELATE THEM (decoupled, §R6).
+//
+// Two actual clocks:
 //
 //  1. The SIMULATED clock — the sim's internal Δt (≈30s/tick), how the model
 //     advances congestion. Owned by the simulator.
 //  2. WALL CLOCK — real time on the server.
-//  3. The REPLAY SPEED — how many SIMULATED seconds elapse per wall-clock second
-//     (the `speed` query param). speed compresses simulated time: speed=60 plays an
-//     hour of simulation in a wall-clock minute. It does NOT change the message
-//     rate.
-//  4. The fixed SERVER TICK — the wall-clock cadence at which delta frames are
-//     emitted (1–2 Hz, the `tick_hz` param, default 1 Hz). It stays FIXED regardless
-//     of speed: a faster speed advances the simulated clock further between frames
-//     (so each frame carries a bigger jump), but the frames still arrive once per
-//     server tick. This is the decoupling §R6 requires.
+//
+// Two knobs map one onto the other:
+//
+//   - The REPLAY SPEED (the `speed` query param) — how many SIMULATED seconds elapse
+//     per wall-clock second; it is a RATIO between the two clocks, not a clock itself.
+//     speed compresses simulated time: speed=60 plays an hour of simulation in a
+//     wall-clock minute. It does NOT change the message rate.
+//   - The fixed SERVER TICK (the `tick_hz` param, default 1 Hz) — the wall-clock
+//     cadence at which delta frames are emitted (1–2 Hz). It stays FIXED regardless of
+//     speed: a faster speed advances the simulated clock further between frames (so
+//     each frame carries a bigger jump), but the frames still arrive once per server
+//     tick. This is the decoupling §R6 requires.
 //
 // I/O DECOUPLING (the critical constraint). The simulator's TickObserver runs on the
 // simulation goroutine and BLOCKS the model. The orchestrator forwards each tick to
@@ -91,7 +97,19 @@ const (
 	maxServerTickHz     = 2.0 // §R6 caps the fixed server tick at 2 Hz
 	defaultReplaySpeed  = 60.0
 	maxReplaySpeed      = 100000.0
-	maxStreamCount      = maxRequestCount
+	// maxStreamCount caps the per-run OD count R for the LIVE stream. Each connect
+	// runs six full sims and routes R requests six times, so the live endpoint uses a
+	// tighter ceiling than the batch /benchmark sweep's maxRequestCount (which runs
+	// async and dedupes identical tuples): an interactive view never needs the full
+	// 100k, and the lower cap bounds the per-connection CPU an unauthenticated client
+	// can demand.
+	maxStreamCount = 20_000
+	// maxConcurrentStreams bounds simultaneous live stream runs. Each /stream connect
+	// synchronously launches RunParallel (six concurrent sims) before its first frame,
+	// so without a cap N connects = 6N sims with no backpressure. A connect that would
+	// exceed this is refused with 503 BEFORE the WebSocket upgrade (see handleStream),
+	// mirroring the sweepSlots admission control on /benchmark.
+	maxConcurrentStreams = 8
 )
 
 // streamParams is the parsed GET /stream query: the §R6 time-slider controls plus
@@ -167,7 +185,7 @@ func parseStreamParams(q map[string][]string) (streamParams, error) {
 	if s := get("count"); s != "" {
 		v, err := strconv.Atoi(s)
 		if err != nil || v < 0 || v > maxStreamCount {
-			return p, errors.New("invalid count: must be in [0, 100000]")
+			return p, fmt.Errorf("invalid count: must be in [0, %d]", maxStreamCount)
 		}
 		p.Count = v
 	}
@@ -253,6 +271,19 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Admission control BEFORE the upgrade: each stream run launches six concurrent
+	// sims, so bound how many run at once. A connect that would exceed the cap is a
+	// clean 503 (no socket is opened), mirroring /benchmark's sweepSlots. The slot is
+	// held for the whole connection and released when runStream returns.
+	select {
+	case s.streamSlots <- struct{}{}:
+		defer func() { <-s.streamSlots }()
+	default:
+		s.writeError(w, endpointStream, http.StatusServiceUnavailable,
+			"stream capacity reached, please retry shortly")
+		return
+	}
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// InsecureSkipVerify disables Origin checking: the frontend is served from a
 		// different origin in development and this is a read-only data stream behind
@@ -280,12 +311,23 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 // SIMULATED clock against wall clock by the replay speed. It returns when the run is
 // fully replayed, the client disconnects, or ctx is cancelled.
 func (s *Server) runStream(ctx context.Context, conn *websocket.Conn, params streamParams) error {
+	// CloseRead starts a background reader that drains (and rejects) any client message,
+	// responds to pings, and — the reason it is here — cancels the returned context the
+	// moment the peer closes or the connection errors. Without it a client that vanishes
+	// during the buffering phase below (when nothing reads or writes the socket) would
+	// go undetected until the first replay write; with it, a disconnect cancels ctx and
+	// aborts collectParallel promptly. This is a read-only stream, so we never expect a
+	// client message.
+	ctx = conn.CloseRead(ctx)
+
 	// Run the whole parallel simulation up front into per-algo ordered buffers. The
 	// orchestrator's emit only appends (no I/O), so a slow client cannot stall a sim;
 	// the run is bounded and deterministic, so buffering it is cheap on the toy graph.
-	// (At city scale this would become a streaming bounded buffer; the buffer boundary
-	// here is the seam where that swap lands.) The sim runs under the connection ctx
-	// so a disconnect mid-build cancels it promptly.
+	// Note this means time-to-first-frame equals the full simulation wall-time: nothing
+	// is delivered until the run completes. (At city scale this becomes a streaming
+	// bounded buffer that emits as it goes; the buffer boundary here is the seam where
+	// that swap lands.) The sim runs under the connection ctx so a disconnect mid-build
+	// cancels it promptly.
 	buffers, err := s.collectParallel(ctx, params)
 	if err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "simulation failed")
@@ -330,53 +372,24 @@ func (s *Server) collectParallel(ctx context.Context, params streamParams) (map[
 // simulated seconds each server tick and, for each algorithm, emits the latest tick
 // whose simulated time has been reached — so a higher speed jumps further per frame
 // while the frame rate stays fixed (the §R6 decoupling).
+//
+// The per-server-tick stepping and the snapshot construction live in replayState
+// (below) so they can be unit-tested without a real wall-clock ticker; replay itself
+// is just the I/O loop that drives that state machine and writes frames.
 func (s *Server) replay(ctx context.Context, conn *websocket.Conn, params streamParams, buffers map[string][]benchmark.AlgoTick) error {
-	// Index systemoptimal's realized total by tick so each frame's PoA is computed
-	// against the SAME-TICK systemoptimal reference (poa.go) — a deterministic pair of
-	// already-deterministic per-tick totals, with no cross-goroutine timing in the
-	// result (the determinism criterion). A tick with no systemoptimal observation
-	// (systemoptimal drained earlier) falls back to PoA 1 via PoAFromTotals' degenerate
-	// guard. This map is the consumer-side seam parallel.go's PoAFromTotals doc refers to.
-	soTotalByTick := make(map[int]float64)
-	for _, tk := range buffers["systemoptimal"] {
-		soTotalByTick[tk.State.Tick] = tk.RealizedTotalS
-	}
-	// Per-algo last-emitted bucket map, for delta computation, and the cursor into
-	// each algo's tick buffer.
-	lastBuckets := make(map[string]map[string]int, len(benchmark.RouterOrder))
-	cursor := make(map[string]int, len(benchmark.RouterOrder))
-	firstSimTime := make(map[string]time.Time, len(benchmark.RouterOrder))
+	rs, snapshots := s.newReplayState(buffers, params)
 
-	// Send the initial snapshot for each algorithm that produced any tick: the FULL
-	// bucketed state at its first tick. An algorithm whose sim produced no tick (an
-	// empty OD set ⇒ zero ticks) sends an empty snapshot so the client still learns
-	// the algo exists.
-	for _, name := range benchmark.RouterOrder {
-		ticks := buffers[name]
-		var first benchmark.AlgoTick
-		if len(ticks) > 0 {
-			first = ticks[0]
-			cursor[name] = 1
-			firstSimTime[name] = first.State.SimTime
-		}
-		buckets, frame := s.buildSnapshot(name, first, len(ticks) > 0, soTotalByTick)
-		lastBuckets[name] = buckets
+	// Send the initial snapshot for each algorithm (in RouterOrder).
+	for _, frame := range snapshots {
 		if err := s.writeFrame(ctx, conn, frame); err != nil {
 			return err
 		}
 	}
 
 	// The replay loop: a fixed wall-clock ticker at the server tick rate. Each tick
-	// advances the simulated clock by (speed / tickHz) simulated seconds and flushes
-	// any algo ticks now due as deltas.
-	tickPeriod := time.Duration(float64(time.Second) / params.ServerTickHz)
-	simSecondsPerServerTick := params.Speed / params.ServerTickHz
-
-	ticker := time.NewTicker(tickPeriod)
+	// advances the simulated clock and flushes any algo ticks now due as deltas.
+	ticker := time.NewTicker(rs.tickPeriod)
 	defer ticker.Stop()
-
-	// elapsedSimSeconds is the simulated time reached so far past tick 1's instant.
-	var elapsedSimSeconds float64
 
 	for {
 		select {
@@ -384,44 +397,154 @@ func (s *Server) replay(ctx context.Context, conn *websocket.Conn, params stream
 			return ctx.Err()
 		case <-ticker.C:
 		}
-		elapsedSimSeconds += simSecondsPerServerTick
-
-		done := true
-		for _, name := range benchmark.RouterOrder {
-			ticks := buffers[name]
-			if cursor[name] < len(ticks) {
-				done = false
-			}
-			// Emit every tick whose simulated elapsed time has been reached this
-			// server tick; coalesce to the LAST one so a high speed sends one delta
-			// covering the jump rather than a burst. Deltas are computed against the
-			// last emitted bucket map so coalescing stays correct.
-			var latest *benchmark.AlgoTick
-			for cursor[name] < len(ticks) {
-				t := ticks[cursor[name]]
-				// A tick's simulated position is its SimTime relative to the run's
-				// StartTime — derived from the stamp the simulator already set, so the
-				// pacing needs no separate Δt. Tick 1 is at simSecond ≈ Δt; we offset by
-				// tick 1's instant so the FIRST delta is due one server tick in.
-				simSecondOfTick := t.State.SimTime.Sub(firstSimTime[name]).Seconds()
-				if simSecondOfTick > elapsedSimSeconds {
-					break
-				}
-				cur := ticks[cursor[name]]
-				latest = &cur
-				cursor[name]++
-			}
-			if latest != nil {
-				frame := s.buildDelta(name, *latest, lastBuckets[name], soTotalByTick)
-				if err := s.writeFrame(ctx, conn, frame); err != nil {
-					return err
-				}
+		for _, frame := range rs.advance(s) {
+			if err := s.writeFrame(ctx, conn, frame); err != nil {
+				return err
 			}
 		}
-		if done {
+		if rs.done() {
 			return nil
 		}
 	}
+}
+
+// replayState is the wall-clock-free core of the replay loop: it holds the per-algo
+// cursors and last-emitted bucket maps and, on each advance, advances a SIMULATED
+// clock and returns the delta frames now due. Separating it from replay's ticker/
+// socket I/O is what lets the pacing and coalescing logic be unit-tested directly
+// (see stream_test.go) rather than only through a wall-clock end-to-end dial.
+type replayState struct {
+	buffers       map[string][]benchmark.AlgoTick
+	soTotalByTick map[int]float64
+	// lastBuckets[algo][segment_id] is the last bucket emitted for a segment, the diff
+	// base for the next delta. cursor[algo] is the index of the next unsent tick.
+	lastBuckets  map[string]map[string]int
+	cursor       map[string]int
+	firstSimTime map[string]time.Time
+
+	tickPeriod              time.Duration
+	simSecondsPerServerTick float64
+	// elapsedSimSeconds is the simulated time reached so far past tick 1's instant.
+	elapsedSimSeconds float64
+}
+
+// newReplayState builds the replay state from the collected buffers and returns it
+// alongside the per-algorithm snapshot frames (in RouterOrder) the caller sends first.
+func (s *Server) newReplayState(buffers map[string][]benchmark.AlgoTick, params streamParams) (*replayState, []frameSnapshot) {
+	rs := &replayState{
+		buffers:                 buffers,
+		soTotalByTick:           buildSOTotalByTick(buffers),
+		lastBuckets:             make(map[string]map[string]int, len(benchmark.RouterOrder)),
+		cursor:                  make(map[string]int, len(benchmark.RouterOrder)),
+		firstSimTime:            make(map[string]time.Time, len(benchmark.RouterOrder)),
+		tickPeriod:              time.Duration(float64(time.Second) / params.ServerTickHz),
+		simSecondsPerServerTick: params.Speed / params.ServerTickHz,
+	}
+
+	// Build the initial snapshot for each algorithm that produced any tick: the FULL
+	// bucketed state at its first tick. An algorithm whose sim produced no tick sends an
+	// empty snapshot so the client still learns the algo exists. (In practice the
+	// simulator always emits at least tick 1, so the empty-snapshot path is a defensive
+	// guard rather than a reachable orchestrator outcome — it is covered directly in the
+	// tests.)
+	snapshots := make([]frameSnapshot, 0, len(benchmark.RouterOrder))
+	for _, name := range benchmark.RouterOrder {
+		ticks := buffers[name]
+		var first benchmark.AlgoTick
+		if len(ticks) > 0 {
+			first = ticks[0]
+			rs.cursor[name] = 1
+			rs.firstSimTime[name] = first.State.SimTime
+		}
+		buckets, frame := s.buildSnapshot(name, first, len(ticks) > 0, rs.soTotalByTick)
+		rs.lastBuckets[name] = buckets
+		snapshots = append(snapshots, frame)
+	}
+	return rs, snapshots
+}
+
+// advance steps the simulated clock by one server tick and returns the delta frames
+// now due, one per algorithm that has a newly-reached tick (in RouterOrder). Ticks
+// whose simulated time has been reached are coalesced to the LAST one so a high speed
+// sends a single delta covering the jump rather than a burst; the delta diffs against
+// the last emitted bucket map so coalescing stays correct.
+func (rs *replayState) advance(s *Server) []frameDelta {
+	rs.elapsedSimSeconds += rs.simSecondsPerServerTick
+
+	frames := make([]frameDelta, 0, len(benchmark.RouterOrder))
+	for _, name := range benchmark.RouterOrder {
+		ticks := rs.buffers[name]
+		latestIdx := -1
+		for rs.cursor[name] < len(ticks) {
+			// A tick's simulated position is its SimTime relative to the run's
+			// StartTime — derived from the stamp the simulator already set, so the
+			// pacing needs no separate Δt. Tick 1 is at simSecond ≈ Δt; we offset by
+			// tick 1's instant so the FIRST delta is due one server tick in.
+			simSecondOfTick := ticks[rs.cursor[name]].State.SimTime.Sub(rs.firstSimTime[name]).Seconds()
+			if simSecondOfTick > rs.elapsedSimSeconds {
+				break
+			}
+			latestIdx = rs.cursor[name]
+			rs.cursor[name]++
+		}
+		if latestIdx >= 0 {
+			frames = append(frames, s.buildDelta(name, ticks[latestIdx], rs.lastBuckets[name], rs.soTotalByTick))
+		}
+	}
+	return frames
+}
+
+// done reports whether every algorithm's buffer has been fully replayed.
+func (rs *replayState) done() bool {
+	for _, name := range benchmark.RouterOrder {
+		if rs.cursor[name] < len(rs.buffers[name]) {
+			return false
+		}
+	}
+	return true
+}
+
+// buildSOTotalByTick indexes systemoptimal's realized total by tick so each frame's
+// PoA is computed against the SAME-TICK systemoptimal reference (poa.go) — a
+// deterministic pair of already-deterministic per-tick totals, with no cross-goroutine
+// timing in the result (the determinism criterion).
+//
+// For a tick at which systemoptimal has no observation of its own (it drained earlier
+// than a longer-running algo), the reference is CARRIED FORWARD from systemoptimal's
+// last observed tick rather than left at 0. A 0 reference would make PriceOfAnarchy's
+// degenerate guard report PoA = 1 — which reads as "optimal" precisely on a late,
+// high-congestion tick — so carrying the last real optimum forward keeps a meaningful
+// (and conservative) ratio. Ticks BEFORE systemoptimal's first observation have no
+// reference at all and are left unset (PoA falls back to 1, the honest "no reference
+// yet" value). On the toy graph all six algos run identical tick ranges, so no
+// carry-forward occurs and the map is exactly the same-tick index.
+func buildSOTotalByTick(buffers map[string][]benchmark.AlgoTick) map[int]float64 {
+	soTicks := buffers["systemoptimal"]
+
+	maxTick := 0
+	for _, ticks := range buffers {
+		for _, tk := range ticks {
+			if tk.State.Tick > maxTick {
+				maxTick = tk.State.Tick
+			}
+		}
+	}
+
+	soTotalByTick := make(map[int]float64, maxTick+1)
+	var lastSO float64
+	haveSO := false
+	soIdx := 0
+	for t := 0; t <= maxTick; t++ {
+		for soIdx < len(soTicks) && soTicks[soIdx].State.Tick <= t {
+			lastSO = soTicks[soIdx].RealizedTotalS
+			haveSO = true
+			soIdx++
+		}
+		if haveSO {
+			soTotalByTick[t] = lastSO
+		}
+	}
+	return soTotalByTick
 }
 
 // buildSnapshot builds an algorithm's initial snapshot frame from its first tick and
@@ -477,14 +600,16 @@ func (s *Server) buildDelta(name string, tick benchmark.AlgoTick, lastBuckets ma
 }
 
 // metricsOf maps an AlgoTick's metrics onto the wire shape (nanoseconds → ms) and
-// derives the per-tick PoA against the SAME-TICK systemoptimal total (PoAFromTotals).
-// Pairing same-tick totals is what keeps PoA deterministic — see parallel.go.
+// derives the per-tick PoA by pairing this algo's realized total with the SAME-TICK
+// systemoptimal total (carried forward when systemoptimal drained earlier — see
+// buildSOTotalByTick) through PriceOfAnarchy. Pairing same-tick totals in this single
+// ordered pass is what keeps PoA deterministic — see parallel.go.
 func metricsOf(tick benchmark.AlgoTick, soTotalByTick map[int]float64) algoMetrics {
-	soTotal := soTotalByTick[tick.State.Tick] // 0 if systemoptimal had no tick here
+	soTotal := soTotalByTick[tick.State.Tick] // 0 only before systemoptimal's first tick
 	return algoMetrics{
 		ComputeMs:      float64(tick.ComputeNanos) / 1e6,
 		RealizedTotalS: tick.RealizedTotalS,
-		PoA:            benchmark.PoAFromTotals(tick.RealizedTotalS, soTotal),
+		PoA:            benchmark.PriceOfAnarchy(tick.RealizedTotalS, soTotal),
 		InFlight:       tick.State.InFlight,
 		Completed:      tick.State.Completed,
 	}

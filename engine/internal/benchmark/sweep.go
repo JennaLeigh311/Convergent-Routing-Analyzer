@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/static"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
@@ -186,7 +187,10 @@ func RunSweep(ctx context.Context, g graph.Graph, seed int64, count int) ([]Swee
 		// keyed by name so PoA can divide against systemoptimal afterward.
 		results := make(map[string]routing.AssignResult, len(RouterOrder))
 		for _, name := range RouterOrder {
-			router, err := buildRouter(name, g, bpr, seed)
+			// A frozen all-zero-load snapshot: reactive reads it as a free-flow snapshot
+			// through the shared static.Provider port (a nil snapshot is all-zero). The
+			// other routers ignore the provider.
+			router, err := buildRouter(name, g, bpr, static.NewFromSnapshot(nil), seed)
 			if err != nil {
 				return nil, err
 			}
@@ -232,23 +236,23 @@ func RunSweep(ctx context.Context, g graph.Graph, seed int64, count int) ([]Swee
 }
 
 // buildRouter constructs the named router over the graph with the given BPR. It is
-// the one place the six constructors' differing signatures are reconciled, so
-// RunSweep iterates RouterOrder uniformly. The reactive router needs a
-// congestion.CongestionProvider; it is given a frozen all-zero-load snapshot via
-// static.NewFromSnapshot, so reactive best-responds to a free-flow snapshot — honest
-// for a static sweep with no externally-injected congestion, and enough to exercise
-// the reactive code path in the comparison. (The time-domain reactive behavior, where
-// the provider's load builds over the run, is exercised by the §R5 mesoscopic
-// simulator pass, not this static cell.) multipath is seeded with the fixed sweep seed
-// and sweepK paths so its probabilistic split is reproducible.
-func buildRouter(name string, g graph.Graph, bpr cost.BPR, seed int64) (routing.Router, error) {
+// the one place the six constructors' differing signatures are reconciled, so both
+// RunSweep and the §R6 parallel run (parallel.go) iterate RouterOrder uniformly
+// through a single builder — a new router or a constructor-signature change lands here
+// once, not in two parallel switches.
+//
+// The reactive router needs a congestion.CongestionProvider, supplied by the caller:
+// the sweep passes a frozen all-zero-load snapshot (static.NewFromSnapshot(nil)) so
+// reactive best-responds to a free-flow snapshot — honest for a static sweep with no
+// externally-injected congestion — while the mesoscopic parallel run passes the LIVE
+// per-tick provider so reactive best-responds to the congestion built up so far. The
+// other five routers ignore the provider. multipath is seeded with the fixed seed and
+// sweepK paths so its probabilistic split is reproducible.
+func buildRouter(name string, g graph.Graph, bpr cost.BPR, provider congestion.CongestionProvider, seed int64) (routing.Router, error) {
 	switch name {
 	case "naive":
 		return routing.NewNaiveRouter(g), nil
 	case "reactive":
-		// A frozen all-zero-load snapshot: reactive reads it as a free-flow snapshot
-		// through the shared static.Provider port (a nil snapshot is all-zero).
-		provider := static.NewFromSnapshot(nil)
 		return routing.NewReactiveRouter(g, bpr, provider), nil
 	case "incremental":
 		return routing.NewIncrementalRouter(g, bpr), nil
@@ -259,7 +263,7 @@ func buildRouter(name string, g graph.Graph, bpr cost.BPR, seed int64) (routing.
 	case "multipath":
 		return routing.NewMultipathRouter(g, bpr, seed, sweepK), nil
 	default:
-		return nil, fmt.Errorf("sweep: unknown router %q", name)
+		return nil, fmt.Errorf("benchmark: unknown router %q", name)
 	}
 }
 

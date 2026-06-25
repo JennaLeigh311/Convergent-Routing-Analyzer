@@ -150,11 +150,11 @@ func TestRunParallelStartTimeShifts(t *testing.T) {
 	}
 }
 
-// TestPoAFromTotalsSameTickPairing asserts the consumer-side PoA seam: pairing an
-// algo's same-tick total with systemoptimal's gives PoA = total/soTotal, and
-// systemoptimal against itself is exactly 1. This is the deterministic PoA the stream
-// layer emits (no cross-goroutine timing in the result).
-func TestPoAFromTotalsSameTickPairing(t *testing.T) {
+// TestPoASameTickPairing asserts the consumer-side PoA seam: pairing an algo's
+// same-tick total with systemoptimal's through PriceOfAnarchy gives PoA = total/soTotal,
+// and systemoptimal against itself is exactly 1. This is the deterministic PoA the
+// stream layer emits (no cross-goroutine timing in the result).
+func TestPoASameTickPairing(t *testing.T) {
 	out := collectAll(t, baseConfig())
 	soByTick := make(map[int]float64)
 	for _, tk := range out["systemoptimal"] {
@@ -162,7 +162,7 @@ func TestPoAFromTotalsSameTickPairing(t *testing.T) {
 	}
 	// systemoptimal vs itself is 1 at every tick.
 	for _, tk := range out["systemoptimal"] {
-		if got := benchmark.PoAFromTotals(tk.RealizedTotalS, soByTick[tk.State.Tick]); got != 1.0 {
+		if got := benchmark.PriceOfAnarchy(tk.RealizedTotalS, soByTick[tk.State.Tick]); got != 1.0 {
 			t.Errorf("systemoptimal self-PoA at tick %d = %v, want 1", tk.State.Tick, got)
 		}
 	}
@@ -172,26 +172,33 @@ func TestPoAFromTotalsSameTickPairing(t *testing.T) {
 		if !ok {
 			continue
 		}
-		got := benchmark.PoAFromTotals(tk.RealizedTotalS, so)
+		got := benchmark.PriceOfAnarchy(tk.RealizedTotalS, so)
 		if math.IsNaN(got) || math.IsInf(got, 0) {
 			t.Errorf("naive PoA at tick %d non-finite: %v", tk.State.Tick, got)
 		}
 	}
 }
 
-// TestRunParallelEmptyBatch asserts a zero-count run is defined: every algo produces
-// a (possibly empty) stream and no error — the empty-batch contract.
-func TestRunParallelEmptyBatch(t *testing.T) {
+// TestRunParallelZeroCountFallsBack asserts the documented Count<=0 fallback: a
+// zero-count run does NOT route zero OD pairs — RunParallel falls back to
+// DefaultODCount, so every algorithm still produces a real (non-empty, finite) stream
+// and no error. (A genuinely empty per-algo stream is unreachable through the
+// orchestrator because the simulator always emits at least tick 1; the empty-snapshot
+// branch is covered directly in stream_test.go.)
+func TestRunParallelZeroCountFallsBack(t *testing.T) {
 	cfg := baseConfig()
 	cfg.Count = 0
-	g := loadToy(t)
-	var n int
-	var mu sync.Mutex
-	emit := func(tick benchmark.AlgoTick) { mu.Lock(); n++; mu.Unlock() }
-	if err := benchmark.RunParallel(context.Background(), g, cfg, emit); err != nil {
-		t.Fatalf("RunParallel empty: %v", err)
+	out := collectAll(t, cfg)
+	for _, name := range benchmark.RouterOrder {
+		ticks := out[name]
+		if len(ticks) == 0 {
+			t.Errorf("algo %q produced no ticks; Count<=0 must fall back to DefaultODCount, not an empty run", name)
+			continue
+		}
+		for _, tk := range ticks {
+			if math.IsNaN(tk.RealizedTotalS) || math.IsInf(tk.RealizedTotalS, 0) {
+				t.Errorf("algo %q tick %d non-finite realized total: %v", name, tk.State.Tick, tk.RealizedTotalS)
+			}
+		}
 	}
-	// An empty OD set drains immediately; the sim still runs at least one tick per
-	// algo or zero — either way no panic, no error. We only assert it returned.
-	_ = n
 }

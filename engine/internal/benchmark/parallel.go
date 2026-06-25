@@ -2,7 +2,6 @@ package benchmark
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -109,10 +108,10 @@ type AlgoTick struct {
 	// the live observer would divide against whatever systemoptimal total happened to
 	// be published first, which is cross-goroutine TIMING-DEPENDENT and therefore not
 	// deterministic. Instead the orchestrator emits each algo's deterministic
-	// per-tick RealizedTotalS, and the consumer pairs same-tick totals to compute PoA
-	// (PriceOfAnarchy) in its own single-threaded, ordered pass — see
-	// internal/api/stream.go and PoAFromTotals. This keeps the byte-identical-trace
-	// determinism criterion intact.
+	// per-tick RealizedTotalS, and the consumer pairs same-tick totals through
+	// PriceOfAnarchy in its own single-threaded, ordered pass — see
+	// internal/api/stream.go. This keeps the byte-identical-trace determinism
+	// criterion intact.
 	RealizedTotalS float64
 }
 
@@ -121,16 +120,6 @@ type AlgoTick struct {
 // and BLOCKS that sim until it returns, so it MUST NOT do blocking I/O — buffer and
 // flush off the hot path (the WebSocket layer does exactly this).
 type AlgoTickFunc func(tick AlgoTick)
-
-// PoAFromTotals computes a per-tick Price of Anarchy from an algorithm's realized
-// total and the systemoptimal algorithm's realized total AT THE SAME TICK, via
-// PriceOfAnarchy (so a degenerate/zero reference yields 1, never NaN/Inf). It is the
-// deterministic seam the consumer uses to pair same-tick totals — keeping PoA a
-// pure function of two already-deterministic per-tick totals, with no cross-goroutine
-// timing in the result. systemoptimal's own PoA against itself is 1 by construction.
-func PoAFromTotals(algoTotal, systemOptimalTotal float64) float64 {
-	return PriceOfAnarchy(algoTotal, systemOptimalTotal)
-}
 
 // timedRouter wraps a routing.Router to accumulate the cumulative wall-clock time
 // spent in Route — the per-algo compute-time metric. The simulator calls Route once
@@ -245,11 +234,15 @@ func runOneAlgo(
 	var computeNanos int64
 
 	factory := func(provider congestion.CongestionProvider) routing.Router {
-		inner, err := buildSimRouter(name, g, bpr, provider, seed)
+		// buildRouter is the single six-way constructor shared with the sweep; here it
+		// is threaded the LIVE per-tick provider so the reactive router best-responds to
+		// the congestion built up so far (the sweep passes a frozen free-flow snapshot).
+		inner, err := buildRouter(name, g, bpr, provider, seed)
 		if err != nil {
-			// A bad name cannot occur (RouterOrder is fixed), but if it did the
-			// simulator would route against a nil router and error; surface a naive
-			// router so the run fails cleanly on the next route rather than panicking.
+			// A bad name cannot occur (RouterOrder is fixed and buildRouter covers every
+			// entry), but if it did the simulator would route against a nil router and
+			// error; surface a naive router so the run fails cleanly on the next route
+			// rather than panicking.
 			inner = routing.NewNaiveRouter(g)
 		}
 		return timedRouter{inner: inner, mu: &computeMu, nanos: &computeNanos}
@@ -259,7 +252,7 @@ func runOneAlgo(
 		// Realized total network time at this tick's per-edge load — exactly the
 		// #89/#90 evaluator (routing.TotalNetworkTime over the load vector). This is
 		// deterministic per (seed, tick); the consumer pairs it with systemoptimal's
-		// same-tick total to derive PoA (PoAFromTotals).
+		// same-tick total to derive PoA (PriceOfAnarchy).
 		realizedTotal := routing.TotalNetworkTime(g, bpr, state.Load)
 
 		computeMu.Lock()
@@ -276,33 +269,4 @@ func runOneAlgo(
 
 	_, err := Simulate(ctx, g, reqs, simCfg, factory, observer)
 	return err
-}
-
-// buildSimRouter builds the named single-shot router the simulator drives per tick,
-// given the tick's frozen congestion provider. It mirrors buildRouter (the sweep's
-// builder) but threads the LIVE per-tick provider into the reactive router so each
-// tick best-responds to the congestion built up so far — the time-domain behavior
-// the parallel run animates. The iterative routers (incremental/msa/systemoptimal/
-// multipath) are exercised through the simulator's single-request Route path only
-// (the simulator never calls AssignResult), so in the time domain they behave as
-// their per-request shortest-path under the current load — which is the honest
-// "how each strategy routes a freshly-released request against current congestion"
-// the live view shows.
-func buildSimRouter(name string, g graph.Graph, bpr cost.BPR, provider congestion.CongestionProvider, seed int64) (routing.Router, error) {
-	switch name {
-	case "naive":
-		return routing.NewNaiveRouter(g), nil
-	case "reactive":
-		return routing.NewReactiveRouter(g, bpr, provider), nil
-	case "incremental":
-		return routing.NewIncrementalRouter(g, bpr), nil
-	case "msa":
-		return routing.NewMSARouter(g, bpr), nil
-	case "systemoptimal":
-		return routing.NewSystemOptimalRouter(g, bpr), nil
-	case "multipath":
-		return routing.NewMultipathRouter(g, bpr, seed, sweepK), nil
-	default:
-		return nil, fmt.Errorf("benchmark: unknown router %q", name)
-	}
 }

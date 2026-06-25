@@ -285,28 +285,39 @@ set over the **same** immutable graph, so their streams are directly comparable.
 | `speed`     | `60`                   | **Replay speed**: simulated seconds per wall-clock second (`(0, 100000]`).   |
 | `tick_hz`   | `1`                    | **Fixed server tick**: wall-clock frames per second (`[0.5, 2]`).           |
 | `seed`      | `0`                    | RNG seed — the run is byte-identical per seed (modulo wall clock).           |
-| `count`     | `1000`                 | Per-run OD request count R (`[0, 100000]`).                                  |
+| `count`     | `1000`                 | Per-run OD request count R (`[0, 20000]`).                                   |
 | `cap_scale` | `1.0`                  | §R3 capacity knob; v/c scales inversely with it (`> 0`).                     |
 
+`count` is capped lower than the batch `/benchmark` sweep's `100000`: each `/stream`
+connect runs six full simulations and routes R requests six times, so the live
+endpoint uses a tighter ceiling to bound the per-connection work an unauthenticated
+client can demand.
+
 A malformed/out-of-range parameter is a clean `400` **before** the upgrade (no socket
-is opened); a non-`GET` is a `405`.
+is opened); a non-`GET` is a `405`. Concurrent live runs are bounded: each connect
+launches six parallel simulations, so a connect that would exceed the server's stream
+capacity is refused with a `503` **before** the upgrade (retry shortly), mirroring the
+`/benchmark` admission control.
 
-### The time model (sim clock vs. wall clock vs. server tick)
+### The time model (two clocks, two knobs that relate them)
 
-Three clocks are deliberately **decoupled**:
+Two clocks are deliberately **decoupled**, with two knobs mapping one onto the other:
 
 1. **Simulated clock** — the simulator's internal Δt (≈30 s/tick): how congestion
    builds and drains in the model. `start` sets its origin; shifting `start` shifts
    every frame's `sim_time` by the same offset, observably, without changing the
    relative dynamics.
-2. **Replay speed** (`speed`) — how many **simulated** seconds elapse per wall-clock
-   second. `speed=60` plays an hour of simulation in a wall-clock minute. It
-   **compresses simulated time**; it does **not** change the message rate.
-3. **Fixed server tick** (`tick_hz`) — the wall-clock cadence at which delta frames
-   are emitted (1–2 Hz). It stays **fixed regardless of `speed`**: a higher speed
-   advances the simulated clock further between frames (each delta carries a bigger
-   jump, and intermediate sim ticks are coalesced into the latest one), but frames
-   still arrive once per server tick.
+2. **Wall clock** — real time on the server.
+
+- **Replay speed** (`speed`) — how many **simulated** seconds elapse per wall-clock
+  second (a **ratio** between the two clocks, not a clock itself). `speed=60` plays an
+  hour of simulation in a wall-clock minute. It **compresses simulated time**; it does
+  **not** change the message rate.
+- **Fixed server tick** (`tick_hz`) — the wall-clock cadence at which delta frames
+  are emitted (1–2 Hz). It stays **fixed regardless of `speed`**: a higher speed
+  advances the simulated clock further between frames (each delta carries a bigger
+  jump, and intermediate sim ticks are coalesced into the latest one), but frames
+  still arrive once per server tick.
 
 The simulation runs to completion off the socket's hot path (the simulator's
 per-tick observer only buffers in memory — it never blocks on the network), and a
