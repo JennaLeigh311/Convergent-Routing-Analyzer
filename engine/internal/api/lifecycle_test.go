@@ -204,6 +204,102 @@ func TestBenchmarkBodyTooLarge(t *testing.T) {
 	}
 }
 
+// TestBenchmarkUnknownAlgorithmIs400 asserts an `algorithm` that is neither "all"
+// nor one of the six router names is rejected at validation time with a clean 400 —
+// never dispatched into a run, never a 500/panic.
+func TestBenchmarkUnknownAlgorithmIs400(t *testing.T) {
+	srv := newTestServer(t)
+	rec := doRequest(t, srv, http.MethodPost, "/benchmark", `{"algorithm":"teleport"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unknown algorithm: status = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestBenchmarkAllUsesSweepSeam asserts the "all" path (default) still runs through
+// the s.sweepFn test seam — single-algorithm dispatch must not divert the regression-
+// safe sweep path. We stub the seam and assert it is what runs for algorithm="all".
+func TestBenchmarkAllUsesSweepSeam(t *testing.T) {
+	srv := newTestServer(t)
+	var hits int32
+	srv.sweepFn = func(context.Context, graph.Graph, int64, int) ([]benchmark.SweepCell, error) {
+		atomic.AddInt32(&hits, 1)
+		return []benchmark.SweepCell{}, nil
+	}
+
+	// Default (omitted algorithm ⇒ "all") and explicit "all" both hit the seam.
+	for _, body := range []string{`{"seed": 1}`, `{"algorithm":"all","seed": 2}`} {
+		start := startBenchmark(t, srv, body)
+		if got := pollBenchmark(t, srv, start.JobID); got.Status != statusDone {
+			t.Fatalf("body %s: status = %q, want done", body, got.Status)
+		}
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Errorf("sweep seam hits = %d, want 2 (the all-path must go through sweepFn)", got)
+	}
+}
+
+// TestBenchmarkSingleModeBypassesSweepSeam asserts a NAMED router runs single-
+// algorithm mode (benchmark.RunSingle) rather than the sweep seam — the seam stub
+// must NOT be invoked. The job completes with a report whose cells are the named
+// router's, at the "single" level.
+func TestBenchmarkSingleModeBypassesSweepSeam(t *testing.T) {
+	srv := newTestServer(t)
+	var seamHits int32
+	srv.sweepFn = func(context.Context, graph.Graph, int64, int) ([]benchmark.SweepCell, error) {
+		atomic.AddInt32(&seamHits, 1)
+		return []benchmark.SweepCell{}, nil
+	}
+
+	start := startBenchmark(t, srv, `{"algorithm":"naive","seed": 5,"request_count": 200}`)
+	final := pollBenchmark(t, srv, start.JobID)
+	if final.Status != statusDone {
+		t.Fatalf("status = %q, want done (body: %s)", final.Status, final.Error)
+	}
+	if got := atomic.LoadInt32(&seamHits); got != 0 {
+		t.Errorf("sweep seam hit %d times in single mode, want 0 (single mode bypasses the seam)", got)
+	}
+	if final.Report == nil || len(final.Report.Cells) == 0 {
+		t.Fatalf("single-mode report missing cells: %+v", final.Report)
+	}
+	if final.Report.Cells[0].Result.Router != "naive" {
+		t.Errorf("cell[0].Router = %q, want the named router %q", final.Report.Cells[0].Result.Router, "naive")
+	}
+	if final.Report.Cells[0].Result.DemandLevel != "single" {
+		t.Errorf("DemandLevel = %q, want %q", final.Report.Cells[0].Result.DemandLevel, "single")
+	}
+}
+
+// TestBenchmarkSingleModeParamsChangeResult is the §R6 acceptance criterion at the
+// API level: two requests differing ONLY in capacity_scale return DIFFERENT results —
+// the param is no longer inert. (The cache keys differ, so these are distinct jobs.)
+func TestBenchmarkSingleModeParamsChangeResult(t *testing.T) {
+	srv := newTestServer(t)
+
+	run := func(body string) benchmark.SweepCell {
+		t.Helper()
+		start := startBenchmark(t, srv, body)
+		final := pollBenchmark(t, srv, start.JobID)
+		if final.Status != statusDone {
+			t.Fatalf("body %s: status = %q (err %q)", body, final.Status, final.Error)
+		}
+		if final.Report == nil || len(final.Report.Cells) == 0 {
+			t.Fatalf("body %s: report missing cells", body)
+		}
+		return final.Report.Cells[0]
+	}
+
+	base := run(`{"algorithm":"naive","seed": 9,"request_count": 300,"capacity_scale": 1.0}`)
+	tighter := run(`{"algorithm":"naive","seed": 9,"request_count": 300,"capacity_scale": 0.5}`)
+
+	if base.CapacityScale == tighter.CapacityScale {
+		t.Fatalf("cells share capacity_scale %v — params did not flow through", base.CapacityScale)
+	}
+	if base.Result.TotalNetworkTimeS == tighter.Result.TotalNetworkTimeS {
+		t.Errorf("capacity_scale change did not move the realized total (%v) — the §R6 param is inert",
+			base.Result.TotalNetworkTimeS)
+	}
+}
+
 // TestRouteEmptyPath asserts the documented from==to case: an origin that snaps
 // to the destination node is a clean 200 with an empty segment list (a path to
 // where you already are), not an error, and a finite (non-NaN) cost.

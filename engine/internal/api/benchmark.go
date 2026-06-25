@@ -52,21 +52,32 @@ const (
 // body and the cache key — two POSTs with the same tuple return the SAME job
 // (the cached result) rather than re-running an expensive systemoptimal sweep.
 //
-// Note on which fields the #91 harness actually consumes: benchmark.RunSweep is
-// the canonical six-router demand sweep — it runs ALL routers across the four v/c
-// levels and derives the BPR's α/β/capacity-scale itself (it SWEEPS capacity
-// scale as its axis). Seed and RequestCount are what it reads; Algorithm, Alpha,
-// Beta, and CapacityScale are carried in the tuple so the cache key matches the
-// §R6 contract and the response echoes the request, but they parameterize the
-// CACHE IDENTITY, not RunSweep's internal sweep — today they are validated and
-// keyed on but DO NOT change the sweep's result (two POSTs differing only in
-// alpha run identical sweeps under distinct cache entries). When a future
-// single-algorithm benchmark mode lands, those fields drive it. docs/api.md flags
-// them as accepted-but-inert today. This keeps the endpoint a faithful
-// composition over the existing harness rather than a reimplementation.
+// The `algorithm` field DISPATCHES between two modes, and every field flows into
+// the result it selects — none are inert:
+//
+//   - algorithm == "all" (the default when omitted/empty) runs the canonical #91
+//     six-router demand sweep, benchmark.RunSweep: it routes ALL six routers across
+//     the FOUR v/c levels and SWEEPS cost.BPR.CapacityScale as its axis, so it reads
+//     Seed and RequestCount and derives α/β/capacity-scale per level itself. In this
+//     mode the request's α/β/CapacityScale do NOT alter the grid (the sweep owns
+//     those); they remain part of the cache identity so the response echoes the
+//     request faithfully. This path is unchanged and regression-safe.
+//
+//   - algorithm ∈ benchmark.RouterOrder (naive, reactive, incremental, msa,
+//     systemoptimal, multipath) runs SINGLE-ALGORITHM mode, benchmark.RunSingle: it
+//     builds ONE cost.BPR from the request's α/β/CapacityScale and routes that one
+//     named router (plus the systemoptimal reference, for an honest PoA) at a single
+//     level PINNED to the client's CapacityScale. Here α/β/CapacityScale actually
+//     drive the cost function — two runs differing only in those params return
+//     DIFFERENT metrics. This is the surface the Phase-6 parameter sliders (#104)
+//     expose.
+//
+// Any other `algorithm` value is rejected at validate() time as a clean 400, never
+// run. This keeps the endpoint a faithful composition over the existing harness
+// (RunSweep / RunSingle) rather than a reimplementation; see docs/api.md.
 type benchmarkParams struct {
-	// Algorithm is the router under test ("" / "all" means the full six-router
-	// sweep, the harness default).
+	// Algorithm dispatches the run: "" / "all" is the full six-router sweep (the
+	// harness default); one of benchmark.RouterOrder selects single-algorithm mode.
 	Algorithm string `json:"algorithm"`
 	// Alpha and Beta are the BPR coefficients (defaults 0.15 / 4 when zero).
 	Alpha float64 `json:"alpha"`
@@ -116,6 +127,12 @@ func (p benchmarkParams) cacheKey() string {
 // a non-positive capacity scale; RunSweep would mis-size a negative count).
 func (p benchmarkParams) validate() error {
 	d := p.withDefaults()
+	// algorithm must be "all" (the six-router sweep) or one of the six router names
+	// (single-algorithm mode). Anything else is a client typo, rejected here as a 400
+	// rather than dispatched into a run that has no such mode.
+	if d.Algorithm != "all" && !benchmark.IsRouter(d.Algorithm) {
+		return fmt.Errorf("algorithm must be \"all\" or one of %s", strings.Join(benchmark.RouterOrder, ", "))
+	}
 	if d.Alpha < 0 {
 		return fmt.Errorf("alpha must be >= 0")
 	}
@@ -344,21 +361,32 @@ func (s *Server) handleBenchmark(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// sweepFunc is the seam runBenchmarkAsync runs the harness through: in production
-// it is benchmark.RunSweep, and tests substitute a stub to exercise the failure,
-// panic, and capacity paths without launching a real (slow) six-router sweep.
+// sweepFunc is the seam runBenchmarkAsync runs the "all" (six-router sweep) path
+// through: in production it is benchmark.RunSweep, and tests substitute a stub to
+// exercise the failure, panic, and capacity paths without launching a real (slow)
+// six-router sweep. It deliberately carries ONLY (seed, count) — the sweep owns
+// α/β/capacity_scale (it sweeps capacity_scale as its axis), so widening this seam
+// would only add params the sweep ignores. Single-algorithm mode does NOT go through
+// this seam: it calls benchmark.RunSingle directly with the full param tuple (see
+// runBenchmarkAsync), so the seam stays exactly the shape the existing tests stub.
 type sweepFunc func(ctx context.Context, g graph.Graph, seed int64, count int) ([]benchmark.SweepCell, error)
 
-// defaultSweep is the production sweep: the canonical #91 six-router demand sweep.
+// defaultSweep is the production "all" path: the canonical #91 six-router demand sweep.
 var defaultSweep sweepFunc = benchmark.RunSweep
 
 // runBenchmarkAsync launches the harness for the job in a goroutine and records
-// the result on completion. It uses context.Background() (NOT the request's
-// context) so a client disconnecting after the immediate job-id response does not
-// cancel an in-flight sweep — the job runs to completion and is cached for the
-// next poll. A panic in the harness is recovered and recorded as a failed job
-// rather than crashing the server. The caller has already reserved a sweep slot;
-// this goroutine releases it on exit so the next queued POST can start.
+// the result on completion. It DISPATCHES on params.Algorithm: "all" runs the
+// six-router sweep through the s.sweepFn seam (so the existing failure/panic/capacity
+// tests stub exactly that path); any other algorithm — validated to be one of
+// benchmark.RouterOrder — runs single-algorithm mode via benchmark.RunSingle with the
+// full α/β/capacity_scale tuple, so those params actually drive the cost function.
+//
+// It uses context.Background() (NOT the request's context) so a client disconnecting
+// after the immediate job-id response does not cancel an in-flight run — the job runs
+// to completion and is cached for the next poll. A panic in the harness is recovered
+// and recorded as a failed job rather than crashing the server. The caller has
+// already reserved a sweep slot; this goroutine releases it on exit so the next
+// queued POST can start.
 func (s *Server) runBenchmarkAsync(id string, params benchmarkParams) {
 	go func() {
 		defer func() {
@@ -369,16 +397,31 @@ func (s *Server) runBenchmarkAsync(id string, params benchmarkParams) {
 			}
 		}()
 
-		cells, err := s.sweepFn(context.Background(), s.graph, params.Seed, params.RequestCount)
+		cells, err := s.runBenchmarkCells(params)
 		if err != nil {
-			s.logger.Error("benchmark sweep failed", "endpoint", endpointBenchmark, "job_id", id, "err", err)
+			s.logger.Error("benchmark run failed", "endpoint", endpointBenchmark, "job_id", id, "err", err)
 			s.jobs.complete(id, nil, "benchmark failed")
 			return
 		}
 		report := benchmark.BuildReport(params.Seed, params.RequestCount, cells)
 		s.jobs.complete(id, &report, "")
-		s.logger.Info("benchmark job complete", "endpoint", endpointBenchmark, "job_id", id, "cells", len(cells))
+		s.logger.Info("benchmark job complete", "endpoint", endpointBenchmark, "job_id", id,
+			"algorithm", params.Algorithm, "cells", len(cells))
 	}()
+}
+
+// runBenchmarkCells produces the comparison cells for a (validated) job's params,
+// dispatching on Algorithm. "all" goes through the s.sweepFn test seam (the
+// six-router sweep, regression-safe); a named router runs single-algorithm mode,
+// building one BPR from the client's α/β/capacity_scale. params.Algorithm is assumed
+// already defaulted+validated by the handler, so RunSingle only ever sees a name in
+// benchmark.RouterOrder here.
+func (s *Server) runBenchmarkCells(params benchmarkParams) ([]benchmark.SweepCell, error) {
+	if params.Algorithm == "all" {
+		return s.sweepFn(context.Background(), s.graph, params.Seed, params.RequestCount)
+	}
+	return benchmark.RunSingle(context.Background(), s.graph, params.Seed, params.RequestCount,
+		params.Alpha, params.Beta, params.CapacityScale, params.Algorithm)
 }
 
 // benchmarkStatusResponse is the GET /benchmark/{id} body: the job's status, the
