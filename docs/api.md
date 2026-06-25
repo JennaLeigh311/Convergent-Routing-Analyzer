@@ -35,9 +35,10 @@ The base URL is the configured listen address (`ROUTING_SERVER_ADDR`, default
 
 The routing counter `routing_requests_total{endpoint,outcome}` is incremented for
 every handled routing request, partitioned by the logical endpoint (`route`,
-`compare`, `congestion`, `graph`, `benchmark`, `benchmark_status`) and a coarse
-`outcome` (`ok` | `error`). It is registered against the same registry `/metrics`
-scrapes.
+`compare`, `congestion`, `graph`, `benchmark`, `benchmark_status`, `stream`) and a
+coarse `outcome` (`ok` | `error`). It is registered against the same registry
+`/metrics` scrapes. The `stream` endpoint records one `ok`/`error` per WebSocket
+connection attempt (not per frame).
 
 ---
 
@@ -262,8 +263,135 @@ An unknown job id is a `404`; a missing/malformed id is a `400`; a non-`GET` is 
 
 ---
 
-## WebSocket congestion stream
+## `GET /stream` — WebSocket multi-algorithm parallel simulation
 
-The live congestion stream (snapshot + delta protocol, §R6) is **not** part of this
-surface. It lands in a later issue (#93) once the `WriteTimeout` caveat on the
-server (long-lived connections do not want a write deadline) is addressed.
+The headline live view's data source (§R6). On connect, `/stream` upgrades to a
+WebSocket and runs **all six routers in parallel** over the §R5 mesoscopic simulator
+from a chosen start time-of-day/date, then streams each algorithm's evolving
+congestion — one **snapshot** per algorithm, then **bucketed deltas** at a fixed
+server tick — alongside each algorithm's running **compute-time** and
+**realized-traffic** metrics. The frontend keeps a `Map<segment_id, bucket>` per
+algorithm and re-colors via deck.gl `updateTriggers` without rebuilding geometry.
+
+The six algorithms are `naive`, `reactive`, `incremental`, `msa`, `systemoptimal`,
+`multipath` (the canonical `RouterOrder`). All six run the **same** deterministic OD
+set over the **same** immutable graph, so their streams are directly comparable.
+
+### Query parameters
+
+| Param       | Default                | Description                                                                 |
+| ----------- | ---------------------- | --------------------------------------------------------------------------- |
+| `start`     | `2026-06-22T08:00:00Z` | Simulation start time-of-day/date (the slider value), **RFC3339**.          |
+| `speed`     | `60`                   | **Replay speed**: simulated seconds per wall-clock second (`(0, 100000]`).   |
+| `tick_hz`   | `1`                    | **Fixed server tick**: wall-clock frames per second (`[0.5, 2]`).           |
+| `seed`      | `0`                    | RNG seed — the run is byte-identical per seed (modulo wall clock).           |
+| `count`     | `1000`                 | Per-run OD request count R (`[0, 20000]`).                                   |
+| `cap_scale` | `1.0`                  | §R3 capacity knob; v/c scales inversely with it (`> 0`).                     |
+
+`count` is capped lower than the batch `/benchmark` sweep's `100000`: each `/stream`
+connect runs six full simulations and routes R requests six times, so the live
+endpoint uses a tighter ceiling to bound the per-connection work an unauthenticated
+client can demand.
+
+A malformed/out-of-range parameter is a clean `400` **before** the upgrade (no socket
+is opened); a non-`GET` is a `405`. Concurrent live runs are bounded: each connect
+launches six parallel simulations, so a connect that would exceed the server's stream
+capacity is refused with a `503` **before** the upgrade (retry shortly), mirroring the
+`/benchmark` admission control.
+
+### The time model (two clocks, two knobs that relate them)
+
+Two clocks are deliberately **decoupled**, with two knobs mapping one onto the other:
+
+1. **Simulated clock** — the simulator's internal Δt (≈30 s/tick): how congestion
+   builds and drains in the model. `start` sets its origin; shifting `start` shifts
+   every frame's `sim_time` by the same offset, observably, without changing the
+   relative dynamics.
+2. **Wall clock** — real time on the server.
+
+- **Replay speed** (`speed`) — how many **simulated** seconds elapse per wall-clock
+  second (a **ratio** between the two clocks, not a clock itself). `speed=60` plays an
+  hour of simulation in a wall-clock minute. It **compresses simulated time**; it does
+  **not** change the message rate.
+- **Fixed server tick** (`tick_hz`) — the wall-clock cadence at which delta frames
+  are emitted (1–2 Hz). It stays **fixed regardless of `speed`**: a higher speed
+  advances the simulated clock further between frames (each delta carries a bigger
+  jump, and intermediate sim ticks are coalesced into the latest one), but frames
+  still arrive once per server tick.
+
+The simulation runs to completion off the socket's hot path (the simulator's
+per-tick observer only buffers in memory — it never blocks on the network), and a
+separate replay loop paces the **output** by the server tick. A slow or stalled
+client therefore can never stall — or deadlock — a simulation; it only slows its own
+delivery (each frame write has its own short deadline). The stream ends with a clean
+WebSocket close once every algorithm's run has drained.
+
+### Bucketing scheme
+
+v/c is quantized to **24 buckets of width 0.1**: bucket `b` covers v/c ∈
+`[0.1·b, 0.1·(b+1))`. Bucket `0` is free-flow (v/c < 0.1); the **top bucket `23` is
+saturating** — it absorbs everything at v/c ≥ 2.3, so an arbitrarily over-capacity
+edge maps to a finite bucket. A **delta carries a segment only when its bucket
+changed**, so sub-bucket jitter between ticks produces no frame and deltas stay
+small. 24 buckets covers the v/c ∈ [0, 2.3+] band at fine-enough resolution that
+color steps read smoothly.
+
+### Frames
+
+Every frame is a JSON text message. **Segments are keyed by `segment_id`** (the
+frozen §1 contract), never by the internal `EdgeID`, so a frame joins to `/graph`
+geometry exactly like `/congestion`. Segments/changes are sorted by `segment_id` for
+a deterministic, diffable frame.
+
+**`snapshot`** — one per algorithm on connect: the algorithm's **full** bucketed
+state at its first tick. The client seeds its `Map<segment_id, bucket>` from it.
+
+```json
+{
+  "type": "snapshot",
+  "algo": "reactive",
+  "tick": 1,
+  "sim_time": "2026-06-22T08:00:30Z",
+  "segments": [
+    { "segment_id": "905512:0:F", "vc": 0.42, "bucket": 4 }
+  ],
+  "metrics": { "compute_ms": 0.18, "realized_total_s": 1234.5, "poa": 1.0, "in_flight": 120, "completed": 0 }
+}
+```
+
+**`delta`** — subsequent frames: **only** the segments whose v/c **bucket** changed
+since this algorithm's last frame. Applying `snapshot` + all `delta`s in order
+reproduces the full bucketed state at every tick (the delta-correctness invariant the
+tests assert).
+
+```json
+{
+  "type": "delta",
+  "algo": "reactive",
+  "tick": 7,
+  "sim_time": "2026-06-22T08:03:30Z",
+  "changed": [
+    { "segment_id": "905512:0:F", "vc": 0.91, "bucket": 9 }
+  ],
+  "metrics": { "compute_ms": 1.04, "realized_total_s": 1402.7, "poa": 1.13, "in_flight": 240, "completed": 30 }
+}
+```
+
+### Per-algorithm metric fields (`metrics`)
+
+Carried on **every** frame, updated per tick, matching the #89/#90 evaluators:
+
+| Field              | Meaning                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| `compute_ms`       | **Cumulative** wall-clock ms spent in `router.Route` so far — answers *"fastest to route"*.       |
+| `realized_total_s` | Realized **total network time** (s) at this tick — `routing.TotalNetworkTime` over the tick load. |
+| `poa`              | Realized-time **Price of Anarchy** vs. `systemoptimal` **at the same tick** — *"minimizes traffic"*. |
+| `in_flight`        | Vehicles on the network at this tick.                                                             |
+| `completed`        | Cumulative vehicles that have finished their trip.                                                |
+
+`poa` is computed by pairing this algorithm's `realized_total_s` with
+`systemoptimal`'s realized total **at the same tick** (so `systemoptimal`'s own `poa`
+is `1`). Pairing same-tick totals — rather than reading whichever total a concurrent
+goroutine happened to publish first — is what keeps the stream deterministic: at a
+fixed `seed` the whole trace (ticks, `sim_time`, per-segment buckets, and metrics) is
+byte-identical run to run, modulo wall-clock `compute_ms`.

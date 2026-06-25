@@ -97,6 +97,9 @@ func TestNewMuxRoutes(test1 *testing.T) {
 			{http.MethodGet, "/congestion"},
 			{http.MethodGet, "/graph"},
 			{http.MethodPost, "/benchmark"},
+			// A plain GET (no WebSocket upgrade headers) fails the upgrade with a 4xx,
+			// not a 404 — which proves /stream is mounted on the real mux.
+			{http.MethodGet, "/stream"},
 		}
 		for _, tc := range cases {
 			req, err := http.NewRequest(tc.method, server.URL+tc.path, strings.NewReader(""))

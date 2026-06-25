@@ -74,6 +74,11 @@ type Server struct {
 	// launching a sweep and the goroutine releases it on completion, so distinct
 	// tuples cannot spawn unbounded concurrent CPU-heavy sweeps.
 	sweepSlots chan struct{}
+	// streamSlots is the analogous counting semaphore bounding concurrent live
+	// /stream runs to maxConcurrentStreams: a connect acquires a slot before the
+	// WebSocket upgrade and releases it when the connection ends, so unauthenticated
+	// clients cannot spawn unbounded concurrent six-sim parallel runs.
+	streamSlots chan struct{}
 	// sweepFn is the benchmark seam (defaultSweep = benchmark.RunSweep) tests
 	// override to exercise the failure / panic / capacity paths.
 	sweepFn sweepFunc
@@ -160,6 +165,7 @@ func NewServer(roadGraph graph.Graph, geom map[domain.SegmentID]graph.LineString
 		reactive:      routing.NewReactiveRouter(roadGraph, bpr, provider),
 		jobs:          newJobStore(maxBenchmarkJobs),
 		sweepSlots:    make(chan struct{}, maxConcurrentSweeps),
+		streamSlots:   make(chan struct{}, maxConcurrentStreams),
 		sweepFn:       defaultSweep,
 		metrics:       routingMetrics,
 		logger:        logger,
@@ -179,6 +185,7 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/graph", s.handleGraph)
 	mux.HandleFunc("/benchmark", s.handleBenchmark)
 	mux.HandleFunc("/benchmark/", s.handleBenchmarkStatus)
+	mux.HandleFunc("/stream", s.handleStream)
 	return mux
 }
 
