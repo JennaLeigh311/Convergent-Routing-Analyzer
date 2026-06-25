@@ -14,6 +14,10 @@ describe("fmtMetric", () => {
     expect(fmtMetric(42, 0)).toBe("42");
   });
 
+  it("defaults to 2 digits when precision is omitted (the common call form)", () => {
+    expect(fmtMetric(1.236)).toBe("1.24");
+  });
+
   it("returns an em dash for null, undefined, or non-finite input", () => {
     expect(fmtMetric(null)).toBe("—");
     expect(fmtMetric(undefined)).toBe("—");
@@ -33,6 +37,11 @@ describe("relativePoa", () => {
     expect(relativePoa(1.5, null)).toBeNull();
     expect(relativePoa(1.5, 0)).toBeNull();
     expect(relativePoa(Number.NaN, 1)).toBeNull();
+  });
+
+  it("returns null when the reference itself is non-finite", () => {
+    expect(relativePoa(1.5, Number.NaN)).toBeNull();
+    expect(relativePoa(1.5, Number.POSITIVE_INFINITY)).toBeNull();
   });
 });
 

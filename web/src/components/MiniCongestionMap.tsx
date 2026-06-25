@@ -12,12 +12,10 @@
 
 import { useMemo } from "react";
 import DeckGL from "@deck.gl/react";
-import { PathLayer } from "@deck.gl/layers";
-import type { Color } from "@deck.gl/core";
 
 import { ALGO_LABELS } from "../lib/algoLabels";
-import { bucketColor } from "../lib/colorRamp";
-import { initialViewState, type GraphGeometry, type SegmentGeometry } from "../lib/graph";
+import { buildCongestionLayer } from "../lib/congestionLayer";
+import { initialViewState, type GraphGeometry } from "../lib/graph";
 import { REFERENCE_ALGO, fmtMetric } from "../lib/metrics";
 import type { Algo } from "../lib/protocol";
 import { useAppStore } from "../store";
@@ -35,24 +33,14 @@ export function MiniCongestionMap({ geometry, algo }: Props) {
   const view = useMemo(() => initialViewState(geometry), [geometry]);
   const isReference = algo === REFERENCE_ALGO;
 
-  // Same PathLayer recipe as CongestionMap: immutable `data`, recolor via getColor +
-  // updateTriggers keyed on the bucket-map reference. No geometry rebuild on a delta.
-  const layer = new PathLayer<SegmentGeometry>({
+  // Same recolor-only recipe as the full map (shared — see lib/congestionLayer.ts),
+  // but thinner strokes and non-pickable since small multiples are read-only.
+  const layer = buildCongestionLayer({
     id: `congestion-paths-${algo}`,
-    data: geometry.segments,
+    segments: geometry.segments,
+    buckets,
+    width: 2,
     pickable: false,
-    widthUnits: "pixels",
-    getWidth: 2,
-    capRounded: true,
-    jointRounded: true,
-    getPath: (d) => d.path,
-    getColor: (d): Color => {
-      const [r, g, b] = bucketColor(buckets.get(d.segmentId) ?? 0);
-      return [r, g, b, 230];
-    },
-    updateTriggers: {
-      getColor: buckets,
-    },
   });
 
   return (

@@ -27,6 +27,9 @@ const STATUS_LABEL: Record<string, string> = {
 export default function App() {
   const { geometry, loading, error: graphError } = useGraph();
 
+  // `view` is transient render-branch state local to App (no other component reads it),
+  // so it stays in useState rather than the store — unlike `selectedAlgo`, which is
+  // live-data-adjacent store state from #100 that the socket/store layer owns.
   const [view, setView] = useState<AppView>("single");
 
   const selectedAlgo = useAppStore((s) => s.selectedAlgo);

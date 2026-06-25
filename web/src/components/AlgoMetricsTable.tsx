@@ -21,6 +21,8 @@ function AlgoMetricsRow({ algo }: { algo: Algo }) {
   const metrics = useAppStore((s) => s.congestion.metrics[algo]);
   const refPoa = useAppStore((s) => s.congestion.metrics[REFERENCE_ALGO]?.poa ?? null);
   const isReference = algo === REFERENCE_ALGO;
+  // The reference row computes against itself (→ 1.00× once it has data, — before),
+  // so it flows through the same formatter as every other row — no hardcoded literal.
   const rel = relativePoa(metrics?.poa ?? null, refPoa);
 
   return (
@@ -32,7 +34,7 @@ function AlgoMetricsRow({ algo }: { algo: Algo }) {
       <td>{fmtMetric(metrics?.compute_ms)}</td>
       <td>{fmtMetric(metrics?.realized_total_s, 1)}</td>
       <td>{fmtMetric(metrics?.poa, 3)}</td>
-      <td className="rel-poa">{isReference ? "1.00×" : fmtRelativePoa(rel)}</td>
+      <td className="rel-poa">{fmtRelativePoa(rel)}</td>
       <td>{metrics ? metrics.in_flight : "—"}</td>
       <td>{metrics ? metrics.completed : "—"}</td>
     </tr>

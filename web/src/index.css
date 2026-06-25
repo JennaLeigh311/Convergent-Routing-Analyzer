@@ -285,7 +285,8 @@ body {
   border-bottom: 1px solid #21262f;
 }
 .metrics-table .metrics-row.reference {
-  background: rgba(78, 161, 255, 0.1);
+  /* 10%-alpha accent — derived from --accent so it can't drift if the token retunes. */
+  background: rgb(from var(--accent) r g b / 0.1);
 }
 .metrics-table .rel-poa {
   color: var(--accent);
