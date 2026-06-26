@@ -57,12 +57,12 @@ function BarGroup({
             <div
               className="poa-bar-fill"
               style={{
-                width: max > 0 ? `${(value / max) * 100}%` : "0%",
+                width: max > 0 && Number.isFinite(value) ? `${(value / max) * 100}%` : "0%",
                 background: ROUTE_CSS[router] ?? "var(--muted)",
               }}
             />
           </div>
-          <span className="poa-bar-value">{value.toFixed(digits)}</span>
+          <span className="poa-bar-value">{fmtMetric(value, digits)}</span>
         </div>
       ))}
     </div>

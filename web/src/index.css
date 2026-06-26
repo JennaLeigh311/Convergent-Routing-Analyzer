@@ -340,12 +340,8 @@ body {
   font-size: 0.8rem;
   font-weight: 600;
 }
-.ba-end.naive {
-  color: rgb(231, 76, 60);
-}
-.ba-end.reactive {
-  color: rgb(46, 204, 113);
-}
+/* .ba-end colors are driven inline from ROUTE_CSS (lib/routeStyle) so the swipe legend
+   can never drift from the map overlays / bar charts — the single color source. */
 .ba-costs {
   display: flex;
   justify-content: space-between;

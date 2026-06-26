@@ -115,8 +115,9 @@ export interface BenchmarkReport {
 
 // ---- HTTP ---------------------------------------------------------------------
 
-/** POST /benchmark: start (or fetch the cached) sweep and return its job id. */
-export async function startBenchmark(
+/** POST /benchmark: start (or fetch the cached) sweep and return its job id.
+ * Internal to runBenchmark; re-export if #104's controls ever need it directly. */
+async function startBenchmark(
   params: BenchmarkParams = {},
   signal?: AbortSignal,
 ): Promise<StartResponse> {
@@ -132,8 +133,9 @@ export async function startBenchmark(
   return (await res.json()) as StartResponse;
 }
 
-/** GET /benchmark/{id}: poll one job's status (and report, once done). */
-export async function fetchBenchmarkStatus(
+/** GET /benchmark/{id}: poll one job's status (and report, once done).
+ * Internal to runBenchmark; re-export if #104's controls ever need it directly. */
+async function fetchBenchmarkStatus(
   jobId: string,
   signal?: AbortSignal,
 ): Promise<StatusResponse> {

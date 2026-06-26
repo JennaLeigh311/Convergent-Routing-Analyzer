@@ -119,6 +119,57 @@ describe("runBenchmark", () => {
     );
     await expect(runBenchmark({}, { pollIntervalMs: 1 })).rejects.toThrow(/benchmark failed/);
   });
+
+  it("rejects after maxPolls without finishing, and polls the job id", async () => {
+    const start: StartResponse = {
+      job_id: "stuck9",
+      status: "running",
+      params: { algorithm: "all", alpha: 0.15, beta: 4, capacity_scale: 1, request_count: 200, seed: 0 },
+    };
+    const running: StatusResponse = { job_id: "stuck9", status: "running", params: start.params };
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(start)); // POST /benchmark
+    fetchMock.mockImplementation(async () => jsonResponse(running)); // a fresh response each poll
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(runBenchmark({}, { pollIntervalMs: 1, maxPolls: 2 })).rejects.toThrow(/within 2 polls/);
+    // The poll GET must carry the started job's id in the path (calls[1] is the first poll).
+    expect(String(fetchMock.mock.calls[1][0])).toContain("stuck9");
+  });
+
+  it("rejects when a job reports done but carries no report", async () => {
+    const start: StartResponse = {
+      job_id: "d",
+      status: "running",
+      params: { algorithm: "all", alpha: 0.15, beta: 4, capacity_scale: 1, request_count: 200, seed: 0 },
+    };
+    const doneNoReport: StatusResponse = { job_id: "d", status: "done", params: start.params }; // report omitted
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(jsonResponse(start)).mockResolvedValueOnce(jsonResponse(doneNoReport)),
+    );
+    await expect(runBenchmark({}, { pollIntervalMs: 1 })).rejects.toThrow(/no report/);
+  });
+
+  it("rejects with AbortError when the signal aborts between polls", async () => {
+    const ctrl = new AbortController();
+    const start: StartResponse = {
+      job_id: "abort1",
+      status: "running",
+      params: { algorithm: "all", alpha: 0.15, beta: 4, capacity_scale: 1, request_count: 200, seed: 0 },
+    };
+    const running: StatusResponse = { job_id: "abort1", status: "running", params: start.params };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(start)) // POST /benchmark
+      .mockImplementationOnce(async () => {
+        ctrl.abort(); // abort while the loop is about to sleep before the next poll
+        return jsonResponse(running);
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // sleep() sees the already-aborted signal and rejects, surfacing the unmount-cancel path.
+    await expect(runBenchmark({}, { signal: ctrl.signal, pollIntervalMs: 50 })).rejects.toThrow(/abort/i);
+  });
 });
 
 describe("peakPoaLevel", () => {

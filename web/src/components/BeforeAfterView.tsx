@@ -33,7 +33,7 @@ import {
   type Coordinate,
   type RoutePathSegment,
 } from "../lib/compare";
-import { ROUTE_RGB, ROUTE_RGB_FALLBACK } from "../lib/routeStyle";
+import { ROUTE_CSS, ROUTE_RGB, ROUTE_RGB_FALLBACK } from "../lib/routeStyle";
 import { useCompare } from "../hooks/useCompare";
 import { useBenchmark } from "../hooks/useBenchmark";
 import { PoaPanel } from "./PoaPanel";
@@ -43,6 +43,11 @@ interface Props {
 }
 
 const BASE_COLOR: Color = [42, 47, 61, 180]; // dim network context under the overlays
+
+// The off-extreme opacity each route fades to (never fully invisible) so both routes
+// stay faintly legible at the slider ends. The on-extreme route is at full opacity.
+const ROUTE_OPACITY_FLOOR = 0.15;
+const ROUTE_OPACITY_SPAN = 1 - ROUTE_OPACITY_FLOOR;
 
 /** A solid route overlay PathLayer, faded by the slider via layer opacity. */
 function routeLayer(id: string, router: string, paths: RoutePathSegment[], opacity: number): PathLayer<RoutePathSegment> {
@@ -65,52 +70,64 @@ export const BeforeAfterView = memo(function BeforeAfterView({ geometry }: Props
   const [blend, setBlend] = useState(0.5);
 
   const view = useMemo(() => initialViewState(geometry), [geometry]);
-  const index = useMemo(() => buildSegmentIndex(geometry), [geometry]);
-  const od = useMemo(() => defaultOD(geometry.bounds), [geometry]);
+  const segmentIndex = useMemo(() => buildSegmentIndex(geometry), [geometry]);
+  const od = useMemo(() => defaultOD(geometry.bounds), [geometry.bounds]);
 
   const { data, loading, error } = useCompare(od);
   const benchmark = useBenchmark();
 
   const naivePaths = useMemo(
-    () => (data ? resolveRoutePath(index, data.naive.segments) : []),
-    [index, data],
+    () => (data ? resolveRoutePath(segmentIndex, data.naive.segments) : []),
+    [segmentIndex, data],
   );
   const reactivePaths = useMemo(
-    () => (data ? resolveRoutePath(index, data.reactive.segments) : []),
-    [index, data],
+    () => (data ? resolveRoutePath(segmentIndex, data.reactive.segments) : []),
+    [segmentIndex, data],
+  );
+
+  // The dim base network and the OD endpoints never depend on the slider, so they are
+  // memoized off geometry / data and excluded from the blend-driven memo below — making
+  // "only the two route overlays change as the slider moves" literally true.
+  const baseLayer = useMemo(
+    () =>
+      new PathLayer({
+        id: "ba-base",
+        data: geometry.segments,
+        widthUnits: "pixels",
+        getWidth: 1.5,
+        getPath: (d) => d.path,
+        getColor: BASE_COLOR,
+      }),
+    [geometry],
+  );
+  const endpointsLayer = useMemo(
+    () =>
+      data
+        ? new ScatterplotLayer<Coordinate>({
+            id: "ba-endpoints",
+            data: [data.from, data.to],
+            getPosition: (d) => [d.lon, d.lat],
+            getRadius: 6,
+            radiusUnits: "pixels",
+            getFillColor: [230, 232, 238, 255] as Color,
+            stroked: true,
+            getLineColor: [11, 13, 18, 255] as Color,
+            lineWidthUnits: "pixels",
+            getLineWidth: 1.5,
+          })
+        : null,
+    [data],
   );
 
   const layers = useMemo(() => {
-    const base = new PathLayer({
-      id: "ba-base",
-      data: geometry.segments,
-      widthUnits: "pixels",
-      getWidth: 1.5,
-      getPath: (d) => d.path,
-      getColor: BASE_COLOR,
-    });
-    const endpoints = data
-      ? new ScatterplotLayer<Coordinate>({
-          id: "ba-endpoints",
-          data: [data.from, data.to],
-          getPosition: (d) => [d.lon, d.lat],
-          getRadius: 6,
-          radiusUnits: "pixels",
-          getFillColor: [230, 232, 238, 255] as Color,
-          stroked: true,
-          getLineColor: [11, 13, 18, 255] as Color,
-          lineWidthUnits: "pixels",
-          getLineWidth: 1.5,
-        })
-      : null;
-    const out: Layer[] = [base];
+    const out: Layer[] = [baseLayer];
     // naive fades out as blend -> 1; reactive fades in. A tiny floor keeps each route
     // faintly visible at the extremes so the contrast is always legible.
-    out.push(routeLayer("ba-naive", "naive", naivePaths, 1 - blend * 0.85));
-    out.push(routeLayer("ba-reactive", "reactive", reactivePaths, 0.15 + blend * 0.85));
-    if (endpoints) out.push(endpoints);
+    out.push(routeLayer("ba-naive", "naive", naivePaths, 1 - blend * ROUTE_OPACITY_SPAN));
+    out.push(routeLayer("ba-reactive", "reactive", reactivePaths, ROUTE_OPACITY_FLOOR + blend * ROUTE_OPACITY_SPAN));
+    if (endpointsLayer) out.push(endpointsLayer);
     return out;
-  }, [geometry, naivePaths, reactivePaths, blend, data]);
+  }, [baseLayer, endpointsLayer, naivePaths, reactivePaths, blend]);
 
   return (
     <div className="beforeafter">
@@ -126,8 +143,8 @@ export const BeforeAfterView = memo(function BeforeAfterView({ geometry }: Props
 
         <div className="ba-slider">
           <div className="ba-slider-ends">
-            <span className="ba-end naive">naive (before)</span>
-            <span className="ba-end reactive">reactive (after)</span>
+            <span className="ba-end" style={{ color: ROUTE_CSS.naive }}>naive (before)</span>
+            <span className="ba-end" style={{ color: ROUTE_CSS.reactive }}>reactive (after)</span>
           </div>
           <input
             type="range"
