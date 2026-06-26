@@ -292,6 +292,193 @@ body {
   color: var(--accent);
 }
 
+/* Before/After view (#102): the route map on the left, the PoA side panel on the
+   right. The map holds the deck.gl canvas plus the floating blend slider. */
+.beforeafter {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 320px;
+}
+
+.beforeafter-map {
+  position: relative;
+  background: #0b0d12;
+  overflow: hidden;
+}
+
+.beforeafter-panel {
+  border-left: 1px solid #2a2f3d;
+  background: var(--panel);
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+/* The floating blend (swipe) control over the map. */
+.ba-slider {
+  position: absolute;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  width: min(440px, 80%);
+  background: rgb(from var(--panel) r g b / 0.92);
+  border: 1px solid #2a2f3d;
+  border-radius: 10px;
+  padding: 0.6rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.ba-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.ba-slider-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+/* .ba-end colors are driven inline from ROUTE_CSS (lib/routeStyle) so the swipe legend
+   can never drift from the map overlays / bar charts — the single color source. */
+.ba-costs {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* PoA side panel: headline number, per-level PoA, bar charts, improvement. */
+.poa-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+.poa-loading {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.poa-headline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 0.8rem 1rem;
+  background: rgb(from var(--accent) r g b / 0.08);
+}
+.poa-headline-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.poa-headline-value {
+  font-size: 2.6rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.poa-headline-sub {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.poa-by-level-title,
+.poa-bars-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+}
+.poa-by-level dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.poa-level-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+}
+.poa-level-row dt {
+  color: var(--text);
+}
+.poa-level-vc {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.poa-level-row dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.poa-bargroup {
+  margin-bottom: 0.6rem;
+}
+.poa-bargroup-label {
+  font-size: 0.78rem;
+  color: var(--text);
+  margin-bottom: 0.2rem;
+}
+.poa-bar-row {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr 3rem;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.12rem 0;
+}
+.poa-bar-name {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.poa-bar-track {
+  height: 10px;
+  background: #21262f;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.poa-bar-fill {
+  height: 100%;
+  border-radius: 5px;
+  min-width: 2px;
+}
+.poa-bar-value {
+  font-size: 0.72rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.poa-improvement {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  border-top: 1px solid #2a2f3d;
+  padding-top: 0.8rem;
+}
+.poa-improvement-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.poa-improvement-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.poa-improvement-sub {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 .overlay {
   position: absolute;
   top: 50%;
