@@ -1,13 +1,16 @@
 // App — wires the live congestion UI together: load /graph geometry once, open the
-// /stream socket (all six algos fold concurrently into the store), and render either
-// the single-algorithm map (#100) or the six-up comparison view (#101). The view
-// toggle switches between them; the single view's selector picks which already-
-// streaming algo that map paints, while the comparison view shows all six at once.
+// /stream socket (all six algos fold concurrently into the store), and render the
+// single-algorithm map (#100), the six-up comparison view (#101), or the before/after
+// route-overlay PoA view (#102). The view toggle switches between them; the single
+// view's selector picks which already-streaming algo that map paints, the comparison
+// view shows all six at once, and the before/after view fetches /compare + /benchmark
+// on demand (independent of the live stream).
 
 import { useState } from "react";
 
 import { CongestionMap } from "./components/CongestionMap";
 import { ComparisonView } from "./components/ComparisonView";
+import { BeforeAfterView } from "./components/BeforeAfterView";
 import { AlgoSelector } from "./components/AlgoSelector";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { Legend } from "./components/Legend";
@@ -78,8 +81,10 @@ export default function App() {
         {geometry &&
           (view === "single" ? (
             <CongestionMap geometry={geometry} buckets={buckets} />
-          ) : (
+          ) : view === "compare" ? (
             <ComparisonView geometry={geometry} />
+          ) : (
+            <BeforeAfterView geometry={geometry} />
           ))}
       </main>
     </div>
