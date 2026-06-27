@@ -11,6 +11,8 @@ import { useState } from "react";
 import { CongestionMap } from "./components/CongestionMap";
 import { ComparisonView } from "./components/ComparisonView";
 import { BeforeAfterView } from "./components/BeforeAfterView";
+import { BenchmarkView } from "./components/BenchmarkView";
+import { ParameterControls } from "./components/ParameterControls";
 import { AlgoSelector } from "./components/AlgoSelector";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { Legend } from "./components/Legend";
@@ -65,27 +67,37 @@ export default function App() {
             <MetricsPanel tick={tick} simTime={simTime} metrics={metrics} />
           </>
         )}
+        {view === "benchmark" && <ParameterControls />}
         <Legend />
         {streamError && <p className="error">stream: {streamError}</p>}
       </aside>
 
       <main className="map-area">
-        {loading && <div className="overlay">Loading network geometry…</div>}
-        {graphError && (
-          <div className="overlay error">
-            Failed to load /graph: {graphError}
-            <br />
-            Is the engine running and reachable?
-          </div>
+        {view === "benchmark" ? (
+          // The benchmark view is independent of /graph geometry and the live stream —
+          // it renders the async §R6 sweep result, not the map — so it bypasses the
+          // geometry gate below.
+          <BenchmarkView />
+        ) : (
+          <>
+            {loading && <div className="overlay">Loading network geometry…</div>}
+            {graphError && (
+              <div className="overlay error">
+                Failed to load /graph: {graphError}
+                <br />
+                Is the engine running and reachable?
+              </div>
+            )}
+            {geometry &&
+              (view === "single" ? (
+                <CongestionMap geometry={geometry} buckets={buckets} />
+              ) : view === "compare" ? (
+                <ComparisonView geometry={geometry} />
+              ) : (
+                <BeforeAfterView geometry={geometry} />
+              ))}
+          </>
         )}
-        {geometry &&
-          (view === "single" ? (
-            <CongestionMap geometry={geometry} buckets={buckets} />
-          ) : view === "compare" ? (
-            <ComparisonView geometry={geometry} />
-          ) : (
-            <BeforeAfterView geometry={geometry} />
-          ))}
       </main>
     </div>
   );

@@ -1,4 +1,8 @@
-// POST /benchmark + GET /benchmark/{id} client for the before/after PoA panel (#102).
+// POST /benchmark + GET /benchmark/{id} client for the before/after PoA panel (#102),
+// extended for the async §R6 parameter controls (#104): the BenchmarkTuple param model,
+// the tuple cache key (benchmarkKey/withBenchDefaults/DEFAULT_BENCH_PARAMS), the
+// BenchmarkError classification, and the capacity retry/backoff in runBenchmark all live
+// here; the debounce + caching controller layered on top is in lib/benchmarkRunner.
 //
 // The benchmark report is the SOURCE OF TRUTH for the money-shot numbers: the engine
 // already computes the realized-time Price of Anarchy per demand level and the
@@ -15,9 +19,107 @@
 // consumes. The selectors (peakPoaLevel / selectLevelCells) are pure and tested.
 
 import { restUrl } from "./engine";
+import { ROUTER_ORDER, type Algo } from "./protocol";
 
 /** A benchmark job's lifecycle state (engine: jobStatus). */
 export type JobStatus = "running" | "done" | "failed";
+
+// ---- §R6 parameter axis (issue #104) -----------------------------------------
+
+/** The benchmark algorithm axis: "all" (six-router sweep) or one named router. */
+export type BenchAlgo = "all" | Algo;
+
+/** Selectable algorithm options for the #104 picker — engine order, "all" first. */
+export const BENCH_ALGO_OPTIONS: readonly BenchAlgo[] = ["all", ...ROUTER_ORDER];
+
+/**
+ * The fully-defaulted §R6 tuple the #104 controls drive. It is identical in shape to
+ * ResolvedBenchmarkParams (the engine's echoed params) but narrows `algorithm` to the
+ * BenchAlgo union the picker offers. A full tuple is assignable to the all-optional
+ * BenchmarkParams the HTTP client accepts, so it serializes verbatim as the POST body.
+ */
+export interface BenchmarkTuple extends ResolvedBenchmarkParams {
+  algorithm: BenchAlgo;
+}
+
+/** The harness defaults, mirrored from benchmark.go withDefaults / DefaultODCount. */
+export const DEFAULT_BENCH_PARAMS: BenchmarkTuple = {
+  algorithm: "all",
+  alpha: 0.15,
+  beta: 4,
+  capacity_scale: 1.0,
+  request_count: 1000,
+  seed: 0,
+};
+
+/**
+ * Fill zero/empty fields from the harness defaults, mirroring the engine's
+ * withDefaults() so the CLIENT cache key matches the SERVER's dedupe identity. The
+ * contract treats a zero as "use the default" — e.g. alpha 0 is NOT a requestable BPR
+ * coefficient (the engine maps it to 0.15) — so alpha 0 and alpha 0.15 are the SAME
+ * tuple and must collapse to one cache entry here too.
+ */
+export function withBenchDefaults(p: BenchmarkTuple): BenchmarkTuple {
+  // Derive the per-field defaults from DEFAULT_BENCH_PARAMS rather than re-listing the
+  // literals, so the client's "zero means default" collapse can't drift from the single
+  // source of truth for the mirrored engine defaults.
+  const d = DEFAULT_BENCH_PARAMS;
+  return {
+    algorithm: p.algorithm && String(p.algorithm).trim() !== "" ? p.algorithm : d.algorithm,
+    alpha: p.alpha === 0 ? d.alpha : p.alpha,
+    beta: p.beta === 0 ? d.beta : p.beta,
+    capacity_scale: p.capacity_scale === 0 ? d.capacity_scale : p.capacity_scale,
+    request_count: p.request_count === 0 ? d.request_count : p.request_count,
+    seed: p.seed,
+  };
+}
+
+/**
+ * Canonical string key for the §R6 tuple, the client-side cache key. Built from the
+ * defaulted params so two tuples differing only in an omitted-vs-explicit default
+ * collapse to one key — the same dedupe the server performs, so a repeat settle on an
+ * identical tuple never re-fires a job (issue #104 acceptance).
+ */
+export function benchmarkKey(p: BenchmarkTuple): string {
+  const d = withBenchDefaults(p);
+  return `algo=${d.algorithm}|a=${d.alpha}|b=${d.beta}|cap=${d.capacity_scale}|n=${d.request_count}|seed=${d.seed}`;
+}
+
+// ---- classified errors -------------------------------------------------------
+
+/** Classifies a benchmark failure so the UI can surface it specifically (#104). */
+export type BenchErrorKind =
+  | "bad_params" // 400: out-of-contract tuple
+  | "capacity" // 503: box at max concurrent sweeps
+  | "job_failed" // job ran but the harness failed (or finished without a report)
+  | "not_found" // 404: polled an unknown/evicted job id
+  | "network" // fetch threw (offline, CORS, …)
+  | "unknown"; // any other non-OK status / timeout
+
+/** A benchmark error carrying its classification and the originating HTTP status. */
+export class BenchmarkError extends Error {
+  readonly kind: BenchErrorKind;
+  readonly status?: number;
+  constructor(kind: BenchErrorKind, message: string, status?: number) {
+    super(message);
+    this.name = "BenchmarkError";
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+/** Pull the engine's `{ error: string }` message off a non-OK response, best effort. */
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (body && typeof body.error === "string" && body.error.trim() !== "") {
+      return body.error;
+    }
+  } catch {
+    // non-JSON / empty body — fall through to the fallback.
+  }
+  return fallback;
+}
 
 /**
  * The §R6 parameter tuple POST /benchmark is keyed by. All optional: an omitted
@@ -121,14 +223,29 @@ async function startBenchmark(
   params: BenchmarkParams = {},
   signal?: AbortSignal,
 ): Promise<StartResponse> {
-  const res = await fetch(restUrl("/benchmark"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(restUrl("/benchmark"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+      signal,
+    });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    const message = err instanceof Error ? err.message : "network error";
+    throw new BenchmarkError("network", `POST /benchmark failed: ${message}`);
+  }
+  // Map the contract's failure statuses to a classified error so the caller can react
+  // specifically (retry a 503, show a 400's reason) rather than swallowing them.
+  if (res.status === 503) {
+    throw new BenchmarkError("capacity", await errorMessage(res, "benchmark capacity reached, please retry shortly"), 503);
+  }
+  if (res.status === 400) {
+    throw new BenchmarkError("bad_params", await errorMessage(res, "invalid benchmark parameters"), 400);
+  }
   if (!res.ok) {
-    throw new Error(`POST /benchmark failed: ${res.status} ${res.statusText}`);
+    throw new BenchmarkError("unknown", await errorMessage(res, `POST /benchmark failed: ${res.status} ${res.statusText}`), res.status);
   }
   return (await res.json()) as StartResponse;
 }
@@ -139,9 +256,19 @@ async function fetchBenchmarkStatus(
   jobId: string,
   signal?: AbortSignal,
 ): Promise<StatusResponse> {
-  const res = await fetch(restUrl(`/benchmark/${jobId}`), { signal });
+  let res: Response;
+  try {
+    res = await fetch(restUrl(`/benchmark/${jobId}`), { signal });
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    const message = err instanceof Error ? err.message : "network error";
+    throw new BenchmarkError("network", `GET /benchmark/${jobId} failed: ${message}`);
+  }
+  if (res.status === 404) {
+    throw new BenchmarkError("not_found", await errorMessage(res, "no such benchmark job"), 404);
+  }
   if (!res.ok) {
-    throw new Error(`GET /benchmark/${jobId} failed: ${res.status} ${res.statusText}`);
+    throw new BenchmarkError("unknown", await errorMessage(res, `GET /benchmark/${jobId} failed: ${res.status} ${res.statusText}`), res.status);
   }
   return (await res.json()) as StatusResponse;
 }
@@ -153,6 +280,10 @@ export interface RunBenchmarkOptions {
   pollIntervalMs?: number;
   /** Hard cap on poll attempts so a stuck job cannot loop forever. */
   maxPolls?: number;
+  /** How many times to retry a 503 capacity rejection before surfacing it. */
+  capacityRetries?: number;
+  /** Base backoff between capacity retries (ms); grows linearly per attempt. */
+  capacityBackoffMs?: number;
 }
 
 /** Reject if the signal is already aborted; otherwise resolve after ms (abortable). */
@@ -186,23 +317,39 @@ export async function runBenchmark(
   params: BenchmarkParams = {},
   opts: RunBenchmarkOptions = {},
 ): Promise<BenchmarkReport> {
-  const { signal, pollIntervalMs = 750, maxPolls = 240 } = opts;
-  const start = await startBenchmark(params, signal);
+  const { signal, pollIntervalMs = 750, maxPolls = 240, capacityRetries = 3, capacityBackoffMs = 600 } = opts;
+
+  // POST with bounded capacity retry/backoff: a 503 means the box is at its sweep cap
+  // and asks the client to "retry shortly", so we back off briefly rather than failing
+  // the run outright; any other error (or exhausting the retries) surfaces.
+  let start: StartResponse | undefined;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      start = await startBenchmark(params, signal);
+      break;
+    } catch (err) {
+      if (err instanceof BenchmarkError && err.kind === "capacity" && attempt < capacityRetries) {
+        await sleep(capacityBackoffMs * (attempt + 1), signal);
+        continue;
+      }
+      throw err;
+    }
+  }
 
   for (let i = 0; i < maxPolls; i++) {
     const status = await fetchBenchmarkStatus(start.job_id, signal);
     if (status.status === "done") {
       if (!status.report) {
-        throw new Error("benchmark reported done but carried no report");
+        throw new BenchmarkError("job_failed", "benchmark reported done but carried no report");
       }
       return status.report;
     }
     if (status.status === "failed") {
-      throw new Error(status.error || "benchmark failed");
+      throw new BenchmarkError("job_failed", status.error || "benchmark failed");
     }
     await sleep(pollIntervalMs, signal);
   }
-  throw new Error(`benchmark did not finish within ${maxPolls} polls`);
+  throw new BenchmarkError("unknown", `benchmark did not finish within ${maxPolls} polls`);
 }
 
 // ---- Pure selectors over a report --------------------------------------------
