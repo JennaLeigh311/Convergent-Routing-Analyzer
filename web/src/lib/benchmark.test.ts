@@ -6,10 +6,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  BENCH_ALGO_OPTIONS,
+  BenchmarkError,
+  DEFAULT_BENCH_PARAMS,
+  benchmarkKey,
   peakPoaLevel,
   runBenchmark,
   selectLevelCells,
+  withBenchDefaults,
   type BenchmarkReport,
+  type BenchmarkTuple,
   type StartResponse,
   type StatusResponse,
   type SweepCell,
@@ -192,5 +198,94 @@ describe("selectLevelCells", () => {
 
   it("returns an empty map for an unknown level", () => {
     expect(selectLevelCells(report, "nope")).toEqual({});
+  });
+});
+
+// ---- §R6 tuple key + defaults (issue #104) ----------------------------------
+
+describe("benchmarkKey / withBenchDefaults", () => {
+  it("offers 'all' plus the six routers as options", () => {
+    expect(BENCH_ALGO_OPTIONS).toEqual([
+      "all",
+      "naive",
+      "reactive",
+      "incremental",
+      "msa",
+      "systemoptimal",
+      "multipath",
+    ]);
+  });
+
+  it("collapses zero fields to the harness defaults so omitted == explicit-default", () => {
+    const zeros: BenchmarkTuple = {
+      algorithm: "all",
+      alpha: 0,
+      beta: 0,
+      capacity_scale: 0,
+      request_count: 0,
+      seed: 0,
+    };
+    expect(withBenchDefaults(zeros)).toEqual(DEFAULT_BENCH_PARAMS);
+    // ...and therefore keys identically to the explicit-default tuple.
+    expect(benchmarkKey(zeros)).toBe(benchmarkKey(DEFAULT_BENCH_PARAMS));
+  });
+
+  it("keys differing tuples differently and identical tuples identically", () => {
+    const a: BenchmarkTuple = { ...DEFAULT_BENCH_PARAMS, algorithm: "reactive", alpha: 0.2 };
+    const b: BenchmarkTuple = { ...DEFAULT_BENCH_PARAMS, algorithm: "reactive", alpha: 0.2 };
+    const c: BenchmarkTuple = { ...DEFAULT_BENCH_PARAMS, algorithm: "reactive", alpha: 0.3 };
+    expect(benchmarkKey(a)).toBe(benchmarkKey(b));
+    expect(benchmarkKey(a)).not.toBe(benchmarkKey(c));
+  });
+});
+
+// ---- error classification + capacity backoff (issue #104) -------------------
+
+function errorResponse(status: number, message: string): Response {
+  return new Response(JSON.stringify({ error: message }), { status });
+}
+
+describe("runBenchmark error handling", () => {
+  it("surfaces a 400 as a classified bad_params BenchmarkError", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(errorResponse(400, "alpha must be >= 0")));
+    try {
+      await runBenchmark({ alpha: -1 }, { pollIntervalMs: 1 });
+      expect.unreachable("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(BenchmarkError);
+      expect((err as BenchmarkError).kind).toBe("bad_params");
+      expect((err as BenchmarkError).status).toBe(400);
+      expect((err as BenchmarkError).message).toMatch(/alpha/);
+    }
+  });
+
+  it("retries a 503 capacity rejection with backoff, then completes", async () => {
+    const start: StartResponse = {
+      job_id: "cap1",
+      status: "running",
+      params: { algorithm: "all", alpha: 0.15, beta: 4, capacity_scale: 1, request_count: 200, seed: 0 },
+    };
+    const done: StatusResponse = { job_id: "cap1", status: "done", params: start.params, report };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse(503, "benchmark capacity reached, please retry shortly")) // POST #1
+      .mockResolvedValueOnce(jsonResponse(start)) // POST #2 (after backoff)
+      .mockResolvedValueOnce(jsonResponse(done)); // poll: done
+    vi.stubGlobal("fetch", fetchMock);
+
+    const got = await runBenchmark({}, { pollIntervalMs: 1, capacityBackoffMs: 1 });
+    expect(got.poa_by_level).toHaveLength(2);
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("POST");
+    expect(fetchMock.mock.calls[1][1]?.method).toBe("POST"); // the retry
+  });
+
+  it("gives up after exhausting capacity retries", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(errorResponse(503, "benchmark capacity reached, please retry shortly")),
+    );
+    await expect(
+      runBenchmark({}, { pollIntervalMs: 1, capacityBackoffMs: 1, capacityRetries: 2 }),
+    ).rejects.toMatchObject({ kind: "capacity" });
   });
 });

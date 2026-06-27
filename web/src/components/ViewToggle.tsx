@@ -3,7 +3,7 @@
 // presentational control; the active view is owned by App so it can decide what to
 // render in the sidebar and map area.
 
-export type AppView = "single" | "compare" | "beforeafter";
+export type AppView = "single" | "compare" | "beforeafter" | "benchmark";
 
 interface Props {
   view: AppView;
@@ -14,6 +14,7 @@ const VIEWS: { value: AppView; label: string }[] = [
   { value: "single", label: "Single" },
   { value: "compare", label: "Compare" },
   { value: "beforeafter", label: "Before/After" },
+  { value: "benchmark", label: "Benchmark" },
 ];
 
 export function ViewToggle({ view, onChange }: Props) {
