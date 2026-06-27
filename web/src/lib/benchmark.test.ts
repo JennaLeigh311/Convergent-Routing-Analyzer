@@ -288,4 +288,38 @@ describe("runBenchmark error handling", () => {
       runBenchmark({}, { pollIntervalMs: 1, capacityBackoffMs: 1, capacityRetries: 2 }),
     ).rejects.toMatchObject({ kind: "capacity" });
   });
+
+  it("backs off linearly between capacity retries (delay grows per attempt)", async () => {
+    // Capture the requested sleep durations while collapsing the real wait to 0ms, so the
+    // linear growth (capacityBackoffMs * (attempt + 1)) is asserted deterministically and
+    // a regression to a constant backoff would fail.
+    const delays: number[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const setTimeoutSpy = vi
+      .spyOn(globalThis, "setTimeout")
+      .mockImplementation(((fn: () => void, ms?: number) => {
+        delays.push(ms ?? 0);
+        return realSetTimeout(fn, 0);
+      }) as typeof globalThis.setTimeout);
+
+    const start: StartResponse = {
+      job_id: "cap2",
+      status: "running",
+      params: { algorithm: "all", alpha: 0.15, beta: 4, capacity_scale: 1, request_count: 200, seed: 0 },
+    };
+    const done: StatusResponse = { job_id: "cap2", status: "done", params: start.params, report };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(errorResponse(503, "capacity")) // POST #1: 503 -> backoff 100
+        .mockResolvedValueOnce(errorResponse(503, "capacity")) // POST #2: 503 -> backoff 200
+        .mockResolvedValueOnce(jsonResponse(start)) // POST #3: accepted
+        .mockResolvedValueOnce(jsonResponse(done)), // first poll: done (no poll sleep)
+    );
+
+    await runBenchmark({}, { capacityBackoffMs: 100, capacityRetries: 3 });
+    expect(delays).toEqual([100, 200]); // two backoffs, growing linearly, before success
+    setTimeoutSpy.mockRestore();
+  });
 });

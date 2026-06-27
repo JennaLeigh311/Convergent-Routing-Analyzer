@@ -89,6 +89,12 @@ export function createBenchmarkController(
       .catch((err: unknown) => {
         // A run we deliberately aborted is not a user-facing failure.
         if (ctrl.signal.aborted) return;
+        // A failed run is not cached, so it must stay retryable: clear activeKey (only
+        // if this run is still the active one) so re-settling the SAME tuple re-fires
+        // rather than being dropped by the `key === activeKey` dedupe above. Without
+        // this a transient failure (503/network, or the on-mount default run while the
+        // engine is briefly down) would stick until the user moved to another tuple.
+        if (activeKey === key) activeKey = null;
         const message =
           err instanceof BenchmarkError || err instanceof Error ? err.message : "benchmark failed";
         store.getState().benchReject(key, message);

@@ -8,7 +8,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { BenchmarkError, type BenchmarkReport, type BenchmarkTuple } from "./benchmark";
+import {
+  BenchmarkError,
+  benchmarkKey,
+  type BenchmarkReport,
+  type BenchmarkTuple,
+} from "./benchmark";
 import { createBenchmarkController, type BenchmarkStoreSlice } from "./benchmarkRunner";
 
 const PARAMS_A: BenchmarkTuple = {
@@ -156,6 +161,58 @@ describe("createBenchmarkController", () => {
 
     expect(store.state.benchStatus).toBe("failed");
     expect(store.state.benchError).toBe("benchmark failed");
+  });
+
+  it("caches a superseded run that resolves later, without clobbering the active view", async () => {
+    const store = makeStore();
+    const reportA = fakeReport(1);
+    const reportB = fakeReport(2);
+    let resolveA: (r: BenchmarkReport) => void = () => {};
+    const run = vi.fn().mockImplementation((p: BenchmarkTuple) =>
+      p.alpha === PARAMS_A.alpha
+        ? new Promise<BenchmarkReport>((res) => {
+            resolveA = res;
+          })
+        : Promise.resolve(reportB),
+    );
+    const ctl = createBenchmarkController(store, { run });
+
+    ctl.request(PARAMS_A); // A in flight
+    ctl.request(PARAMS_B); // supersedes A; B resolves immediately
+    await Promise.resolve();
+    expect(store.state.benchReport).toBe(reportB);
+    expect(store.state.benchStatus).toBe("done");
+
+    resolveA(reportA); // A resolves AFTER being superseded
+    await Promise.resolve();
+
+    // A's late resolve must cache its report but NOT flip the visible view back to A.
+    expect(store.state.benchCache[benchmarkKey(PARAMS_A)]).toBe(reportA);
+    expect(store.state.benchReport).toBe(reportB);
+    expect(store.state.benchStatus).toBe("done");
+  });
+
+  it("re-fires a previously failed tuple when it is settled again (failure is retryable)", async () => {
+    const store = makeStore();
+    const report = fakeReport(1);
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(new BenchmarkError("capacity", "at capacity"))
+      .mockResolvedValueOnce(report);
+    const ctl = createBenchmarkController(store, { run });
+
+    ctl.request(PARAMS_A);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(store.state.benchStatus).toBe("failed");
+
+    // The SAME tuple, settled again after the failure: it must re-fire (not be deduped
+    // against the failed key) so a transient failure is recoverable in place.
+    ctl.request(PARAMS_A);
+    expect(run).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+    expect(store.state.benchStatus).toBe("done");
+    expect(store.state.benchReport).toBe(report);
   });
 
   it("does not surface an error for a run we deliberately aborted", async () => {

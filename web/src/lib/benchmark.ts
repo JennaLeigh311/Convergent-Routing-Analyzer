@@ -1,4 +1,8 @@
-// POST /benchmark + GET /benchmark/{id} client for the before/after PoA panel (#102).
+// POST /benchmark + GET /benchmark/{id} client for the before/after PoA panel (#102),
+// extended for the async §R6 parameter controls (#104): the BenchmarkTuple param model,
+// the tuple cache key (benchmarkKey/withBenchDefaults/DEFAULT_BENCH_PARAMS), the
+// BenchmarkError classification, and the capacity retry/backoff in runBenchmark all live
+// here; the debounce + caching controller layered on top is in lib/benchmarkRunner.
 //
 // The benchmark report is the SOURCE OF TRUTH for the money-shot numbers: the engine
 // already computes the realized-time Price of Anarchy per demand level and the
@@ -56,12 +60,16 @@ export const DEFAULT_BENCH_PARAMS: BenchmarkTuple = {
  * tuple and must collapse to one cache entry here too.
  */
 export function withBenchDefaults(p: BenchmarkTuple): BenchmarkTuple {
+  // Derive the per-field defaults from DEFAULT_BENCH_PARAMS rather than re-listing the
+  // literals, so the client's "zero means default" collapse can't drift from the single
+  // source of truth for the mirrored engine defaults.
+  const d = DEFAULT_BENCH_PARAMS;
   return {
-    algorithm: p.algorithm && String(p.algorithm).trim() !== "" ? p.algorithm : "all",
-    alpha: p.alpha === 0 ? 0.15 : p.alpha,
-    beta: p.beta === 0 ? 4 : p.beta,
-    capacity_scale: p.capacity_scale === 0 ? 1.0 : p.capacity_scale,
-    request_count: p.request_count === 0 ? 1000 : p.request_count,
+    algorithm: p.algorithm && String(p.algorithm).trim() !== "" ? p.algorithm : d.algorithm,
+    alpha: p.alpha === 0 ? d.alpha : p.alpha,
+    beta: p.beta === 0 ? d.beta : p.beta,
+    capacity_scale: p.capacity_scale === 0 ? d.capacity_scale : p.capacity_scale,
+    request_count: p.request_count === 0 ? d.request_count : p.request_count,
     seed: p.seed,
   };
 }

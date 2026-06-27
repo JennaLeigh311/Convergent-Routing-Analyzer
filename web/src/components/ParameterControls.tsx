@@ -15,7 +15,6 @@ import { useBenchmarkControls } from "../hooks/useBenchmarkControls";
 import { ALGO_LABELS } from "../lib/algoLabels";
 import {
   BENCH_ALGO_OPTIONS,
-  DEFAULT_BENCH_PARAMS,
   type BenchAlgo,
   type BenchmarkTuple,
 } from "../lib/benchmark";
@@ -68,7 +67,10 @@ const STATUS_HINT: Record<string, string> = {
 
 export function ParameterControls() {
   const controller = useBenchmarkControls();
-  const [draft, setDraft] = useState<BenchmarkTuple>(DEFAULT_BENCH_PARAMS);
+  // Seed the draft from the persisted tuple: the harness default on first mount, or the
+  // user's last settled tuple after a view-toggle remount (the store keeps benchParams),
+  // so toggling away and back doesn't snap the sliders to default.
+  const [draft, setDraft] = useState<BenchmarkTuple>(() => useAppStore.getState().benchParams);
   const status = useAppStore((s) => s.benchStatus);
 
   // One debounced committer for the panel's life; rebuilt only if the controller does.
@@ -77,23 +79,25 @@ export function ParameterControls() {
     [controller],
   );
 
-  // Fire the canonical default run once on mount so the panel isn't empty; cancel any
-  // pending debounced commit on unmount so it never fires into a gone controller.
+  // Fire the persisted tuple once on mount so the panel isn't empty (a cache hit renders
+  // instantly without a new job); cancel any pending debounced commit on unmount so it
+  // never fires into a gone controller.
   useEffect(() => {
-    controller.request(DEFAULT_BENCH_PARAMS);
+    controller.request(useAppStore.getState().benchParams);
     return () => commit.cancel();
   }, [controller, commit]);
 
   function update(patch: Partial<BenchmarkTuple>) {
-    setDraft((prev) => {
-      const next = { ...prev, ...patch };
-      commit(next);
-      return next;
-    });
+    // Compute next outside the state updater so the side-effecting commit() is not called
+    // from within setDraft (which React may double-invoke in StrictMode); the trailing
+    // debounce still collapses a drag's burst of updates into one settled job.
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    commit(next);
   }
 
-  // The algorithm select fires immediately (it is a discrete choice, not a drag), but
-  // still goes through the same debounced commit so a rapid pick settles to one job.
+  // The algorithm select is a discrete choice, not a drag, but it still routes through the
+  // same debounced commit so a rapid sequence of picks settles to a single job.
   const singleMode = draft.algorithm !== "all";
 
   return (
@@ -120,7 +124,7 @@ export function ParameterControls() {
       <SliderRow
         label="alpha (α)"
         value={draft.alpha}
-        min={0}
+        min={0.01}
         max={1}
         step={0.01}
         format={(v) => v.toFixed(2)}
@@ -129,7 +133,7 @@ export function ParameterControls() {
       <SliderRow
         label="beta (β)"
         value={draft.beta}
-        min={0}
+        min={0.5}
         max={10}
         step={0.5}
         format={(v) => v.toFixed(1)}
@@ -147,7 +151,7 @@ export function ParameterControls() {
       <SliderRow
         label="request count"
         value={draft.request_count}
-        min={0}
+        min={100}
         max={5000}
         step={100}
         format={(v) => String(v)}
