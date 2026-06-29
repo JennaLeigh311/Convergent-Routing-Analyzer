@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
@@ -10,6 +11,12 @@ import (
 
 // endpointGraph is the metric label for the geometry endpoint.
 const endpointGraph = "graph"
+
+// graphCacheControl is the Cache-Control sent with /graph. The geometry is
+// immutable for the process lifetime, so it is safely cacheable; one hour keeps a
+// client from re-fetching the (large) FeatureCollection on every poll while still
+// letting a redeploy with a new graph be picked up within the hour.
+const graphCacheControl = "public, max-age=3600"
 
 // graphResponse is the GET /graph body: the network geometry as a GeoJSON
 // FeatureCollection, the frontend's geometry source. Each feature carries its
@@ -56,7 +63,43 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, endpointGraph, http.StatusMethodNotAllowed, "method not allowed: use GET")
 		return
 	}
+
+	// The body is immutable, so advertise it as cacheable with a strong validator.
+	w.Header().Set("ETag", s.graphETag)
+	w.Header().Set("Cache-Control", graphCacheControl)
+
+	// Honor a conditional request: a client that already holds the current body
+	// gets a 304 (empty body) instead of the geometry re-sent. A 304 is a
+	// successful cache validation, not an error, so it is counted as an ok outcome.
+	if ifNoneMatch := r.Header.Get("If-None-Match"); etagMatches(ifNoneMatch, s.graphETag) {
+		s.metrics.Observe(endpointGraph, outcomeOK)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	s.writeRawJSON(w, endpointGraph, http.StatusOK, s.graphBody)
+}
+
+// etagMatches reports whether an If-None-Match header value matches etag. It
+// honors the wildcard "*" and a comma-separated list of validators, doing a
+// strong comparison (the W/ weak prefix is stripped before comparing) against
+// each candidate.
+func etagMatches(ifNoneMatch, etag string) bool {
+	ifNoneMatch = strings.TrimSpace(ifNoneMatch)
+	if ifNoneMatch == "" {
+		return false
+	}
+	if ifNoneMatch == "*" {
+		return true
+	}
+	for _, candidate := range strings.Split(ifNoneMatch, ",") {
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.TrimPrefix(candidate, "W/")
+		if candidate == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // buildGraphResponse assembles the GeoJSON FeatureCollection from the loader's

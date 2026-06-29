@@ -25,6 +25,55 @@ The base URL is the configured listen address (`ROUTING_SERVER_ADDR`, default
 
 ---
 
+## Authentication & rate limiting
+
+The **routing surface** (`/route`, `/compare`, `/congestion`, `/graph`,
+`/benchmark`, `/benchmark/{id}`, `/stream`) is fronted by a security middleware.
+The liveness/readiness/observability endpoints (`/healthz`, `/readyz`,
+`/metrics`) are deliberately **exempt** — probes and Prometheus scrapes are never
+gated by auth or throttling.
+
+### Bearer-token auth (off by default)
+
+| Env var            | Default | Effect                                                            |
+| ------------------ | ------- | ----------------------------------------------------------------- |
+| `ROUTING_API_TOKEN` | _(unset)_ | Static bearer token. **Unset/empty ⇒ auth disabled** (the open demo/dev default). |
+
+When `ROUTING_API_TOKEN` is set, every routing request must present
+`Authorization: Bearer <token>`. A missing or wrong token is a **`401`** with the
+uniform error envelope. The token is compared in **constant time**
+(`crypto/subtle`), so a wrong token cannot be distinguished by response timing.
+
+`/stream` is a WebSocket upgrade; the `Authorization` header travels on the
+handshake, so the same auth applies (the request is checked **before** the
+upgrade).
+
+### Per-client rate limiting (on by default)
+
+A hand-rolled token-bucket limiter throttles each client independently.
+
+| Env var                    | Default | Effect                                              |
+| -------------------------- | ------- | --------------------------------------------------- |
+| `ROUTING_RATE_LIMIT_RPS`   | `20`    | Steady-state requests/second per client. **`<= 0` ⇒ rate limiting disabled.** |
+| `ROUTING_RATE_LIMIT_BURST` | `40`    | Burst capacity (max instantaneous requests) per client. |
+
+- **Per-client key:** the **bearer token** when auth is enabled, otherwise the
+  **client IP** (the host of `r.RemoteAddr`).
+- Exceeding the limit is a **`429`** with the uniform error envelope and a
+  `Retry-After` header (seconds until a token refills).
+- The per-client bucket map is **bounded**: idle buckets are evicted lazily on
+  access (no background goroutine), so memory cannot grow without bound as
+  clients come and go.
+
+> **Reverse-proxy assumption:** the client IP is taken from `r.RemoteAddr`;
+> `X-Forwarded-For` is **not** trusted (it is client-spoofable when not behind a
+> proxy). A **TLS-terminating reverse proxy is assumed** in front of the service;
+> trust `X-Forwarded-For` only when such a proxy sets it. For IP-keyed limiting to
+> be accurate behind a proxy, the proxy must preserve/rewrite the peer address (or
+> be rate-limited itself).
+
+---
+
 ## Liveness / readiness / observability
 
 | Method | Path       | Description                                                      |
@@ -159,6 +208,15 @@ The network geometry as GeoJSON — the frontend's geometry source.
   `/congestion` to these `segment_id`s on the client side. This keeps the
   cacheable, static geometry decoupled from the live, polled congestion.
 - Features are sorted by `segment_id` for a stable, cacheable body.
+
+**Caching.** The geometry is immutable for the process lifetime, so `/graph` is
+cacheable:
+
+- A `200` carries a strong `ETag` (`"sha256:<hex>"`, computed once over the body)
+  and `Cache-Control: public, max-age=3600`.
+- A conditional `GET` with a matching `If-None-Match` returns **`304 Not Modified`**
+  with an empty body (the FeatureCollection is not re-sent). A `304` is a
+  successful cache validation, counted as an `ok` outcome, not an error.
 
 A non-`GET` is a `405`.
 

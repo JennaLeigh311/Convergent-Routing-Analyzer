@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -52,6 +54,10 @@ type Server struct {
 	// changes — the handler writes these cached bytes instead of rebuilding and
 	// re-marshaling the FeatureCollection on every request.
 	graphBody []byte
+	// graphETag is a strong validator over graphBody, computed ONCE at
+	// construction. Because the body never changes, the ETag is stable for the
+	// process lifetime, so /graph can serve a 304 on a matching If-None-Match.
+	graphETag string
 	// congestion is the shared, read-only congestion snapshot the reactive router
 	// best-responds to and /congestion reports. Built via the shared source seam
 	// (deterministic simulator, fixed seed) so the snapshot is stable across the
@@ -154,11 +160,16 @@ func NewServer(roadGraph graph.Graph, geom map[domain.SegmentID]graph.LineString
 	if err != nil {
 		return nil, fmt.Errorf("api: marshal graph body: %w", err)
 	}
+	// A strong ETag over the (immutable) body, computed once so /graph can answer
+	// a conditional request with a 304 instead of re-sending the geometry.
+	sum := sha256.Sum256(graphBody)
+	graphETag := `"sha256:` + hex.EncodeToString(sum[:]) + `"`
 
 	return &Server{
 		graph:         roadGraph,
 		geom:          geom,
 		graphBody:     graphBody,
+		graphETag:     graphETag,
 		congestion:    provider,
 		segmentByEdge: segmentByEdge,
 		naive:         routing.NewNaiveRouter(roadGraph),
