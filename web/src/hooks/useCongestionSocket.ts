@@ -1,11 +1,12 @@
 // useCongestionSocket — open the engine's GET /stream WebSocket and fold every
 // snapshot/delta frame into the Zustand store via the pure reducer. Uses the
-// browser-native WebSocket API. The hook owns the socket lifecycle: it opens on
-// mount (and whenever the stream params change), resets the congestion state on a
-// fresh connection so a reconnect re-seeds cleanly from the new snapshots, and
-// closes on unmount. All six algorithms stream concurrently over the one socket;
-// the store keeps a Map<segment_id,bucket> per algorithm and the map renders the
-// currently-selected one.
+// browser-native WebSocket API. The hook owns the socket lifecycle: it opens when
+// `enabled` is true (the user has pressed Start) and whenever the stream params
+// change, resets the congestion state on a fresh connection so a reconnect re-seeds
+// cleanly from the new snapshots, and closes on unmount or when disabled (Stop).
+// When disabled it leaves the last frame's buckets in the store so the map stays
+// painted. All six algorithms stream concurrently over the one socket; the store
+// keeps a Map<segment_id,bucket> per algorithm and the map renders the selected one.
 
 import { useEffect } from "react";
 
@@ -15,6 +16,8 @@ import { useAppStore } from "../store";
 
 /** The §R6 stream query knobs. Every field has an engine-side default. */
 export interface StreamOptions {
+  /** When false, the hook holds the socket closed (Stop). Defaults to true. */
+  enabled?: boolean;
   start?: string; // RFC3339
   speed?: number; // simulated seconds per wall-clock second
   tickHz?: number; // server frame cadence
@@ -40,11 +43,19 @@ function buildQuery(opts: StreamOptions): string {
  * through the store so any component can read it.
  */
 export function useCongestionSocket(opts: StreamOptions = {}): void {
+  const enabled = opts.enabled ?? true;
   const query = buildQuery(opts);
 
   useEffect(() => {
     const { applyFrame, resetCongestion, setStatus, setError } =
       useAppStore.getState();
+
+    // Stopped: hold the socket closed and report idle. The last frame's buckets are
+    // intentionally left in the store so the map stays painted while paused.
+    if (!enabled) {
+      setStatus("idle");
+      return;
+    }
 
     // A fresh connection re-seeds from new snapshots, so clear stale buckets.
     resetCongestion();
@@ -91,5 +102,5 @@ export function useCongestionSocket(opts: StreamOptions = {}): void {
         ws.close();
       }
     };
-  }, [query]);
+  }, [enabled, query]);
 }
