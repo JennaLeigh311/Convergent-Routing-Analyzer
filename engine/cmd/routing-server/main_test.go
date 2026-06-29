@@ -22,7 +22,11 @@ func newTestMux(t *testing.T) *http.ServeMux {
 	if err != nil {
 		t.Fatalf("NewDefaultServer: %v", err)
 	}
-	return newMux(reg, apiServer)
+	// Explicitly disabled policy (no token, RPS 0) so the route-table assertions
+	// exercise the real wiring without being gated by auth or throttling, and stay
+	// deterministic regardless of the ambient environment.
+	secure := api.NewSecurityMiddleware(api.SecurityConfig{}, nil)
+	return newMux(reg, apiServer, secure)
 }
 
 // TestNewMuxRoutes pins the routing-server's route table — the server's public
@@ -116,4 +120,53 @@ func TestNewMuxRoutes(test1 *testing.T) {
 			}
 		}
 	})
+}
+
+// TestNewMuxSecurityScope asserts the security wrapper is applied to the REST
+// surface ONLY: with auth enabled, a routing endpoint without a token is a 401,
+// while /healthz, /readyz and /metrics stay reachable un-authenticated (so
+// liveness/readiness probes and Prometheus scrapes are never gated).
+func TestNewMuxSecurityScope(t *testing.T) {
+	reg := metrics.NewRegistry()
+	apiServer, err := api.NewDefaultServer(reg, nil)
+	if err != nil {
+		t.Fatalf("NewDefaultServer: %v", err)
+	}
+	secure := api.NewSecurityMiddleware(api.SecurityConfig{Token: "tok"}, nil)
+	server := httptest.NewServer(newMux(reg, apiServer, secure))
+	defer server.Close()
+
+	// Health/metrics endpoints bypass auth: 200 with no Authorization header.
+	for _, path := range []string{"/healthz", "/readyz", "/metrics"} {
+		resp, err := http.Get(server.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s (no auth): status = %d, want 200 (must bypass auth)", path, resp.StatusCode)
+		}
+	}
+
+	// A routing endpoint without a token is gated: 401.
+	resp, err := http.Get(server.URL + "/graph")
+	if err != nil {
+		t.Fatalf("GET /graph: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("GET /graph (no auth, token required): status = %d, want 401", resp.StatusCode)
+	}
+
+	// With the correct token it passes through.
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/graph", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /graph with token: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /graph (with token): status = %d, want 200", resp.StatusCode)
+	}
 }
