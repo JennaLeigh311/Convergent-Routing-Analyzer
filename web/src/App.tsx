@@ -42,10 +42,11 @@ export default function App() {
   // simulation with the new request volume).
   useCongestionSocket({ enabled: running, count: carLoad, speed: 120, tickHz: 1 });
 
-  // The simulation is finite: when the stream drains the server closes it. Flip the
-  // run flag back off so the button returns to "Start" without the user pressing Stop.
+  // The run is over once the stream drains (server closes → "closed") or the connection
+  // fails ("error"). Flip the run flag back off so the button returns to "Start" without
+  // the user pressing Stop — and so an engine-down Start can't strand the button on "Stop".
   useEffect(() => {
-    if (running && status === "closed") setRunning(false);
+    if (running && (status === "closed" || status === "error")) setRunning(false);
   }, [running, status, setRunning]);
 
   return (

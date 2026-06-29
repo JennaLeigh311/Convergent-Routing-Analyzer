@@ -1,7 +1,7 @@
-// A tiny trailing-edge debouncer (issue #104). The parameter controls fire on EVERY
-// drag tick of a slider; this collapses that burst into a single call once the value
-// has SETTLED (no change for `delayMs`), so a benchmark job is fired on release, never
-// mid-drag. Only the last call's args survive — the settled value is what runs.
+// A tiny trailing-edge debouncer. The car-load slider fires on EVERY drag tick; this
+// collapses that burst into a single call once the value has SETTLED (no change for
+// `delayMs`), so the stream reconnects on release, never mid-drag. Only the last call's
+// args survive — the settled value is what runs.
 //
 // It is framework-agnostic and pure (timer-only), so the debounce timing is unit-
 // testable with fake timers, and the React layer just wires it to onChange.

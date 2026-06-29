@@ -1,7 +1,7 @@
 // buildCongestionLayer — the single source of truth for the recolor-only PathLayer
-// recipe shared by the full CongestionMap (#100) and the comparison view's
-// MiniCongestionMaps (#101). Centralizing it here keeps the load-bearing invariant in
-// ONE place: immutable `data` (the static geometry table), color joined to live
+// recipe used by the CongestionMap. Centralizing it here keeps the load-bearing
+// invariant in ONE place: immutable `data` (the static geometry table), color joined
+// to live
 // buckets by segment_id at draw time, and `updateTriggers.getColor` keyed on the
 // bucket-map reference so a delta re-runs ONLY the color accessor — never a geometry
 // rebuild. Callers vary only the cosmetic/interaction params (id, stroke width,

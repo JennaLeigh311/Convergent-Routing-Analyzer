@@ -5,7 +5,8 @@
 // change, resets the congestion state on a fresh connection so a reconnect re-seeds
 // cleanly from the new snapshots, and closes on unmount or when disabled (Stop).
 // When disabled it leaves the last frame's buckets in the store so the map stays
-// painted. All six algorithms stream concurrently over the one socket; the store
+// painted, and preserves a terminal "closed"/"error" status when the auto-stop disables
+// it. All six algorithms stream concurrently over the one socket; the store
 // keeps a Map<segment_id,bucket> per algorithm and the map renders the selected one.
 
 import { useEffect } from "react";
@@ -50,10 +51,14 @@ export function useCongestionSocket(opts: StreamOptions = {}): void {
     const { applyFrame, resetCongestion, setStatus, setError } =
       useAppStore.getState();
 
-    // Stopped: hold the socket closed and report idle. The last frame's buckets are
-    // intentionally left in the store so the map stays painted while paused.
+    // Stopped: hold the socket closed; the last frame's buckets are intentionally left
+    // in the store so the map stays painted while paused. Preserve a terminal "closed"
+    // (run drained → "finished") or "error" status — the auto-stop in App flips us here
+    // right after those land, and clobbering them to "idle" would erase the outcome the
+    // header pill reports. A manual Stop mid-run (status "open"/"connecting") reports idle.
     if (!enabled) {
-      setStatus("idle");
+      const status = useAppStore.getState().status;
+      if (status !== "closed" && status !== "error") setStatus("idle");
       return;
     }
 
