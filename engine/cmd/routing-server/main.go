@@ -69,9 +69,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Resolve the auth + rate-limit policy from the environment once, and build the
+	// security wrapper here so main owns the env→config read and newMux just applies
+	// it around the api mux (health/metrics stay outside it).
+	secure := api.NewSecurityMiddleware(api.LoadSecurityConfig(), logger)
+
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: newMux(reg, apiServer),
+		Handler: newMux(reg, apiServer, secure),
 		// Bound every phase of a request so a slow or idle client can't pin a
 		// connection on the published port. ReadHeaderTimeout predates the other
 		// three; the rest landed alongside /metrics. /benchmark sidesteps the
@@ -122,7 +127,11 @@ func main() {
 // binding a real listener (see main_test.go). The api routes are mounted by
 // copying each pattern onto the top-level mux so /metrics, /healthz and /readyz
 // (owned here, not by the api package) coexist with them.
-func newMux(reg *prometheus.Registry, apiServer *api.Server) *http.ServeMux {
+//
+// secure is the auth + per-client rate-limit wrapper. It is applied around the
+// api mux ONLY: /healthz, /readyz and /metrics are mounted before it so liveness,
+// readiness, and Prometheus scrapes are never gated by auth or throttling.
+func newMux(reg *prometheus.Registry, apiServer *api.Server, secure func(http.Handler) http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// /healthz — liveness: the process is up. /readyz — readiness: the graph
@@ -139,7 +148,7 @@ func newMux(reg *prometheus.Registry, apiServer *api.Server) *http.ServeMux {
 	// Build the api mux once and delegate each top-level pattern to it so the
 	// health/metrics endpoints (owned here) and the api endpoints share one server
 	// mux without the api package re-declaring patterns it doesn't own.
-	apiMux := apiServer.Routes()
+	apiMux := secure(apiServer.Routes())
 	for _, pattern := range []string{"/route", "/compare", "/congestion", "/graph", "/benchmark", "/benchmark/", "/stream"} {
 		mux.Handle(pattern, apiMux)
 	}
