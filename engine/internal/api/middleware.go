@@ -53,7 +53,10 @@ type SecurityConfig struct {
 // not take the whole surface down.
 func LoadSecurityConfig() SecurityConfig {
 	cfg := SecurityConfig{
-		Token: os.Getenv(EnvAPIToken),
+		// Trim the configured token: the presented token is TrimSpace'd in
+		// bearerToken, so a token configured with stray surrounding whitespace would
+		// otherwise never match (a silent, permanent 401). Trim both sides so they agree.
+		Token: strings.TrimSpace(os.Getenv(EnvAPIToken)),
 		RPS:   defaultRateLimitRPS,
 		Burst: defaultRateLimitBurst,
 	}
@@ -91,6 +94,9 @@ func NewSecurityMiddleware(cfg SecurityConfig, logger *slog.Logger) func(http.Ha
 	authEnabled := cfg.Token != ""
 
 	var limiter *rateLimiter
+	// effectiveBurst is the burst actually in force after the clamp, so the startup
+	// log reflects what the limiter will really do rather than the raw config value.
+	effectiveBurst := cfg.Burst
 	if cfg.RPS > 0 {
 		burst := float64(cfg.Burst)
 		if burst < 1 {
@@ -98,24 +104,23 @@ func NewSecurityMiddleware(cfg SecurityConfig, logger *slog.Logger) func(http.Ha
 			// clamp to at least one token so the limiter throttles rather than blocks.
 			burst = 1
 		}
+		effectiveBurst = int(burst)
 		limiter = newRateLimiter(cfg.RPS, burst)
 	}
 
 	if authEnabled {
-		logger.Info("routing surface auth enabled", "rate_limit_rps", cfg.RPS, "rate_limit_burst", cfg.Burst)
+		logger.Info("routing surface auth enabled", "rate_limit_rps", cfg.RPS, "rate_limit_burst", effectiveBurst)
 	} else {
-		logger.Warn("routing surface auth DISABLED (ROUTING_API_TOKEN unset)", "rate_limit_rps", cfg.RPS, "rate_limit_burst", cfg.Burst)
+		logger.Warn("routing surface auth DISABLED (ROUTING_API_TOKEN unset)", "rate_limit_rps", cfg.RPS, "rate_limit_burst", effectiveBurst)
 	}
 
 	expected := []byte(cfg.Token)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Per-client key: the bearer token when auth is on (so the policy is per
-			// credential), else the client IP (best-effort; see clientIP).
-			key := clientIP(r)
+			var token string
 			if authEnabled {
-				token := bearerToken(r)
+				token = bearerToken(r)
 				// Constant-time compare so a wrong token cannot be distinguished by
 				// response timing. ConstantTimeCompare is length-safe (returns 0 on a
 				// length mismatch) and is reached even for an empty token.
@@ -123,10 +128,17 @@ func NewSecurityMiddleware(cfg SecurityConfig, logger *slog.Logger) func(http.Ha
 					writeSecurityError(w, http.StatusUnauthorized, "unauthorized")
 					return
 				}
-				key = "token:" + token
 			}
 
 			if limiter != nil {
+				// Per-client key, computed only when the limiter is live: the bearer
+				// token when auth is on (policy is per credential — with a single
+				// static token this is effectively one shared bucket), else the client
+				// IP (best-effort; see clientIP).
+				key := "token:" + token
+				if !authEnabled {
+					key = clientIP(r)
+				}
 				if ok, retry := limiter.allow(key); !ok {
 					secs := int(math.Ceil(retry.Seconds()))
 					if secs < 1 {

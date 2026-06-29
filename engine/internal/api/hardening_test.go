@@ -94,3 +94,31 @@ func TestBenchmarkStatusEmbeddedSlash(t *testing.T) {
 		t.Fatalf("status = %d, want 400 for an embedded-slash job id (body: %s)", rec.Code, rec.Body.String())
 	}
 }
+
+// TestEtagMatches exercises the If-None-Match parser directly across the branches
+// the handler-level test does not reach: the "*" wildcard, a comma-separated list
+// with surrounding whitespace, the "W/" weak-validator prefix, and the empty /
+// no-match cases.
+func TestEtagMatches(t *testing.T) {
+	const etag = `"sha256:abc123"`
+	cases := []struct {
+		name        string
+		ifNoneMatch string
+		want        bool
+	}{
+		{"empty", "", false},
+		{"wildcard", "*", true},
+		{"exact", etag, true},
+		{"weak prefix", "W/" + etag, true},
+		{"list with whitespace", `"sha256:other", ` + etag, true},
+		{"list no match", `"sha256:x", "sha256:y"`, false},
+		{"other value", `"sha256:nope"`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := etagMatches(tc.ifNoneMatch, etag); got != tc.want {
+				t.Errorf("etagMatches(%q, %q) = %v, want %v", tc.ifNoneMatch, etag, got, tc.want)
+			}
+		})
+	}
+}

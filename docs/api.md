@@ -41,29 +41,54 @@ gated by auth or throttling.
 
 When `ROUTING_API_TOKEN` is set, every routing request must present
 `Authorization: Bearer <token>`. A missing or wrong token is a **`401`** with the
-uniform error envelope. The token is compared in **constant time**
-(`crypto/subtle`), so a wrong token cannot be distinguished by response timing.
+uniform error envelope. The token bytes are compared in **constant time**
+(`crypto/subtle`), so the value of a length-matched wrong token cannot be
+recovered by response timing. (The compare short-circuits on a length mismatch,
+which can in principle reveal the token's *length* — not its contents; immaterial
+for a high-entropy operator secret.)
+
+> **No anti-brute-force throttle on the auth path.** The rate limiter (below)
+> runs only *after* a successful auth check, so failed-auth requests are **not**
+> throttled — there is no per-token lockout. This is acceptable for a static,
+> high-entropy operator token (and an unauthenticated flood is bounded by the
+> server's read timeouts), but it is a deliberate defense-in-depth gap, not a
+> guarantee.
 
 `/stream` is a WebSocket upgrade; the `Authorization` header travels on the
 handshake, so the same auth applies (the request is checked **before** the
-upgrade).
+upgrade). Note that browser `WebSocket` clients cannot set an `Authorization`
+header on the handshake — a browser frontend must reach an auth-enabled `/stream`
+through a server-side proxy that injects the header.
 
 ### Per-client rate limiting (on by default)
 
-A hand-rolled token-bucket limiter throttles each client independently.
+A hand-rolled token-bucket limiter throttles each client (by the key below)
+independently.
 
 | Env var                    | Default | Effect                                              |
 | -------------------------- | ------- | --------------------------------------------------- |
-| `ROUTING_RATE_LIMIT_RPS`   | `20`    | Steady-state requests/second per client. **`<= 0` ⇒ rate limiting disabled.** |
-| `ROUTING_RATE_LIMIT_BURST` | `40`    | Burst capacity (max instantaneous requests) per client. |
+| `ROUTING_RATE_LIMIT_RPS`   | `20`    | Steady-state requests/second per key. **`<= 0` ⇒ rate limiting disabled.** |
+| `ROUTING_RATE_LIMIT_BURST` | `40`    | Burst capacity (max instantaneous requests) per key. |
 
 - **Per-client key:** the **bearer token** when auth is enabled, otherwise the
   **client IP** (the host of `r.RemoteAddr`).
+- **Granularity caveat:** the limit is per *key*, not strictly per *caller*. With
+  a single static `ROUTING_API_TOKEN`, every authenticated caller shares the one
+  `token:<token>` key — i.e. **one shared bucket**, so the RPS/burst become a
+  *global* ceiling across all authenticated clients, not a per-caller one.
+  Likewise, when auth is off behind a reverse proxy that does not preserve the
+  peer address, all callers collapse to the proxy's IP → one shared bucket. True
+  per-caller limiting only holds in the auth-off, direct-peer case. Size the
+  limits with this in mind.
 - Exceeding the limit is a **`429`** with the uniform error envelope and a
   `Retry-After` header (seconds until a token refills).
-- The per-client bucket map is **bounded**: idle buckets are evicted lazily on
-  access (no background goroutine), so memory cannot grow without bound as
-  clients come and go.
+- The per-client bucket map is bounded by **lazy idle eviction**: a bucket
+  untouched for ~10 minutes is swept on the next access (no background goroutine).
+  Steady-state memory is therefore proportional to the number of *distinct keys
+  seen within a ~10-minute window*, not strictly constant — under auth, or behind
+  a proxy, that collapses to a handful of keys; only an auth-off, directly-exposed
+  deployment seeing many distinct source IPs can grow the map appreciably between
+  sweeps.
 
 > **Reverse-proxy assumption:** the client IP is taken from `r.RemoteAddr`;
 > `X-Forwarded-For` is **not** trusted (it is client-spoofable when not behind a

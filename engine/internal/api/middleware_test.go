@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -130,6 +131,8 @@ func TestSecurityMiddlewareRateLimit(t *testing.T) {
 	}
 	if ra := rec.Header().Get("Retry-After"); ra == "" {
 		t.Errorf("429 missing Retry-After header")
+	} else if secs, err := strconv.Atoi(ra); err != nil || secs < 1 {
+		t.Errorf("Retry-After = %q, want a positive integer (seconds until refill)", ra)
 	}
 	if msg := decodeErrorEnvelope(t, rec.Body.Bytes()); msg == "" {
 		t.Errorf("429 body has empty error message")
@@ -160,6 +163,56 @@ func TestSecurityMiddlewareRateLimitPerClient(t *testing.T) {
 	// A different client still has a full bucket.
 	if code := send("198.51.100.2:2222"); code != http.StatusOK {
 		t.Fatalf("client B first request: %d, want 200 (B should not share A's bucket)", code)
+	}
+}
+
+// TestSecurityMiddlewareRateLimitTokenKeyed asserts the auth-ON posture: the
+// limiter keys on the bearer token, NOT the client IP. The same token is throttled
+// regardless of source IP — this is the production path (auth on ⇒ token-keyed),
+// which the IP-keyed tests above (auth off) never exercise.
+func TestSecurityMiddlewareRateLimitTokenKeyed(t *testing.T) {
+	const token = "tok"
+	cfg := SecurityConfig{Token: token, RPS: 1, Burst: 1} // auth on + tiny bucket
+	var reached bool
+	h := NewSecurityMiddleware(cfg, nil)(okHandler(&reached))
+
+	send := func(addr string) int {
+		req := httptest.NewRequest(http.MethodGet, "/route", nil)
+		req.RemoteAddr = addr
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if code := send("203.0.113.1:1111"); code != http.StatusOK {
+		t.Fatalf("first request: %d, want 200", code)
+	}
+	// Same token, DIFFERENT IP: still throttled, proving the key is the token (had
+	// it keyed on IP, this fresh IP would get its own full bucket and pass).
+	if code := send("203.0.113.2:2222"); code != http.StatusTooManyRequests {
+		t.Fatalf("second request (same token, different IP): %d, want 429 (token-keyed)", code)
+	}
+}
+
+// TestSecurityMiddlewareBurstClamp asserts a zero/negative burst is clamped to one
+// token rather than wedging the bucket shut (which would 429 the very first
+// request). Without the clamp this regresses to a fully-closed limiter.
+func TestSecurityMiddlewareBurstClamp(t *testing.T) {
+	cfg := SecurityConfig{RPS: 5, Burst: 0} // burst 0 must clamp to 1
+	var reached bool
+	h := NewSecurityMiddleware(cfg, nil)(okHandler(&reached))
+
+	req := httptest.NewRequest(http.MethodGet, "/route", nil)
+	req.RemoteAddr = "198.51.100.9:9999"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first request with burst 0 (clamped to 1): %d, want 200", rec.Code)
+	}
+	if !reached {
+		t.Errorf("handler not reached — a 0 burst wedged the bucket shut instead of clamping to 1")
 	}
 }
 
