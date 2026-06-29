@@ -63,9 +63,7 @@ export function boundsCenter(bounds: [number, number, number, number]): [number,
 }
 
 /**
- * Fit a deck.gl camera to the network bounds. Shared by the single-algo map and the
- * comparison view's small multiples so every panel frames the same network identically
- * (the only thing that differs between panels is the live coloring, not the geometry).
+ * Fit a deck.gl camera to the network bounds so the map frames the whole network.
  */
 export function initialViewState(geometry: GraphGeometry) {
   const [lon, lat] = boundsCenter(geometry.bounds);

@@ -1,7 +1,7 @@
 // AlgoSelector — pick which of the six RouterOrder algorithms the map renders.
-// For issue #100 exactly one is shown at a time (the six-up comparison is #101).
 // All six stream concurrently over the one socket, so switching is instant: it just
-// points the map at a different already-populated bucket map.
+// points the map at a different already-populated bucket map. A compact dropdown
+// keeps the simplified control panel small.
 
 import { ALGO_LABELS } from "../lib/algoLabels";
 import { ROUTER_ORDER, type Algo } from "../lib/protocol";
@@ -13,20 +13,19 @@ interface Props {
 
 export function AlgoSelector({ selected, onSelect }: Props) {
   return (
-    <fieldset className="algo-selector">
-      <legend>Algorithm</legend>
-      {ROUTER_ORDER.map((algo) => (
-        <label key={algo} className={algo === selected ? "selected" : ""}>
-          <input
-            type="radio"
-            name="algo"
-            value={algo}
-            checked={algo === selected}
-            onChange={() => onSelect(algo)}
-          />
-          {ALGO_LABELS[algo]}
-        </label>
-      ))}
-    </fieldset>
+    <label className="control-row">
+      <span className="control-label">Algorithm</span>
+      <select
+        className="control-select"
+        value={selected}
+        onChange={(e) => onSelect(e.target.value as Algo)}
+      >
+        {ROUTER_ORDER.map((algo) => (
+          <option key={algo} value={algo}>
+            {ALGO_LABELS[algo]}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
