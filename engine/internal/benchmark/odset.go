@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/rand"
 	"sort"
+	"time"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/domain"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
@@ -215,7 +216,8 @@ func GenerateODSet(g graph.Graph, seed int64, count int, demandLevel string, tar
 // the routers consume, in stored order. The per-request Weight carries the demand
 // (vehicles/hour) so FinalFlows accumulates real load; DepartAt is left zero
 // (static assignment — every request departs at t=0), matching how the iterative
-// routers treat the batch.
+// routers treat the batch. The static demand sweep (RunSweep / RunSingle) uses this
+// all-at-once form; the live time-of-day path uses RouteRequestsAt to spread departures.
 func (s ODSet) RouteRequests() []routing.RouteRequest {
 	reqs := make([]routing.RouteRequest, len(s.Requests))
 	for i, r := range s.Requests {
@@ -225,6 +227,26 @@ func (s ODSet) RouteRequests() []routing.RouteRequest {
 			To:     r.To,
 			Weight: r.WeightVPH,
 		}
+	}
+	return reqs
+}
+
+// RouteRequestsAt is RouteRequests with the DepartAt field SPREAD across the demand
+// window [start, start+windowSeconds] following the diurnal release curve (demand.go),
+// instead of the all-at-t=0 static burst RouteRequests produces. It is the seam that
+// makes the §R5 mesoscopic simulator's release machinery (DepartAt ≤ clock) actually
+// fire over time, so congestion builds as the peak fills and drains as it empties
+// (issue #111). The spread is deterministic — a pure function of (start, window, count)
+// via departureSpread, no RNG — so a fixed (StartTime, Seed, Count) still yields a
+// byte-identical run.
+//
+// A non-positive windowSeconds degrades to the static all-at-t=0 batch (every DepartAt
+// is 0), so a caller can opt out of time-spreading by passing window ≤ 0.
+func (s ODSet) RouteRequestsAt(start time.Time, windowSeconds float64) []routing.RouteRequest {
+	reqs := s.RouteRequests()
+	departs := departureSpread(start, windowSeconds, len(reqs))
+	for i := range reqs {
+		reqs[i].DepartAt = departs[i]
 	}
 	return reqs
 }

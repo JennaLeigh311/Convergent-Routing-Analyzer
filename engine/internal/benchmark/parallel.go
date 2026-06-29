@@ -69,6 +69,14 @@ type ParallelConfig struct {
 	// is built with; v/c scales inversely with it. A non-positive value falls back to
 	// 1.0 (the saturated reference scale).
 	CapacityScale float64
+
+	// DemandWindowSeconds is the span over which the run RELEASES its demand: vehicles
+	// depart spread across [StartTime, StartTime+DemandWindowSeconds] following the
+	// diurnal curve (demand.go) rather than all at t=0, so the peak builds and drains
+	// over the window. A non-positive value falls back to DefaultDemandWindowSeconds.
+	// It is the time-of-day demand-window knob threaded from /stream (issue #111); the
+	// spread is deterministic, so it does not affect the byte-identical-trace guarantee.
+	DemandWindowSeconds float64
 }
 
 // AlgoTick is one algorithm's enriched per-tick frame: the simulator's immutable
@@ -178,12 +186,26 @@ func RunParallel(ctx context.Context, g graph.Graph, cfg ParallelConfig, emit Al
 	}
 	bpr := cost.NewBPR(0.15, 4, capacityScale)
 
+	window := cfg.DemandWindowSeconds
+	if window <= 0 {
+		window = DefaultDemandWindowSeconds
+	}
+
+	// The chosen time-of-day DRIVES the demand (issue #111): the diurnal curve scales
+	// the total magnitude (a rush-hour start carries more traffic than a 2 a.m. start)
+	// and shapes the DepartAt spread over the window (the peak builds and drains). Both
+	// are deterministic functions of (StartTime, Seed, Count), so the run stays
+	// byte-identical for a fixed tuple — the §R5 / #93 determinism criterion.
+	demandFactor := DiurnalDemandFactor(cfg.StartTime)
+	totalDemand := SweepDemandVPH * demandFactor
+
 	// One shared, deterministic OD set every router replays — the comparability +
 	// reproducibility anchor. The label is fixed (the parallel run is a single
-	// scenario, not a sweep) and the demand is the canonical SweepDemandVPH so the
-	// realized magnitudes line up with the sweep's reference scale.
-	set := GenerateODSet(g, cfg.Seed, count, "parallel", 1.0, SweepDemandVPH)
-	reqs := set.RouteRequests()
+	// scenario, not a sweep); the demand is the canonical SweepDemandVPH scaled by the
+	// time-of-day factor so the realized magnitudes track the sweep's reference scale
+	// at the peak and fall off off-peak.
+	set := GenerateODSet(g, cfg.Seed, count, "parallel", 1.0, totalDemand)
+	reqs := set.RouteRequestsAt(cfg.StartTime, window)
 
 	simCfg := SimConfig{
 		StartTime:   cfg.StartTime,
