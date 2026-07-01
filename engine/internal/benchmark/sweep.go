@@ -184,21 +184,11 @@ func RunSweep(ctx context.Context, g graph.Graph, seed int64, count int) ([]Swee
 		bpr := cost.NewBPR(0.15, 4, level.CapacityScale)
 
 		// Route every router at this level, collecting the per-router AssignResult
-		// keyed by name so PoA can divide against systemoptimal afterward.
-		results := make(map[string]routing.AssignResult, len(RouterOrder))
-		for _, name := range RouterOrder {
-			// A frozen all-zero-load snapshot: reactive reads it as a free-flow snapshot
-			// through the shared static.Provider port (a nil snapshot is all-zero). The
-			// other routers ignore the provider.
-			router, err := buildRouter(name, g, bpr, static.NewFromSnapshot(nil), seed)
-			if err != nil {
-				return nil, err
-			}
-			res, err := router.AssignResult(ctx, reqs)
-			if err != nil {
-				return nil, fmt.Errorf("sweep: level %q router %q: %w", level.Label, name, err)
-			}
-			results[name] = res
+		// keyed by name so PoA can divide against systemoptimal afterward — through the
+		// shared static-assignment seam (assignStatic).
+		results, err := assignStatic(ctx, g, bpr, reqs, seed, RouterOrder, fmt.Sprintf("sweep: level %q", level.Label))
+		if err != nil {
+			return nil, err
 		}
 
 		referenceTotal := routing.TotalNetworkTime(g, bpr, results["systemoptimal"].FinalFlows)
@@ -309,19 +299,10 @@ func RunSingle(ctx context.Context, g graph.Graph, seed int64, count int, alpha,
 		names = append(names, "systemoptimal")
 	}
 
-	results := make(map[string]routing.AssignResult, len(names))
-	for _, n := range names {
-		// Same frozen all-zero-load snapshot RunSweep uses: reactive reads it as a
-		// free-flow snapshot; the other routers ignore the provider.
-		router, err := buildRouter(n, g, bpr, static.NewFromSnapshot(nil), seed)
-		if err != nil {
-			return nil, err
-		}
-		res, err := router.AssignResult(ctx, reqs)
-		if err != nil {
-			return nil, fmt.Errorf("single: router %q: %w", n, err)
-		}
-		results[n] = res
+	// The same shared static-assignment seam RunSweep uses (assignStatic).
+	results, err := assignStatic(ctx, g, bpr, reqs, seed, names, "single")
+	if err != nil {
+		return nil, err
 	}
 
 	referenceTotal := routing.TotalNetworkTime(g, bpr, results["systemoptimal"].FinalFlows)
@@ -406,6 +387,33 @@ func buildRouter(name string, g graph.Graph, bpr cost.BPR, provider congestion.C
 // toy graph, where some OD pairs have fewer than K simple paths (the split then
 // collapses onto the one available path, which is fine).
 const sweepK = 3
+
+// assignStatic runs each named router's real iterative AssignResult over the shared
+// OD set under a frozen free-flow reference snapshot (static.NewFromSnapshot(nil)),
+// returning the per-router AssignResult keyed by name. It is the ONE place the static
+// assignment orchestration lives — shared by RunSweep, RunSingle, and the live PoA
+// reference (staticPoARef in parallel.go) — so the "build with the free-flow snapshot,
+// run AssignResult" seam a future Spark congestion feed replaces exists once, not in
+// three copies. The reactive router reads the nil snapshot as free-flow through the
+// shared static.Provider port; the other five ignore the provider. A routing error is
+// wrapped with errContext (a caller-supplied prefix, e.g. `sweep: level "vc0.5"`) and
+// the offending router name, and returned with a nil map — never a partial result.
+// It is deterministic: a fixed OD set yields byte-identical FinalFlows per router.
+func assignStatic(ctx context.Context, g graph.Graph, bpr cost.BPR, reqs []routing.RouteRequest, seed int64, names []string, errContext string) (map[string]routing.AssignResult, error) {
+	results := make(map[string]routing.AssignResult, len(names))
+	for _, name := range names {
+		router, err := buildRouter(name, g, bpr, static.NewFromSnapshot(nil), seed)
+		if err != nil {
+			return nil, err
+		}
+		res, err := router.AssignResult(ctx, reqs)
+		if err != nil {
+			return nil, fmt.Errorf("%s router %q: %w", errContext, name, err)
+		}
+		results[name] = res
+	}
+	return results, nil
+}
 
 // sweepMarkdownColumns is the comparison table's column order: the Result columns
 // plus the sweep-specific cross-router columns (target/realized v/c, PoA, the

@@ -96,10 +96,8 @@ func TestDeltaCorrectness(t *testing.T) {
 			t.Fatalf("algo %q produced no ticks", name)
 		}
 
-		soTotals := map[int]float64{} // delta correctness is independent of PoA
-
 		// Seed the reconstruction from the snapshot (the full state at tick 0).
-		reconstructed, _ := srv.buildSnapshot(name, ticks[0], true, soTotals)
+		reconstructed, _ := srv.buildSnapshot(name, ticks[0], true)
 
 		// Verify the snapshot matches ground truth at tick 0.
 		if !equalBuckets(reconstructed, srv.fullBuckets(ticks[0])) {
@@ -109,7 +107,7 @@ func TestDeltaCorrectness(t *testing.T) {
 		// Apply each subsequent tick as a delta and verify both invariants.
 		for i := 1; i < len(ticks); i++ {
 			prev := copyBuckets(reconstructed)
-			delta := srv.buildDelta(name, ticks[i], reconstructed, soTotals)
+			delta := srv.buildDelta(name, ticks[i], reconstructed)
 
 			// Invariant 1: every changed entry genuinely changed bucket vs prev.
 			for _, ch := range delta.Changed {
@@ -368,7 +366,7 @@ func TestReplayCoalesces(t *testing.T) {
 // so the client still learns the algo exists.
 func TestBuildSnapshotEmpty(t *testing.T) {
 	srv := newTestServer(t)
-	buckets, frame := srv.buildSnapshot("naive", benchmark.AlgoTick{}, false, map[int]float64{})
+	buckets, frame := srv.buildSnapshot("naive", benchmark.AlgoTick{}, false)
 	if len(buckets) != 0 {
 		t.Errorf("empty snapshot buckets = %d, want 0", len(buckets))
 	}
@@ -380,27 +378,30 @@ func TestBuildSnapshotEmpty(t *testing.T) {
 	}
 }
 
-// TestMetricsOf pins the wire-metric mapping: ns→ms conversion and the same-tick PoA
-// pairing through PriceOfAnarchy.
+// TestMetricsOf pins the wire-metric mapping (#112): the back-compat cumulative
+// compute_ms (ns→ms), the fair per-route median passthrough, the honest
+// static-equilibrium PoA carried on the tick (no per-tick greedy pairing), and the
+// live counts.
 func TestMetricsOf(t *testing.T) {
 	tick := benchmark.AlgoTick{
-		State:          benchmark.TickState{Tick: 2, InFlight: 5, Completed: 3},
-		ComputeNanos:   2_500_000, // 2.5 ms
-		RealizedTotalS: 400,
+		State:            benchmark.TickState{Tick: 2, InFlight: 5, Completed: 3},
+		ComputeNanos:     2_500_000, // 2.5 ms
+		RouteMedianNanos: 1_200,     // 1.2 µs per Route call
+		RealizedTotalS:   400,
+		StaticPoA:        2.0,
 	}
-	m := metricsOf(tick, map[int]float64{2: 200})
+	m := metricsOf(tick)
 	if m.ComputeMs != 2.5 {
 		t.Errorf("ComputeMs = %v, want 2.5", m.ComputeMs)
 	}
+	if m.RouteMedianNanos != 1_200 {
+		t.Errorf("RouteMedianNanos = %v, want 1200", m.RouteMedianNanos)
+	}
 	if m.PoA != 2.0 {
-		t.Errorf("PoA = %v, want 2.0 (400/200)", m.PoA)
+		t.Errorf("PoA = %v, want 2.0 (the tick's static-equilibrium PoA)", m.PoA)
 	}
 	if m.RealizedTotalS != 400 || m.InFlight != 5 || m.Completed != 3 {
 		t.Errorf("metrics passthrough wrong: %+v", m)
-	}
-	// No same-tick reference (before systemoptimal's first tick) → degenerate PoA 1.
-	if got := metricsOf(tick, map[int]float64{}).PoA; got != 1.0 {
-		t.Errorf("PoA with no reference = %v, want 1", got)
 	}
 }
 
@@ -418,31 +419,6 @@ func TestVCAt(t *testing.T) {
 		if got := vcAt(vc, c.id); got != c.want {
 			t.Errorf("vcAt(%v) = %v, want %v", c.id, got, c.want)
 		}
-	}
-}
-
-// TestBuildSOTotalByTickCarryForward asserts the PoA reference is carried forward when
-// systemoptimal drains before a longer-running algo: a later tick with no same-tick
-// systemoptimal observation reuses systemoptimal's last total (not 0, which would
-// misreport PoA as 1). Ticks before systemoptimal's first observation stay unset.
-func TestBuildSOTotalByTickCarryForward(t *testing.T) {
-	mk := func(tick int, total float64) benchmark.AlgoTick {
-		return benchmark.AlgoTick{State: benchmark.TickState{Tick: tick}, RealizedTotalS: total}
-	}
-	buffers := map[string][]benchmark.AlgoTick{
-		"systemoptimal": {mk(1, 100), mk(2, 200)},             // drains at tick 2
-		"naive":         {mk(1, 150), mk(2, 250), mk(3, 400)}, // runs to tick 3
-	}
-	so := buildSOTotalByTick(buffers)
-	if so[1] != 100 || so[2] != 200 {
-		t.Errorf("same-tick totals wrong: so[1]=%v so[2]=%v, want 100,200", so[1], so[2])
-	}
-	if so[3] != 200 {
-		t.Errorf("so[3] = %v, want 200 (carried forward from systemoptimal's last tick)", so[3])
-	}
-	// And the consumer-visible effect: naive's tick-3 PoA is a real ratio, not 1.
-	if got := benchmark.PriceOfAnarchy(400, so[3]); got != 2.0 {
-		t.Errorf("naive tick-3 PoA = %v, want 2.0 (carry-forward, not the misleading 1)", got)
 	}
 }
 
