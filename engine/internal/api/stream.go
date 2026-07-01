@@ -200,6 +200,26 @@ func parseStreamParams(q map[string][]string) (streamParams, error) {
 }
 
 // --- Wire protocol frames -------------------------------------------------------
+//
+// WIRE-SEMANTICS CHANGES in the per-frame `metrics` object (#112). The stream protocol
+// carries no version token, so these are flagged here for the #114 leaderboard
+// consumer:
+//
+//   - `poa` KEEPS its name and type (float) but CHANGED MEANING: it is now the CONSTANT
+//     static-equilibrium Price of Anarchy per algo (this algo's real iterative
+//     assignment total ÷ systemoptimal's, over the shared OD set) — the same value the
+//     static /benchmark endpoint reports, so the live leaderboard now agrees with
+//     /benchmark. Previously it was a per-tick ratio of best-response mesoscopic totals
+//     ("six flavors of greedy"), which is why it moved to the honest static reference.
+//     It no longer varies tick to tick.
+//   - `route_median_ns` is a NEW additive int64 field: the fair MEDIAN wall-clock
+//     nanoseconds of a single router.Route call so far — stable run-to-run and
+//     independent of the six-sim concurrency. PREFER it over `compute_ms` for the
+//     "fastest to route" ranking; `compute_ms` is retained for back-compat but is the
+//     jittery fan-out-summed cumulative timer.
+//
+// `realized_total_s` is unchanged (the live best-response congestion magnitude), and
+// the segment/bucket frame shape (the §1 segment_id contract) is untouched.
 
 // frameSnapshot is the initial per-algorithm frame emitted on connect: the algo's
 // FULL bucketed congestion state. The client seeds its Map<segment_id, bucket> from
@@ -247,10 +267,13 @@ type algoMetrics struct {
 	// per-tick fan-out, so it over-counts overlapping Route calls and jitters under
 	// the six-sim CPU contention — read RouteMedianNs instead for a fair figure.
 	ComputeMs float64 `json:"compute_ms"`
-	// RouteMedianNs is the MEDIAN wall-clock nanoseconds of a single router.Route call
-	// so far — the fair, per-call "fastest to route" metric (#112). Unlike ComputeMs
-	// it is stable run-to-run and independent of how many algos stream concurrently.
-	RouteMedianNs int64 `json:"route_median_ns"`
+	// RouteMedianNanos is the MEDIAN wall-clock nanoseconds of a single router.Route
+	// call so far — the fair, per-call "fastest to route" metric (#112). Unlike
+	// ComputeMs it is stable run-to-run and independent of how many algos stream
+	// concurrently. It carries AlgoTick.RouteMedianNanos straight through (no unit
+	// conversion — both are nanoseconds; the name matches deliberately, unlike the
+	// ComputeNanos→ComputeMs ns→ms conversion).
+	RouteMedianNanos int64 `json:"route_median_ns"`
 	// RealizedTotalS is the realized total network time (seconds) at this tick,
 	// matching routing.TotalNetworkTime over the tick's per-edge load — the live
 	// best-response congestion magnitude (NOT a PoA numerator, see PoA below).
@@ -573,12 +596,12 @@ func (s *Server) buildDelta(name string, tick benchmark.AlgoTick, lastBuckets ma
 // and stays deterministic without any cross-goroutine same-tick indexing.
 func metricsOf(tick benchmark.AlgoTick) algoMetrics {
 	return algoMetrics{
-		ComputeMs:      float64(tick.ComputeNanos) / 1e6,
-		RouteMedianNs:  tick.RouteMedianNanos,
-		RealizedTotalS: tick.RealizedTotalS,
-		PoA:            tick.StaticPoA,
-		InFlight:       tick.State.InFlight,
-		Completed:      tick.State.Completed,
+		ComputeMs:        float64(tick.ComputeNanos) / 1e6,
+		RouteMedianNanos: tick.RouteMedianNanos,
+		RealizedTotalS:   tick.RealizedTotalS,
+		PoA:              tick.StaticPoA,
+		InFlight:         tick.State.InFlight,
+		Completed:        tick.State.Completed,
 	}
 }
 

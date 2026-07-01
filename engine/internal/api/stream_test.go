@@ -394,8 +394,8 @@ func TestMetricsOf(t *testing.T) {
 	if m.ComputeMs != 2.5 {
 		t.Errorf("ComputeMs = %v, want 2.5", m.ComputeMs)
 	}
-	if m.RouteMedianNs != 1_200 {
-		t.Errorf("RouteMedianNs = %v, want 1200", m.RouteMedianNs)
+	if m.RouteMedianNanos != 1_200 {
+		t.Errorf("RouteMedianNanos = %v, want 1200", m.RouteMedianNanos)
 	}
 	if m.PoA != 2.0 {
 		t.Errorf("PoA = %v, want 2.0 (the tick's static-equilibrium PoA)", m.PoA)

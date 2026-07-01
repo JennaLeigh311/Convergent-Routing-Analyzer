@@ -2,13 +2,11 @@ package benchmark
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion"
-	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/congestion/static"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/cost"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/graph"
 	"github.com/JennaLeigh311/Convergent-Routing-Analyzer/engine/internal/routing"
@@ -128,15 +126,16 @@ type AlgoTick struct {
 	// builds and drains — NOT a PoA numerator (see the honesty note and StaticPoA).
 	RealizedTotalS float64
 
-	// StaticPoA is the TRUE static-equilibrium Price of Anarchy of this algo versus
-	// the system-optimal reference, computed ONCE per run from the real iterative
+	// StaticPoA is the static-equilibrium Price of Anarchy of this algo versus the
+	// system-optimal reference, computed ONCE per run from the real iterative
 	// AssignResult over the SAME shared OD set + BPR — the exact computation the
 	// static /benchmark sweep performs (sweep.go), so the live PoA matches /benchmark
 	// for a fixed (start, seed). It is CONSTANT across this algo's ticks (an
-	// equilibrium is a property of the OD set, not of a mesoscopic instant) and is
-	// ≥ 1 by construction (systemoptimal minimizes the total, so SO ≤ every other
-	// total — the SO ≤ UE invariant). It replaces the former per-tick greedy pairing
-	// as the honest live PoA reference.
+	// equilibrium is a property of the OD set, not of a mesoscopic instant), and is
+	// ≥ 1 whenever systemoptimal attains the minimum total network time (the SO ≤ UE
+	// relationship — an empirical property of the iterative heuristic asserted by the
+	// SO ≤ UE test, not a proven-global-optimum guarantee). It replaces the former
+	// per-tick greedy pairing as the honest live PoA reference.
 	StaticPoA float64
 }
 
@@ -318,36 +317,30 @@ func runOneAlgo(
 	return err
 }
 
-// staticPoARef computes the true static-equilibrium Price of Anarchy of each router
+// staticPoARef computes the static-equilibrium Price of Anarchy of each router
 // (RouterOrder) against the system-optimal reference, over the shared OD set — the
-// honest live PoA reference (#112). It reuses the static sweep's machinery exactly:
-// build each router with buildRouter, run its real iterative AssignResult, and take
-// routing.TotalNetworkTime over the resulting FinalFlows; the systemoptimal total is
-// the denominator. Because the OD set + BPR here are byte-identical to a static
+// honest live PoA reference (#112). It routes through the shared static-assignment
+// seam (assignStatic) — the same machinery RunSweep/RunSingle use — then takes
+// routing.TotalNetworkTime over each router's FinalFlows, with the systemoptimal total
+// as the denominator. Because the OD set + BPR here are byte-identical to a static
 // /benchmark run at the same (seed, count, capacity scale), the returned PoA matches
-// /benchmark for the same OD set. It is deterministic (the routers produce
-// byte-identical FinalFlows for a fixed OD set) and every entry is ≥ 1 by
-// construction (SO minimizes the total ⇒ SO ≤ UE), so a caller can rely on the
-// SO ≤ UE invariant holding for the live reference.
+// /benchmark for the same OD set, and it is deterministic (the routers produce
+// byte-identical FinalFlows for a fixed OD set).
+//
+// Each entry is ≥ 1 WHENEVER systemoptimal attains the minimum total network time over
+// the OD set (the SO ≤ UE relationship). NewSystemOptimalRouter is an iterative
+// heuristic, not a proven global optimum, so this is an empirical property of the
+// assignment — not a mathematical guarantee — and it is asserted by the SO ≤ UE test
+// (TestLivePoASOLessEqualUE) rather than assumed here.
 func staticPoARef(ctx context.Context, g graph.Graph, bpr cost.BPR, reqs []routing.RouteRequest, seed int64) (map[string]float64, error) {
-	totals := make(map[string]float64, len(RouterOrder))
-	for _, name := range RouterOrder {
-		// A frozen all-zero-load snapshot: reactive reads it as a free-flow snapshot;
-		// the other routers ignore the provider — the same wiring RunSweep uses.
-		router, err := buildRouter(name, g, bpr, static.NewFromSnapshot(nil), seed)
-		if err != nil {
-			return nil, err
-		}
-		res, err := router.AssignResult(ctx, reqs)
-		if err != nil {
-			return nil, fmt.Errorf("parallel: static PoA reference router %q: %w", name, err)
-		}
-		totals[name] = routing.TotalNetworkTime(g, bpr, res.FinalFlows)
+	results, err := assignStatic(ctx, g, bpr, reqs, seed, RouterOrder, "parallel: static PoA reference")
+	if err != nil {
+		return nil, err
 	}
-	soTotal := totals["systemoptimal"]
+	soTotal := routing.TotalNetworkTime(g, bpr, results["systemoptimal"].FinalFlows)
 	poa := make(map[string]float64, len(RouterOrder))
-	for name, total := range totals {
-		poa[name] = PriceOfAnarchy(total, soTotal)
+	for name, res := range results {
+		poa[name] = PriceOfAnarchy(routing.TotalNetworkTime(g, bpr, res.FinalFlows), soTotal)
 	}
 	return poa, nil
 }
