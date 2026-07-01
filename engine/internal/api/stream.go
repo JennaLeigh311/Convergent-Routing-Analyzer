@@ -243,12 +243,23 @@ type segmentVC struct {
 // evaluators.
 type algoMetrics struct {
 	// ComputeMs is the CUMULATIVE wall-clock milliseconds spent in router.Route so
-	// far this run — the "fastest to route" metric.
+	// far this run. KEPT FOR BACK-COMPAT (#112): it is a sum over the concurrent
+	// per-tick fan-out, so it over-counts overlapping Route calls and jitters under
+	// the six-sim CPU contention — read RouteMedianNs instead for a fair figure.
 	ComputeMs float64 `json:"compute_ms"`
+	// RouteMedianNs is the MEDIAN wall-clock nanoseconds of a single router.Route call
+	// so far — the fair, per-call "fastest to route" metric (#112). Unlike ComputeMs
+	// it is stable run-to-run and independent of how many algos stream concurrently.
+	RouteMedianNs int64 `json:"route_median_ns"`
 	// RealizedTotalS is the realized total network time (seconds) at this tick,
-	// matching routing.TotalNetworkTime over the tick's per-edge load.
+	// matching routing.TotalNetworkTime over the tick's per-edge load — the live
+	// best-response congestion magnitude (NOT a PoA numerator, see PoA below).
 	RealizedTotalS float64 `json:"realized_total_s"`
-	// PoA is this algo's realized-time Price of Anarchy at this tick vs systemoptimal.
+	// PoA is this algo's TRUE static-equilibrium Price of Anarchy versus the
+	// system-optimal reference, computed once over the shared OD set via the real
+	// iterative AssignResult (#112) — the same value the static /benchmark sweep
+	// reports. It is constant across this algo's frames and ≥ 1 (SO ≤ UE). It replaces
+	// the former per-tick greedy pairing, which measured "six flavors of greedy".
 	PoA float64 `json:"poa"`
 	// InFlight / Completed are the live vehicle counts (context for the metrics).
 	InFlight  int `json:"in_flight"`
@@ -414,8 +425,7 @@ func (s *Server) replay(ctx context.Context, conn *websocket.Conn, params stream
 // socket I/O is what lets the pacing and coalescing logic be unit-tested directly
 // (see stream_test.go) rather than only through a wall-clock end-to-end dial.
 type replayState struct {
-	buffers       map[string][]benchmark.AlgoTick
-	soTotalByTick map[int]float64
+	buffers map[string][]benchmark.AlgoTick
 	// lastBuckets[algo][segment_id] is the last bucket emitted for a segment, the diff
 	// base for the next delta. cursor[algo] is the index of the next unsent tick.
 	lastBuckets  map[string]map[string]int
@@ -433,7 +443,6 @@ type replayState struct {
 func (s *Server) newReplayState(buffers map[string][]benchmark.AlgoTick, params streamParams) (*replayState, []frameSnapshot) {
 	rs := &replayState{
 		buffers:                 buffers,
-		soTotalByTick:           buildSOTotalByTick(buffers),
 		lastBuckets:             make(map[string]map[string]int, len(benchmark.RouterOrder)),
 		cursor:                  make(map[string]int, len(benchmark.RouterOrder)),
 		firstSimTime:            make(map[string]time.Time, len(benchmark.RouterOrder)),
@@ -456,7 +465,7 @@ func (s *Server) newReplayState(buffers map[string][]benchmark.AlgoTick, params 
 			rs.cursor[name] = 1
 			rs.firstSimTime[name] = first.State.SimTime
 		}
-		buckets, frame := s.buildSnapshot(name, first, len(ticks) > 0, rs.soTotalByTick)
+		buckets, frame := s.buildSnapshot(name, first, len(ticks) > 0)
 		rs.lastBuckets[name] = buckets
 		snapshots = append(snapshots, frame)
 	}
@@ -488,7 +497,7 @@ func (rs *replayState) advance(s *Server) []frameDelta {
 			rs.cursor[name]++
 		}
 		if latestIdx >= 0 {
-			frames = append(frames, s.buildDelta(name, ticks[latestIdx], rs.lastBuckets[name], rs.soTotalByTick))
+			frames = append(frames, s.buildDelta(name, ticks[latestIdx], rs.lastBuckets[name]))
 		}
 	}
 	return frames
@@ -504,53 +513,10 @@ func (rs *replayState) done() bool {
 	return true
 }
 
-// buildSOTotalByTick indexes systemoptimal's realized total by tick so each frame's
-// PoA is computed against the SAME-TICK systemoptimal reference (poa.go) — a
-// deterministic pair of already-deterministic per-tick totals, with no cross-goroutine
-// timing in the result (the determinism criterion).
-//
-// For a tick at which systemoptimal has no observation of its own (it drained earlier
-// than a longer-running algo), the reference is CARRIED FORWARD from systemoptimal's
-// last observed tick rather than left at 0. A 0 reference would make PriceOfAnarchy's
-// degenerate guard report PoA = 1 — which reads as "optimal" precisely on a late,
-// high-congestion tick — so carrying the last real optimum forward keeps a meaningful
-// (and conservative) ratio. Ticks BEFORE systemoptimal's first observation have no
-// reference at all and are left unset (PoA falls back to 1, the honest "no reference
-// yet" value). On the toy graph all six algos run identical tick ranges, so no
-// carry-forward occurs and the map is exactly the same-tick index.
-func buildSOTotalByTick(buffers map[string][]benchmark.AlgoTick) map[int]float64 {
-	soTicks := buffers["systemoptimal"]
-
-	maxTick := 0
-	for _, ticks := range buffers {
-		for _, tk := range ticks {
-			if tk.State.Tick > maxTick {
-				maxTick = tk.State.Tick
-			}
-		}
-	}
-
-	soTotalByTick := make(map[int]float64, maxTick+1)
-	var lastSO float64
-	haveSO := false
-	soIdx := 0
-	for t := 0; t <= maxTick; t++ {
-		for soIdx < len(soTicks) && soTicks[soIdx].State.Tick <= t {
-			lastSO = soTicks[soIdx].RealizedTotalS
-			haveSO = true
-			soIdx++
-		}
-		if haveSO {
-			soTotalByTick[t] = lastSO
-		}
-	}
-	return soTotalByTick
-}
-
 // buildSnapshot builds an algorithm's initial snapshot frame from its first tick and
 // returns the bucket map it establishes (so deltas diff against it). When the algo
 // produced no tick (have == false), it returns an empty snapshot and an empty map.
-func (s *Server) buildSnapshot(name string, first benchmark.AlgoTick, have bool, soTotalByTick map[int]float64) (map[string]int, frameSnapshot) {
+func (s *Server) buildSnapshot(name string, first benchmark.AlgoTick, have bool) (map[string]int, frameSnapshot) {
 	buckets := make(map[string]int)
 	segs := make([]segmentVC, 0)
 	frame := frameSnapshot{Type: "snapshot", Algo: name}
@@ -569,7 +535,7 @@ func (s *Server) buildSnapshot(name string, first benchmark.AlgoTick, have bool,
 	frame.Tick = first.State.Tick
 	frame.SimTime = first.State.SimTime.UTC().Format(time.RFC3339)
 	frame.Segments = segs
-	frame.Metrics = metricsOf(first, soTotalByTick)
+	frame.Metrics = metricsOf(first)
 	return buckets, frame
 }
 
@@ -577,7 +543,7 @@ func (s *Server) buildSnapshot(name string, first benchmark.AlgoTick, have bool,
 // bucket changed since lastBuckets, and MUTATES lastBuckets in place to this tick's
 // buckets so the next delta diffs against the current state. Segments are sorted by
 // segment_id for a deterministic, diffable frame.
-func (s *Server) buildDelta(name string, tick benchmark.AlgoTick, lastBuckets map[string]int, soTotalByTick map[int]float64) frameDelta {
+func (s *Server) buildDelta(name string, tick benchmark.AlgoTick, lastBuckets map[string]int) frameDelta {
 	changed := make([]segmentVC, 0)
 	for edgeID, segment := range s.segmentByEdge {
 		vc := vcAt(tick.State.VC, edgeID)
@@ -595,21 +561,22 @@ func (s *Server) buildDelta(name string, tick benchmark.AlgoTick, lastBuckets ma
 		Tick:    tick.State.Tick,
 		SimTime: tick.State.SimTime.UTC().Format(time.RFC3339),
 		Changed: changed,
-		Metrics: metricsOf(tick, soTotalByTick),
+		Metrics: metricsOf(tick),
 	}
 }
 
-// metricsOf maps an AlgoTick's metrics onto the wire shape (nanoseconds → ms) and
-// derives the per-tick PoA by pairing this algo's realized total with the SAME-TICK
-// systemoptimal total (carried forward when systemoptimal drained earlier — see
-// buildSOTotalByTick) through PriceOfAnarchy. Pairing same-tick totals in this single
-// ordered pass is what keeps PoA deterministic — see parallel.go.
-func metricsOf(tick benchmark.AlgoTick, soTotalByTick map[int]float64) algoMetrics {
-	soTotal := soTotalByTick[tick.State.Tick] // 0 only before systemoptimal's first tick
+// metricsOf maps an AlgoTick's metrics onto the wire shape: the back-compat
+// cumulative compute_ms (nanoseconds → ms) alongside the fair per-route median, and
+// the honest static-equilibrium PoA the orchestrator computed once over the shared OD
+// set (#112). PoA is now carried on the tick (AlgoTick.StaticPoA) rather than derived
+// here from a per-tick greedy pairing, so it matches the static /benchmark reference
+// and stays deterministic without any cross-goroutine same-tick indexing.
+func metricsOf(tick benchmark.AlgoTick) algoMetrics {
 	return algoMetrics{
 		ComputeMs:      float64(tick.ComputeNanos) / 1e6,
+		RouteMedianNs:  tick.RouteMedianNanos,
 		RealizedTotalS: tick.RealizedTotalS,
-		PoA:            benchmark.PriceOfAnarchy(tick.RealizedTotalS, soTotal),
+		PoA:            tick.StaticPoA,
 		InFlight:       tick.State.InFlight,
 		Completed:      tick.State.Completed,
 	}
