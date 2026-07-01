@@ -189,8 +189,9 @@ func (t timedRouter) Name() string { return t.inner.Name() }
 // All six sims share the SAME deterministic OD set (GenerateODSet with cfg.Seed) and
 // the SAME immutable graph and BPR, so the streams are directly comparable and the
 // run is reproducible. Each sim runs on its own goroutine with no shared mutable
-// state except the lock-free poaRef and per-algo compute counters; emit is the only
-// thing that crosses back to the consumer.
+// state except the read-only per-run static PoA map (staticPoARef, built before any
+// sim starts) and its own per-algo compute counters; emit is the only thing that
+// crosses back to the consumer.
 //
 // emit is called on the per-algo simulation goroutines (NOT serialized across algos),
 // so a consumer that needs a single-threaded view must funnel the callbacks itself
@@ -274,7 +275,9 @@ func runOneAlgo(
 ) error {
 	var computeMu sync.Mutex
 	var computeNanos int64
-	var computeSamples []int64
+	// Preallocated to the OD-set size: every request routes at most once per departure,
+	// so this caps the in-lock reallocations as the tick-1 fan-out appends samples.
+	computeSamples := make([]int64, 0, len(reqs))
 
 	factory := func(provider congestion.CongestionProvider) routing.Router {
 		// buildRouter is the single six-way constructor shared with the sweep; here it

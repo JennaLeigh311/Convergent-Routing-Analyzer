@@ -300,7 +300,7 @@ func RunSingle(ctx context.Context, g graph.Graph, seed int64, count int, alpha,
 	}
 
 	// The same shared static-assignment seam RunSweep uses (assignStatic).
-	results, err := assignStatic(ctx, g, bpr, reqs, seed, names, "single:")
+	results, err := assignStatic(ctx, g, bpr, reqs, seed, names, "single")
 	if err != nil {
 		return nil, err
 	}

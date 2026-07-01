@@ -453,7 +453,7 @@ state at its first tick. The client seeds its `Map<segment_id, bucket>` from it.
   "segments": [
     { "segment_id": "905512:0:F", "vc": 0.42, "bucket": 4 }
   ],
-  "metrics": { "compute_ms": 0.18, "realized_total_s": 1234.5, "poa": 1.0, "in_flight": 120, "completed": 0 }
+  "metrics": { "compute_ms": 0.18, "route_median_ns": 1200, "realized_total_s": 1234.5, "poa": 1.13, "in_flight": 120, "completed": 0 }
 }
 ```
 
@@ -471,7 +471,7 @@ tests assert).
   "changed": [
     { "segment_id": "905512:0:F", "vc": 0.91, "bucket": 9 }
   ],
-  "metrics": { "compute_ms": 1.04, "realized_total_s": 1402.7, "poa": 1.13, "in_flight": 240, "completed": 30 }
+  "metrics": { "compute_ms": 1.04, "route_median_ns": 1200, "realized_total_s": 1402.7, "poa": 1.13, "in_flight": 240, "completed": 30 }
 }
 ```
 
@@ -481,15 +481,26 @@ Carried on **every** frame, updated per tick, matching the #89/#90 evaluators:
 
 | Field              | Meaning                                                                                          |
 | ------------------ | ------------------------------------------------------------------------------------------------ |
-| `compute_ms`       | **Cumulative** wall-clock ms spent in `router.Route` so far — answers *"fastest to route"*.       |
+| `compute_ms`       | **Cumulative** wall-clock ms spent in `router.Route` so far. **Kept for back-compat** — it sums over the concurrent per-tick route fan-out, so it over-counts overlapping calls and jitters run-to-run; prefer `route_median_ns` for *"fastest to route"*. |
+| `route_median_ns`  | **Median** wall-clock **nanoseconds** of a single `router.Route` call so far — the fair, per-call *"fastest to route"* metric (int). Stable run-to-run and independent of the six-sim concurrency. |
 | `realized_total_s` | Realized **total network time** (s) at this tick — `routing.TotalNetworkTime` over the tick load. |
-| `poa`              | Realized-time **Price of Anarchy** vs. `systemoptimal` **at the same tick** — *"minimizes traffic"*. |
+| `poa`              | **Price of Anarchy** vs. `systemoptimal` — *"minimizes traffic"*. The **constant static-equilibrium** ratio for this algorithm (see below). |
 | `in_flight`        | Vehicles on the network at this tick.                                                             |
 | `completed`        | Cumulative vehicles that have finished their trip.                                                |
 
-`poa` is computed by pairing this algorithm's `realized_total_s` with
-`systemoptimal`'s realized total **at the same tick** (so `systemoptimal`'s own `poa`
-is `1`). Pairing same-tick totals — rather than reading whichever total a concurrent
-goroutine happened to publish first — is what keeps the stream deterministic: at a
-fixed `seed` the whole trace (ticks, `sim_time`, per-segment buckets, and metrics) is
-byte-identical run to run, modulo wall-clock `compute_ms`.
+> **Wire-semantics change (#112).** The stream frame carries no version token, so
+> note two changes for consumers. **`route_median_ns` is new** (additive int; ignore
+> it and old clients still parse). **`poa` kept its name and type (float) but changed
+> meaning**: it is now the *constant static-equilibrium* Price of Anarchy — this
+> algorithm's real iterative-assignment total ÷ `systemoptimal`'s, over the shared OD
+> set — the **same value the static `/benchmark` sweep reports**, so the live
+> leaderboard now agrees with `/benchmark`. It no longer varies tick to tick.
+> Previously `poa` was a per-tick ratio of best-response mesoscopic totals.
+
+`poa` is computed **once per run** over the shared OD set via the real iterative
+`AssignResult` (the same machinery `/benchmark` uses), so `systemoptimal`'s own `poa`
+is `1` and every other algorithm's is `≥ 1`. Because it is a property of the OD set —
+not of a mesoscopic instant — it is identical on every frame for a given algorithm.
+At a fixed `seed` the whole trace (ticks, `sim_time`, per-segment buckets, and `poa`)
+is byte-identical run to run, modulo the wall-clock `compute_ms`/`route_median_ns`
+timers.

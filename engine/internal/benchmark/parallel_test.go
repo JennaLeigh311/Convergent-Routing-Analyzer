@@ -150,13 +150,13 @@ func TestRunParallelStartTimeShifts(t *testing.T) {
 	}
 }
 
-// TestPoASameTickPairing asserts the PriceOfAnarchy ratio function on same-OD-set
-// totals: pairing an algo's total with systemoptimal's gives PoA = total/soTotal, and
-// systemoptimal against itself is exactly 1. (Since #112 the stream's live PoA comes
-// from AlgoTick.StaticPoA — the static-equilibrium reference — not from pairing these
-// per-tick mesoscopic totals; this test pins the underlying ratio math the static
-// reference relies on.)
-func TestPoASameTickPairing(t *testing.T) {
+// TestPriceOfAnarchyRatioOnTickTotals asserts the PriceOfAnarchy ratio function on
+// same-OD-set totals: pairing an algo's total with systemoptimal's gives PoA =
+// total/soTotal, and systemoptimal against itself is exactly 1. The stream NO LONGER
+// pairs per-tick totals — since #112 its live PoA comes from AlgoTick.StaticPoA (the
+// static-equilibrium reference) — so this test only pins the underlying ratio math
+// that reference relies on, not any same-tick pairing seam (which no longer exists).
+func TestPriceOfAnarchyRatioOnTickTotals(t *testing.T) {
 	out := collectAll(t, baseConfig())
 	soByTick := make(map[int]float64)
 	for _, tk := range out["systemoptimal"] {
@@ -178,6 +178,27 @@ func TestPoASameTickPairing(t *testing.T) {
 		if math.IsNaN(got) || math.IsInf(got, 0) {
 			t.Errorf("naive PoA at tick %d non-finite: %v", tk.State.Tick, got)
 		}
+	}
+}
+
+// TestRunParallelStaticPoARefErrorPropagates asserts RunParallel's new (#112)
+// pre-sim early return: if the static PoA reference (staticPoARef → assignStatic)
+// fails, RunParallel returns that error BEFORE launching any sim goroutine and emits
+// nothing — never a partial stream. A pre-cancelled context makes the first
+// AssignResult bail, exercising exactly that path.
+func TestRunParallelStaticPoARefErrorPropagates(t *testing.T) {
+	g := loadToy(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the run so staticPoARef's first AssignResult bails.
+
+	emitted := 0
+	emit := func(benchmark.AlgoTick) { emitted++ }
+	err := benchmark.RunParallel(ctx, g, baseConfig(), emit)
+	if err == nil {
+		t.Fatalf("RunParallel with cancelled context: err = nil, want a propagated error")
+	}
+	if emitted != 0 {
+		t.Errorf("RunParallel emitted %d ticks alongside an error, want no partial stream", emitted)
 	}
 }
 

@@ -265,7 +265,7 @@ type algoMetrics struct {
 	// ComputeMs is the CUMULATIVE wall-clock milliseconds spent in router.Route so
 	// far this run. KEPT FOR BACK-COMPAT (#112): it is a sum over the concurrent
 	// per-tick fan-out, so it over-counts overlapping Route calls and jitters under
-	// the six-sim CPU contention — read RouteMedianNs instead for a fair figure.
+	// the six-sim CPU contention — read RouteMedianNanos instead for a fair figure.
 	ComputeMs float64 `json:"compute_ms"`
 	// RouteMedianNanos is the MEDIAN wall-clock nanoseconds of a single router.Route
 	// call so far — the fair, per-call "fastest to route" metric (#112). Unlike
