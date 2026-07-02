@@ -118,32 +118,83 @@ func TestRunParallelDeterministic(t *testing.T) {
 	}
 }
 
-// TestRunParallelStartTimeShifts asserts shifting StartTime shifts every tick's
-// SimTime by exactly the same offset while leaving the relative dynamics (VC trace)
-// identical — the #93 "slider sets the start clock observably" requirement.
-func TestRunParallelStartTimeShifts(t *testing.T) {
-	cfg := baseConfig()
-	a := collectAll(t, cfg)
+// totalRealizedNetworkTime sums an algo's per-tick realized total network time over
+// its whole stream — the run's integrated (over-the-run) realized network time, the
+// "how much traffic did the network carry" magnitude the peak-vs-off-peak criterion
+// compares.
+func totalRealizedNetworkTime(ticks []benchmark.AlgoTick) float64 {
+	var sum float64
+	for _, tk := range ticks {
+		sum += tk.RealizedTotalS
+	}
+	return sum
+}
 
-	cfg2 := baseConfig()
-	offset := 3 * time.Hour
-	cfg2.StartTime = cfg.StartTime.Add(offset)
-	b := collectAll(t, cfg2)
+// TestRunParallelPeakVsOffPeak is the issue-#111 acceptance criterion: starting the
+// simulation at a rush-hour peak yields measurably HIGHER realized network time than
+// starting it off-peak (dead of night), on the SAME seed. The chosen StartTime now
+// drives the diurnal demand curve (demand.go) — both the OD-set magnitude and the
+// DepartAt spread — so 08:00 and 02:00 are no longer byte-identical runs with a
+// different caption (the cosmetic-only behavior this issue retired). This replaces the
+// former TestRunParallelStartTimeShifts, whose assertion was that the v/c trace was
+// IDENTICAL across a start shift.
+func TestRunParallelPeakVsOffPeak(t *testing.T) {
+	const seed = 20260618
+
+	peak := baseConfig()
+	peak.Seed = seed
+	peak.StartTime = time.Date(2026, 6, 22, 8, 0, 0, 0, time.UTC) // AM rush peak
+
+	off := baseConfig()
+	off.Seed = seed
+	off.StartTime = time.Date(2026, 6, 22, 2, 0, 0, 0, time.UTC) // dead of night trough
+
+	peakOut := collectAll(t, peak)
+	offOut := collectAll(t, off)
+
+	// Compare on every router: a peak start must carry strictly more realized network
+	// time than an off-peak start at the same seed.
+	for _, name := range benchmark.RouterOrder {
+		peakTotal := totalRealizedNetworkTime(peakOut[name])
+		offTotal := totalRealizedNetworkTime(offOut[name])
+		if !(peakTotal > offTotal) {
+			t.Errorf("%q: peak-hour start must yield strictly higher realized network time than off-peak; got peak=%v off=%v",
+				name, peakTotal, offTotal)
+		}
+	}
+
+	// Sanity: the magnitude factor itself orders peak above off-peak (the curve the
+	// demand is scaled by), so the result above is causal, not incidental.
+	if benchmark.DiurnalDemandFactor(peak.StartTime) <= benchmark.DiurnalDemandFactor(off.StartTime) {
+		t.Fatalf("diurnal factor must rank the rush peak above the night trough: peak=%v off=%v",
+			benchmark.DiurnalDemandFactor(peak.StartTime), benchmark.DiurnalDemandFactor(off.StartTime))
+	}
+}
+
+// TestRunParallelStartShiftDeterministic asserts the other half of the acceptance
+// criterion: for a FIXED (StartTime, Seed) the per-tick trace is byte-identical run to
+// run — the diurnal demand shaping introduced no wall-clock or unseeded randomness.
+func TestRunParallelStartShiftDeterministic(t *testing.T) {
+	cfg := baseConfig()
+	cfg.StartTime = time.Date(2026, 6, 22, 2, 0, 0, 0, time.UTC) // an off-peak start
+	a := collectAll(t, cfg)
+	b := collectAll(t, cfg)
 
 	for _, name := range benchmark.RouterOrder {
 		ta, tb := a[name], b[name]
 		if len(ta) != len(tb) {
-			t.Fatalf("%q tick counts differ across start shift: %d vs %d", name, len(ta), len(tb))
+			t.Fatalf("%q tick counts differ run to run at a fixed start: %d vs %d", name, len(ta), len(tb))
 		}
 		for i := range ta {
-			wantTime := ta[i].State.SimTime.Add(offset)
-			if !tb[i].State.SimTime.Equal(wantTime) {
-				t.Errorf("%q tick %d SimTime not shifted: got %v want %v", name, i, tb[i].State.SimTime, wantTime)
+			if !ta[i].State.SimTime.Equal(tb[i].State.SimTime) {
+				t.Errorf("%q tick %d SimTime differ run to run", name, i)
 			}
-			// Relative dynamics unchanged: the VC trace is byte-identical.
+			if ta[i].RealizedTotalS != tb[i].RealizedTotalS {
+				t.Errorf("%q tick %d realized total not deterministic: %v vs %v", name, i, ta[i].RealizedTotalS, tb[i].RealizedTotalS)
+			}
 			for e := range ta[i].State.VC {
 				if ta[i].State.VC[e] != tb[i].State.VC[e] {
-					t.Errorf("%q tick %d edge %d VC changed across start shift", name, i, e)
+					t.Errorf("%q tick %d edge %d VC not deterministic", name, i, e)
 				}
 			}
 		}

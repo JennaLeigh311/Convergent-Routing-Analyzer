@@ -329,11 +329,18 @@ func TestSimulateMaxTicksCutoff(t *testing.T) {
 	}
 }
 
-// TestSimulateStartTimeShift is the start-time acceptance criterion: a chosen start
-// time-of-day/date sets the demand/clock origin, so every TickState.SimTime shifts by
-// exactly the start-time offset while the DYNAMICS (loads, completions, realized
-// metrics) are unchanged. We run the same OD set at two start times and assert each
-// tick's SimTime differs by exactly the offset and the realized metrics are identical.
+// TestSimulateStartTimeShift pins the SIMULATOR's pure clock-relabel invariant: given
+// the SAME request batch (identical DepartAt/Weight), a shifted StartTime relabels
+// every TickState.SimTime by exactly the offset while the DYNAMICS (loads, completions,
+// realized metrics) are unchanged. This is correct and intentionally preserved — the
+// time-of-day DEMAND SHAPING (magnitude scaling + DepartAt spread) introduced for #111
+// lives ABOVE Simulate, in RunParallel via the diurnal curve (demand.go); Simulate
+// itself remains a pure mechanism whose only response to StartTime is the clock stamp.
+// The peak-vs-off-peak congestion difference is asserted at the RunParallel layer
+// (TestRunParallelPeakVsOffPeak), where the curve is applied — not here.
+//
+// We run the same OD set at two start times and assert each tick's SimTime differs by
+// exactly the offset and the realized metrics are identical.
 func TestSimulateStartTimeShift(t *testing.T) {
 	g := corridorGraph(t)
 	bpr := cost.DefaultBPR()
