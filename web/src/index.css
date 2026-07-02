@@ -200,33 +200,183 @@ body {
   color: #ffb4ab;
 }
 
-/* The floating live-metrics summary card over the map. */
-.summary-card {
+/* ---- Six-up parallel comparison (#114): leaderboards + small-multiple maps ---- */
+
+.comparison {
   position: absolute;
-  left: 1rem;
-  bottom: 1rem;
+  inset: 0;
+  overflow: auto;
   display: flex;
-  gap: 1.4rem;
-  background: rgb(from var(--panel) r g b / 0.92);
-  border: 1px solid #2a2f3d;
-  border-radius: 10px;
-  padding: 0.7rem 1.1rem;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
 }
-.summary-stat {
+
+.comparison-maps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+}
+
+.mini-map {
+  margin: 0;
+  border: 1px solid #2a2f3d;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.mini-map.reference {
+  border-color: var(--accent);
+}
+/* The selected tile is the single-algo focus highlight (the algorithm picker). */
+.mini-map.selected {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+/* A tile leading either ranking gets a gold ring so the winner reads at a glance. */
+.mini-map.leader {
+  border-color: #ffd54a;
+}
+.mini-map-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+}
+.mini-map-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  /* Rendered as a button so a click focuses this algorithm; strip the button chrome. */
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.mini-map-name:hover {
+  color: var(--accent);
+}
+.mini-map-poa {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mini-map-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0 0.6rem 0.35rem;
+}
+.leader-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0.08rem 0.35rem;
+}
+.leader-badge.compute {
+  color: #0b0d12;
+  background: #ffd54a;
+}
+.leader-badge.traffic {
+  color: #0b0d12;
+  background: #b9f6ca;
+}
+.mini-map-canvas {
+  position: relative;
+  height: 190px;
+  background: #0b0d12;
+}
+
+.ref-badge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #0b0d12;
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+/* ---- The two live leaderboards --------------------------------------------- */
+
+.leaderboards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+.leaderboard {
+  border: 1px solid #2a2f3d;
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.6rem 0.8rem;
+}
+.leaderboard-head {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+  margin-bottom: 0.5rem;
 }
-.summary-value {
-  font-size: 1.5rem;
+.leaderboard-title {
+  font-size: 0.9rem;
   font-weight: 700;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
+  margin: 0;
 }
-.summary-label {
+.leaderboard-hint {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted);
+}
+.leaderboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 1.4rem 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: 5px;
+  font-size: 0.85rem;
+}
+.leaderboard-row.winner {
+  /* 12%-alpha accent — derived from --accent so it can't drift if the token retunes. */
+  background: rgb(from var(--accent) r g b / 0.12);
+  font-weight: 600;
+}
+.leaderboard-rank {
+  text-align: center;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.leaderboard-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.winner-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #0b0d12;
+  background: var(--accent);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+.leaderboard-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }

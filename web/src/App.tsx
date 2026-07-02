@@ -1,14 +1,18 @@
-// App — the simplified live congestion screen: load /graph geometry once, and let the
-// user Start/Stop the analysis and pick the car load + algorithm. While running, all
-// six algorithms fold concurrently into the store off one /stream socket; the map paints
-// the selected one and a small summary card shows its headline metrics. There are no
-// other views — Start, set the load, pick the algorithm, watch the roads congest.
+// App — the live parallel-comparison screen (#114). On load the user sees ALL SIX
+// algorithms running in parallel over the shared /graph geometry, with two live
+// leaderboards naming (1) the algorithm that computes a route the quickest and (2) the
+// one that best minimizes realized traffic — each re-ranking live as the sim runs.
+//
+// The geometry is loaded once; the single /stream socket folds all six algorithms into
+// the store every frame (we NEVER open six sockets — one socket, six folds). The
+// controls stay a simple Start/Stop + car-load + algorithm picker; the algorithm
+// picker now just focuses (highlights) one tile in the grid rather than swapping a
+// single map. Start, set the load, watch the six roads congest and the boards re-rank.
 
 import { useEffect } from "react";
 
-import { CongestionMap } from "./components/CongestionMap";
+import { ComparisonView } from "./components/ComparisonView";
 import { Controls } from "./components/Controls";
-import { MetricsPanel } from "./components/MetricsPanel";
 import { Legend } from "./components/Legend";
 import { useCongestionSocket } from "./hooks/useCongestionSocket";
 import { useGraph } from "./hooks/useGraph";
@@ -33,13 +37,9 @@ export default function App() {
   const status = useAppStore((s) => s.status);
   const streamError = useAppStore((s) => s.error);
 
-  // The selected algo's live state. Subscribing to just these slices means a delta for
-  // a non-selected algorithm doesn't re-render the map or the summary card.
-  const buckets = useAppStore((s) => s.congestion.buckets[selectedAlgo]);
-  const metrics = useAppStore((s) => s.congestion.metrics[selectedAlgo]);
-
   // Open /stream only while running; reconnect when the car load changes (re-seeds the
-  // simulation with the new request volume).
+  // simulation with the new request volume). One socket folds all six algorithms into
+  // the store — the six-up grid reads them straight from there.
   useCongestionSocket({ enabled: running, count: carLoad, speed: 120, tickHz: 1 });
 
   // The run is over once the stream drains (server closes → "closed") or the connection
@@ -78,9 +78,8 @@ export default function App() {
         )}
         {geometry && (
           <>
-            <CongestionMap geometry={geometry} buckets={buckets} />
-            {metrics && <MetricsPanel metrics={metrics} />}
-            {!running && !metrics && (
+            <ComparisonView geometry={geometry} />
+            {!running && status === "idle" && (
               <div className="hint-overlay">Press “Start analysis” to begin.</div>
             )}
           </>
