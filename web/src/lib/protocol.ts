@@ -44,8 +44,12 @@ export interface SegmentVC {
 
 /** Per-algorithm running metrics carried on every frame. */
 export interface AlgoMetrics {
+  /** Cumulative ms in router.Route — kept for back-compat; jittery. Prefer route_median_ns. */
   compute_ms: number;
+  /** Median ns of a single router.Route call — the fair, stable "fastest to route" metric (#112). */
+  route_median_ns: number;
   realized_total_s: number;
+  /** Constant static-equilibrium Price of Anarchy vs. systemoptimal (matches /benchmark, #112). */
   poa: number;
   in_flight: number;
   completed: number;

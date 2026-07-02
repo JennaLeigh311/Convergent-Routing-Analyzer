@@ -2,6 +2,7 @@ package benchmark
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -85,11 +86,24 @@ type ParallelConfig struct {
 // traffic"). It is the unit the orchestrator forwards to its consumer; the
 // WebSocket layer turns a stream of these into snapshot/delta frames.
 //
+// HONESTY NOTE (#112). The per-tick stream is driven by the §R5 mesoscopic simulator,
+// which ONLY ever calls the single-request router.Route path — it never runs the
+// iterative AssignResult/MSA/equilibrium loop. So the "systemoptimal", "msa",
+// "incremental" and "multipath" streams here are per-request BEST-RESPONSE VARIANTS
+// against each tick's frozen snapshot, NOT the real iterative routers. Their per-tick
+// RealizedTotalS is therefore an honest mesoscopic congestion magnitude, but it is
+// NOT a system optimum and MUST NOT be used as a Price-of-Anarchy denominator (doing
+// so was the #112 "six flavors of greedy" bug). The true PoA reference is instead
+// StaticPoA below — computed once from the real iterative AssignResult over the same
+// OD set, exactly as the static /benchmark sweep does.
+//
 // Every field is a value or freshly-allocated slice owned by the consumer — the
 // orchestrator never retains or mutates an already-forwarded AlgoTick — so a
 // consumer may keep it across ticks without aliasing a sim's live state.
 type AlgoTick struct {
 	// Algo is the router name (one of benchmark.RouterOrder) this frame belongs to.
+	// In the stream it identifies the BEST-RESPONSE variant of that router (see the
+	// honesty note above), not the iterative router of the same name.
 	Algo string
 
 	// State is the simulator's immutable per-tick snapshot (clock, in-flight/
@@ -98,29 +112,39 @@ type AlgoTick struct {
 	State TickState
 
 	// ComputeNanos is the CUMULATIVE wall-clock nanoseconds this algorithm has spent
-	// inside router.Route across all ticks so far — the "fastest to route" metric.
-	// It is measured around the simulator's per-tick route fan-out (wrapped router),
-	// so it is the real routing cost the algorithm incurs as the run progresses, not
-	// a synthetic figure.
+	// inside router.Route across all ticks so far — kept ON THE WIRE FOR BACK-COMPAT
+	// (compute_ms). It is a SUM over the concurrent per-tick route fan-out, so it
+	// over-counts overlapping concurrent Route calls and jitters run-to-run under the
+	// six-sim CPU contention; prefer RouteMedianNanos below as the fair figure (#112).
 	ComputeNanos int64
+
+	// RouteMedianNanos is the MEDIAN wall-clock nanoseconds of a SINGLE router.Route
+	// call so far this run — the fair per-route compute metric (#112). Unlike
+	// ComputeNanos it is a per-CALL figure (it divides out how many routes/ticks/algos
+	// ran), so it is stable run-to-run and does not grow with the concurrent fan-out.
+	// The median (not the mean) makes it robust to GC/scheduler outliers. It is
+	// accumulated in this algo's OWN per-route sample buffer, so the measurement never
+	// contends across the six concurrent algos.
+	RouteMedianNanos int64
 
 	// RealizedTotalS is the realized TOTAL network time (seconds) at this tick: the
 	// sum over edges of BPR.Cost(edge, load) × load at the tick's per-edge load,
 	// matching routing.TotalNetworkTime exactly (the #89/#90 evaluator). It is the
-	// "minimizing traffic" magnitude — and the input the consumer divides to form the
-	// per-tick Price of Anarchy.
-	//
-	// PoA IS NOT CARRIED HERE BY DESIGN. PoA is a RELATIONSHIP between this algo's
-	// realized total and the systemoptimal algo's realized total AT THE SAME TICK
-	// (poa.go), and systemoptimal runs on its own goroutine — so computing PoA inside
-	// the live observer would divide against whatever systemoptimal total happened to
-	// be published first, which is cross-goroutine TIMING-DEPENDENT and therefore not
-	// deterministic. Instead the orchestrator emits each algo's deterministic
-	// per-tick RealizedTotalS, and the consumer pairs same-tick totals through
-	// PriceOfAnarchy in its own single-threaded, ordered pass — see
-	// internal/api/stream.go. This keeps the byte-identical-trace determinism
-	// criterion intact.
+	// live "minimizing traffic" magnitude of this BEST-RESPONSE variant as congestion
+	// builds and drains — NOT a PoA numerator (see the honesty note and StaticPoA).
 	RealizedTotalS float64
+
+	// StaticPoA is the static-equilibrium Price of Anarchy of this algo versus the
+	// system-optimal reference, computed ONCE per run from the real iterative
+	// AssignResult over the SAME shared OD set + BPR — the exact computation the
+	// static /benchmark sweep performs (sweep.go), so the live PoA matches /benchmark
+	// for a fixed (start, seed). It is CONSTANT across this algo's ticks (an
+	// equilibrium is a property of the OD set, not of a mesoscopic instant), and is
+	// ≥ 1 whenever systemoptimal attains the minimum total network time (the SO ≤ UE
+	// relationship — an empirical property of the iterative heuristic asserted by the
+	// SO ≤ UE test, not a proven-global-optimum guarantee). It replaces the former
+	// per-tick greedy pairing as the honest live PoA reference.
+	StaticPoA float64
 }
 
 // AlgoTickFunc is the orchestrator's consumer callback, invoked once per (algorithm,
@@ -129,15 +153,19 @@ type AlgoTick struct {
 // flush off the hot path (the WebSocket layer does exactly this).
 type AlgoTickFunc func(tick AlgoTick)
 
-// timedRouter wraps a routing.Router to accumulate the cumulative wall-clock time
-// spent in Route — the per-algo compute-time metric. The simulator calls Route once
-// per newly-released request via the per-tick fan-out (concurrently within a tick),
-// so the counter is guarded by a mutex; the contention is limited to one tick's
-// release batch and is off the model's critical advance path.
+// timedRouter wraps a routing.Router to measure the per-algo compute cost. Each
+// Route call's individual wall-clock latency is recorded so the observer can report
+// BOTH the back-compat cumulative sum (nanos) AND the fair per-route median
+// (samples). The simulator calls Route once per newly-released request via the
+// per-tick fan-out (concurrently within a tick), so the two accumulators are guarded
+// by a mutex; the contention is limited to one tick's release batch, is per-ALGO
+// (each sim owns its own mu/nanos/samples — nothing is shared across the six
+// concurrent algos), and is off the model's critical advance path.
 type timedRouter struct {
-	inner routing.Router
-	mu    *sync.Mutex
-	nanos *int64
+	inner   routing.Router
+	mu      *sync.Mutex
+	nanos   *int64   // cumulative sum of Route latencies (back-compat compute_ms)
+	samples *[]int64 // per-Route latencies, reduced to a median by the observer
 }
 
 func (t timedRouter) Route(ctx context.Context, req routing.RouteRequest) (routing.Route, error) {
@@ -146,6 +174,7 @@ func (t timedRouter) Route(ctx context.Context, req routing.RouteRequest) (routi
 	elapsed := time.Since(start).Nanoseconds()
 	t.mu.Lock()
 	*t.nanos += elapsed
+	*t.samples = append(*t.samples, elapsed)
 	t.mu.Unlock()
 	return route, err
 }
@@ -168,8 +197,9 @@ func (t timedRouter) Name() string { return t.inner.Name() }
 // All six sims share the SAME deterministic OD set (GenerateODSet with cfg.Seed) and
 // the SAME immutable graph and BPR, so the streams are directly comparable and the
 // run is reproducible. Each sim runs on its own goroutine with no shared mutable
-// state except the lock-free poaRef and per-algo compute counters; emit is the only
-// thing that crosses back to the consumer.
+// state except the read-only per-run static PoA map (staticPoARef, built before any
+// sim starts) and its own per-algo compute counters; emit is the only thing that
+// crosses back to the consumer.
 //
 // emit is called on the per-algo simulation goroutines (NOT serialized across algos),
 // so a consumer that needs a single-threaded view must funnel the callbacks itself
@@ -207,6 +237,18 @@ func RunParallel(ctx context.Context, g graph.Graph, cfg ParallelConfig, emit Al
 	set := GenerateODSet(g, cfg.Seed, count, "parallel", 1.0, totalDemand)
 	reqs := set.RouteRequestsAt(cfg.StartTime, window)
 
+	// The TRUE live PoA reference (#112): a static-equilibrium PoA per algo computed
+	// ONCE over the shared OD set via the real iterative AssignResult — the same
+	// machinery the static /benchmark sweep uses (sweep.go) — rather than the in-stream
+	// best-response "systemoptimal", which never runs its iterative loop. This is the
+	// cheap, safe fix: six static assignments up front (bounded, deterministic) instead
+	// of embedding an iterative optimum inside the per-tick mesoscopic loop. It runs
+	// BEFORE the sims so every algo's stream carries the honest, constant PoA.
+	staticPoA, err := staticPoARef(ctx, g, bpr, reqs, cfg.Seed)
+	if err != nil {
+		return err
+	}
+
 	simCfg := SimConfig{
 		StartTime:   cfg.StartTime,
 		TickSeconds: cfg.TickSeconds,
@@ -220,7 +262,7 @@ func RunParallel(ctx context.Context, g graph.Graph, cfg ParallelConfig, emit Al
 		wg.Add(1)
 		go func(i int, name string) {
 			defer wg.Done()
-			errs[i] = runOneAlgo(ctx, g, bpr, reqs, simCfg, name, cfg.Seed, emit)
+			errs[i] = runOneAlgo(ctx, g, bpr, reqs, simCfg, name, cfg.Seed, staticPoA[name], emit)
 		}(i, name)
 	}
 	wg.Wait()
@@ -250,10 +292,14 @@ func runOneAlgo(
 	simCfg SimConfig,
 	name string,
 	seed int64,
+	staticPoA float64,
 	emit AlgoTickFunc,
 ) error {
 	var computeMu sync.Mutex
 	var computeNanos int64
+	// Preallocated to the OD-set size: every request routes at most once per departure,
+	// so this caps the in-lock reallocations as the tick-1 fan-out appends samples.
+	computeSamples := make([]int64, 0, len(reqs))
 
 	factory := func(provider congestion.CongestionProvider) routing.Router {
 		// buildRouter is the single six-way constructor shared with the sweep; here it
@@ -267,28 +313,77 @@ func runOneAlgo(
 			// rather than panicking.
 			inner = routing.NewNaiveRouter(g)
 		}
-		return timedRouter{inner: inner, mu: &computeMu, nanos: &computeNanos}
+		return timedRouter{inner: inner, mu: &computeMu, nanos: &computeNanos, samples: &computeSamples}
 	}
 
 	observer := func(state TickState) {
 		// Realized total network time at this tick's per-edge load — exactly the
 		// #89/#90 evaluator (routing.TotalNetworkTime over the load vector). This is
-		// deterministic per (seed, tick); the consumer pairs it with systemoptimal's
-		// same-tick total to derive PoA (PriceOfAnarchy).
+		// the live best-response congestion magnitude, deterministic per (seed, tick);
+		// it is NOT a PoA numerator (StaticPoA carries the honest PoA — see AlgoTick).
 		realizedTotal := routing.TotalNetworkTime(g, bpr, state.Load)
 
 		computeMu.Lock()
 		nanos := computeNanos
+		routeMedian := medianNanos(computeSamples)
 		computeMu.Unlock()
 
 		emit(AlgoTick{
-			Algo:           name,
-			State:          state,
-			ComputeNanos:   nanos,
-			RealizedTotalS: realizedTotal,
+			Algo:             name,
+			State:            state,
+			ComputeNanos:     nanos,
+			RouteMedianNanos: routeMedian,
+			RealizedTotalS:   realizedTotal,
+			StaticPoA:        staticPoA,
 		})
 	}
 
 	_, err := Simulate(ctx, g, reqs, simCfg, factory, observer)
 	return err
+}
+
+// staticPoARef computes the static-equilibrium Price of Anarchy of each router
+// (RouterOrder) against the system-optimal reference, over the shared OD set — the
+// honest live PoA reference (#112). It routes through the shared static-assignment
+// seam (assignStatic) — the same machinery RunSweep/RunSingle use — then takes
+// routing.TotalNetworkTime over each router's FinalFlows, with the systemoptimal total
+// as the denominator. Because the OD set + BPR here are byte-identical to a static
+// /benchmark run at the same (seed, count, capacity scale), the returned PoA matches
+// /benchmark for the same OD set, and it is deterministic (the routers produce
+// byte-identical FinalFlows for a fixed OD set).
+//
+// Each entry is ≥ 1 WHENEVER systemoptimal attains the minimum total network time over
+// the OD set (the SO ≤ UE relationship). NewSystemOptimalRouter is an iterative
+// heuristic, not a proven global optimum, so this is an empirical property of the
+// assignment — not a mathematical guarantee — and it is asserted by the SO ≤ UE test
+// (TestLivePoASOLessEqualUE) rather than assumed here.
+func staticPoARef(ctx context.Context, g graph.Graph, bpr cost.BPR, reqs []routing.RouteRequest, seed int64) (map[string]float64, error) {
+	results, err := assignStatic(ctx, g, bpr, reqs, seed, RouterOrder, "parallel: static PoA reference")
+	if err != nil {
+		return nil, err
+	}
+	soTotal := routing.TotalNetworkTime(g, bpr, results["systemoptimal"].FinalFlows)
+	poa := make(map[string]float64, len(RouterOrder))
+	for name, res := range results {
+		poa[name] = PriceOfAnarchy(routing.TotalNetworkTime(g, bpr, res.FinalFlows), soTotal)
+	}
+	return poa, nil
+}
+
+// medianNanos returns the median of the per-Route latency samples (nanoseconds), the
+// fair per-route compute figure (#112). It is a per-CALL statistic — robust to the
+// GC/scheduler outliers a cumulative sum accumulates, and independent of how many
+// routes/ticks/algos ran — so it is stable run-to-run. An empty sample set (no route
+// yet) is 0. It copies before sorting so it never mutates the live sample buffer.
+func medianNanos(samples []int64) int64 {
+	if len(samples) == 0 {
+		return 0
+	}
+	sorted := append([]int64(nil), samples...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	n := len(sorted)
+	if n%2 == 1 {
+		return sorted[n/2]
+	}
+	return (sorted[n/2-1] + sorted[n/2]) / 2
 }

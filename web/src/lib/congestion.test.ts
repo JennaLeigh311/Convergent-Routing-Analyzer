@@ -14,6 +14,7 @@ import type { AlgoMetrics, DeltaFrame, SnapshotFrame } from "./protocol";
 
 const M: AlgoMetrics = {
   compute_ms: 0,
+  route_median_ns: 0,
   realized_total_s: 0,
   poa: 1,
   in_flight: 0,
