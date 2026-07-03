@@ -17,6 +17,14 @@ export const ROUTER_ORDER = [
 
 export type Algo = (typeof ROUTER_ORDER)[number];
 
+/**
+ * The system-optimal router: the fixed Price-of-Anarchy reference (#112). `poa` is
+ * each algo's static-equilibrium PoA versus this one, so it is ≈ 1 for systemoptimal
+ * itself. The single source of truth for "which algo is the SO reference" — the UI's
+ * `ref` badge and any PoA-relative logic read it from here, never a local literal.
+ */
+export const REFERENCE_ALGO: Algo = "systemoptimal";
+
 /** v/c bucketing matches the engine: 24 buckets of width 0.1, bucket 23 saturates. */
 export const VC_BUCKET_COUNT = 24;
 

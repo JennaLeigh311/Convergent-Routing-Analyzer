@@ -1,11 +1,12 @@
 // MiniCongestionMap — one small-multiple congestion map for a single algorithm in
-// the six-up parallel comparison (#114). It mirrors CongestionMap's recolor-only
+// the six-up parallel comparison (#114). It mirrors the recolor-only PathLayer
 // contract exactly: the PathLayer `data` is the shared static geometry, built ONCE,
 // and recoloring as deltas arrive flows entirely through getColor +
 // updateTriggers.getColor — never a geometry rebuild.
 //
 // Every visible fact is a NARROW Zustand slice selector, so a delta for one algorithm
-// only re-renders that algorithm's tile:
+// re-renders only the tiles that visibly changed — normally just that algorithm's own
+// tile (plus, on a leader flip, the previous leader's tile so it can drop its ring):
 //   - buckets[algo]        → this tile's coloring (its reference is the recolor trigger).
 //   - metrics[algo]?.poa   → the PoA context label (systemoptimal ≈ 1 is the SO reference).
 //   - leaderAlgo(...)===algo for each dimension → a BOOLEAN, so the winner ring only
@@ -20,11 +21,8 @@ import { buildCongestionLayer } from "../lib/congestionLayer";
 import { initialViewState, type GraphGeometry } from "../lib/graph";
 import { leaderAlgo } from "../lib/leaderboard";
 import { fmtMetric } from "../lib/metrics";
-import type { Algo } from "../lib/protocol";
+import { REFERENCE_ALGO, type Algo } from "../lib/protocol";
 import { useAppStore } from "../store";
-
-/** The system-optimal router is the fixed PoA reference (#112). */
-const REFERENCE_ALGO: Algo = "systemoptimal";
 
 interface Props {
   geometry: GraphGeometry;
