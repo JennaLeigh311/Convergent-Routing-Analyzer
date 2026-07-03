@@ -18,6 +18,13 @@ export type ConnStatus = "idle" | "connecting" | "open" | "closed" | "error";
 /** Default car load (simultaneous routing requests) the analysis starts at. */
 export const DEFAULT_CAR_LOAD = 1000;
 
+/**
+ * Default sim start instant (RFC3339 UTC): the engine's own /stream default
+ * (engine/internal/api/stream.go). The time-of-day slider seeds from this, and the
+ * demand curve (#111) makes 08:00 a morning-peak scenario.
+ */
+export const DEFAULT_SIM_START = "2026-06-22T08:00:00Z";
+
 interface AppState {
   /** The focused algorithm: highlights its tile in the six-up grid (the algo picker). */
   selectedAlgo: Algo;
@@ -30,6 +37,10 @@ interface AppState {
   /** Car load: number of simultaneous routing requests the simulation drives. */
   carLoad: number;
   setCarLoad: (carLoad: number) => void;
+
+  /** Sim start instant (RFC3339 UTC) the parallel run begins from — the /stream `start`. */
+  simStart: string;
+  setSimStart: (simStart: string) => void;
 
   /** Live per-algorithm bucketed congestion, folded from /stream frames. */
   congestion: CongestionState;
@@ -55,6 +66,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   carLoad: DEFAULT_CAR_LOAD,
   setCarLoad: (carLoad) => set({ carLoad }),
+
+  simStart: DEFAULT_SIM_START,
+  setSimStart: (simStart) => set({ simStart }),
 
   congestion: emptyCongestionState(),
   applyFrame: (frame) =>
