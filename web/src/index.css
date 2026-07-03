@@ -50,6 +50,23 @@ body {
   margin: 0;
 }
 
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+/* The running simulated clock — prominent, monospaced digits so it reads at a glance. */
+.sim-clock {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  padding: 0.15rem 0.6rem;
+  border-radius: 6px;
+  background: #0b0d12;
+  border: 1px solid #2a2f3d;
+}
+
 .status {
   font-size: 0.8rem;
   padding: 0.15rem 0.6rem;
@@ -116,7 +133,8 @@ body {
   accent-color: var(--accent);
   cursor: pointer;
 }
-.control-select {
+.control-select,
+.control-date {
   width: 100%;
   background: #0b0d12;
   color: var(--text);
@@ -124,6 +142,9 @@ body {
   border-radius: 6px;
   padding: 0.45rem 0.5rem;
   font-size: 0.9rem;
+}
+.control-date {
+  cursor: pointer;
 }
 
 .run-button {
@@ -184,6 +205,16 @@ body {
   transform: translate(-50%, -50%);
   text-align: center;
   color: var(--muted);
+}
+
+/* Shown while the socket re-opens after a start-instant / car-load change so a slider
+   drag visibly restarts the parallel run rather than silently swapping data. */
+.restarting {
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  background: #3a3410;
+  color: #ffe082;
+  border: 1px solid #5a5020;
 }
 
 .hint-overlay {

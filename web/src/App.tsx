@@ -16,6 +16,8 @@ import { Controls } from "./components/Controls";
 import { Legend } from "./components/Legend";
 import { useCongestionSocket } from "./hooks/useCongestionSocket";
 import { useGraph } from "./hooks/useGraph";
+import { ROUTER_ORDER } from "./lib/protocol";
+import { formatInstant } from "./lib/simStart";
 import { useAppStore } from "./store";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -32,15 +34,30 @@ export default function App() {
   const running = useAppStore((s) => s.running);
   const setRunning = useAppStore((s) => s.setRunning);
   const carLoad = useAppStore((s) => s.carLoad);
+  const simStart = useAppStore((s) => s.simStart);
   const selectedAlgo = useAppStore((s) => s.selectedAlgo);
   const setSelectedAlgo = useAppStore((s) => s.setSelectedAlgo);
   const status = useAppStore((s) => s.status);
   const streamError = useAppStore((s) => s.error);
+  const simTime = useAppStore((s) => s.congestion.simTime);
 
-  // Open /stream only while running; reconnect when the car load changes (re-seeds the
-  // simulation with the new request volume). One socket folds all six algorithms into
-  // the store — the six-up grid reads them straight from there.
-  useCongestionSocket({ enabled: running, count: carLoad, speed: 120, tickHz: 1 });
+  // Open /stream only while running; reconnect when the car load OR the start instant
+  // changes (each re-seeds the simulation — a new request volume, or a new time of day
+  // whose demand curve congests the roads differently, #111). One socket folds all six
+  // algorithms into the store — the six-up grid reads them straight from there.
+  useCongestionSocket({
+    enabled: running,
+    start: simStart,
+    count: carLoad,
+    speed: 120,
+    tickHz: 1,
+  });
+
+  // The running sim clock: the selected algorithm's latest sim_time, falling back to any
+  // populated algo (all six advance together, but the selected one may not have a frame
+  // yet on the very first tick). Empty until the first snapshot lands.
+  const simClock =
+    simTime[selectedAlgo] || ROUTER_ORDER.map((a) => simTime[a]).find(Boolean) || "";
 
   // The run is over once the stream drains (server closes → "closed") or the connection
   // fails ("error"). Flip the run flag back off so the button returns to "Start" without
@@ -53,7 +70,14 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <h1>Traffic Routing Analyzer</h1>
-        <span className={`status status-${status}`}>{STATUS_LABEL[status] ?? status}</span>
+        <div className="header-status">
+          <span className="sim-clock" title="Simulated clock">
+            {simClock ? formatInstant(simClock) : formatInstant(simStart)}
+          </span>
+          <span className={`status status-${status}`}>
+            {STATUS_LABEL[status] ?? status}
+          </span>
+        </div>
       </header>
 
       <aside className="sidebar">
@@ -81,6 +105,11 @@ export default function App() {
             <ComparisonView geometry={geometry} />
             {!running && status === "idle" && (
               <div className="hint-overlay">Press “Start analysis” to begin.</div>
+            )}
+            {running && status === "connecting" && (
+              <div className="overlay restarting">
+                Restarting from {formatInstant(simStart)}…
+              </div>
             )}
           </>
         )}
