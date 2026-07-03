@@ -52,10 +52,11 @@ export function Controls({ running, onToggle, selectedAlgo, onSelectAlgo }: Prop
   const [draft, setDraft] = useState(carLoad);
 
   // The start instant is edited as a date + minutes-of-day; seed the drafts once from
-  // the store's RFC3339 value and combine them back into a `start` instant on commit.
-  const initial = useMemo(() => splitSimStart(simStart), [simStart]);
-  const [dateDraft, setDateDraft] = useState(initial.date);
-  const [minutesDraft, setMinutesDraft] = useState(initial.minutes);
+  // the store's RFC3339 value (lazy init, like the car-load draft) and combine them back
+  // into a `start` instant on commit. This panel is the only writer of simStart, so the
+  // drafts stay authoritative — no re-seed effect is needed.
+  const [dateDraft, setDateDraft] = useState(() => splitSimStart(simStart).date);
+  const [minutesDraft, setMinutesDraft] = useState(() => splitSimStart(simStart).minutes);
 
   // One debounced committer per store setter for the panel's life; cancel any pending
   // commit on unmount so a settled value never lands after the control is gone.
@@ -76,6 +77,9 @@ export function Controls({ running, onToggle, selectedAlgo, onSelectAlgo }: Prop
   }
 
   function onDate(date: string) {
+    // Native date inputs are user-clearable (value → ""); ignore that so we never commit
+    // a year-less `T08:00:00Z` to /stream — the controlled input reverts to the last date.
+    if (!date) return;
     setDateDraft(date);
     commitStart(combineSimStart(date, minutesDraft));
   }
@@ -97,6 +101,7 @@ export function Controls({ running, onToggle, selectedAlgo, onSelectAlgo }: Prop
         <input
           type="date"
           className="control-date"
+          aria-label="Start date"
           value={dateDraft}
           onChange={(e) => onDate(e.target.value)}
         />
@@ -106,7 +111,8 @@ export function Controls({ running, onToggle, selectedAlgo, onSelectAlgo }: Prop
           max={MINUTES_IN_DAY - 1}
           step={TIME_STEP}
           value={minutesDraft}
-          aria-label={`Time of day ${formatMinutes(minutesDraft)}`}
+          aria-label="Time of day"
+          aria-valuetext={formatMinutes(minutesDraft)}
           onChange={(e) => onMinutes(Number(e.target.value))}
         />
       </div>

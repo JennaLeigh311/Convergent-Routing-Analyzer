@@ -72,7 +72,7 @@ export default function App() {
         <h1>Traffic Routing Analyzer</h1>
         <div className="header-status">
           <span className="sim-clock" title="Simulated clock">
-            {simClock ? formatInstant(simClock) : formatInstant(simStart)}
+            {formatInstant(simClock || simStart)}
           </span>
           <span className={`status status-${status}`}>
             {STATUS_LABEL[status] ?? status}

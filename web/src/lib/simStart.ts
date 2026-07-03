@@ -19,13 +19,18 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+/** Wrap any integer minute count into [0, MINUTES_IN_DAY) — negative-safe. */
+function wrapMinutes(minutes: number): number {
+  return ((Math.trunc(minutes) % MINUTES_IN_DAY) + MINUTES_IN_DAY) % MINUTES_IN_DAY;
+}
+
 /**
  * Combine a `YYYY-MM-DD` date and a minutes-of-day count into an RFC3339 UTC instant
  * `YYYY-MM-DDTHH:MM:00Z`. Minutes are wrapped into [0, MINUTES_IN_DAY) so a stray
  * out-of-range value can't produce an hour past 23.
  */
 export function combineSimStart(date: string, minutes: number): string {
-  const wrapped = ((Math.trunc(minutes) % MINUTES_IN_DAY) + MINUTES_IN_DAY) % MINUTES_IN_DAY;
+  const wrapped = wrapMinutes(minutes);
   const hh = Math.floor(wrapped / 60);
   const mm = wrapped % 60;
   return `${date}T${pad2(hh)}:${pad2(mm)}:00Z`;
@@ -44,7 +49,7 @@ export function splitSimStart(rfc: string): { date: string; minutes: number } {
 
 /** Format a minutes-of-day count as a 24-hour `HH:MM` clock (the slider's live value). */
 export function formatMinutes(minutes: number): string {
-  const wrapped = ((Math.trunc(minutes) % MINUTES_IN_DAY) + MINUTES_IN_DAY) % MINUTES_IN_DAY;
+  const wrapped = wrapMinutes(minutes);
   return `${pad2(Math.floor(wrapped / 60))}:${pad2(wrapped % 60)}`;
 }
 

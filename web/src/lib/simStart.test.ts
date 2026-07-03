@@ -54,6 +54,11 @@ describe("formatMinutes", () => {
     expect(formatMinutes(8 * 60)).toBe("08:00");
     expect(formatMinutes(17 * 60 + 5)).toBe("17:05");
   });
+
+  it("wraps out-of-range minutes into a valid time-of-day", () => {
+    expect(formatMinutes(1440)).toBe("00:00");
+    expect(formatMinutes(-30)).toBe("23:30");
+  });
 });
 
 describe("formatInstant", () => {
