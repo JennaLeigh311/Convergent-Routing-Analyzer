@@ -19,7 +19,7 @@ export type ConnStatus = "idle" | "connecting" | "open" | "closed" | "error";
 export const DEFAULT_CAR_LOAD = 1000;
 
 interface AppState {
-  /** The algorithm whose congestion the map renders (one at a time). */
+  /** The focused algorithm: highlights its tile in the six-up grid (the algo picker). */
   selectedAlgo: Algo;
   setSelectedAlgo: (algo: Algo) => void;
 
