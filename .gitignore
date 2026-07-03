@@ -11,3 +11,9 @@ project-spec.md
 .env
 .env.*
 !.env.example
+
+# Phase 8 data pipeline (issue #120): the OSM extract and the generated
+# edge_attributes export are DATA BLOBS produced by data/scripts — commit the
+# scripts, never the blobs. Re-generate with `make data-porto`.
+data/osm/
+data/out/

@@ -33,7 +33,7 @@ COMPOSE ?= docker compose
 
 .DEFAULT_GOAL := help
 
-.PHONY: help up-core up-full down clean test route bench replay integration lint vuln protect-main \
+.PHONY: help up-core up-full down clean test route bench replay data-porto integration lint vuln protect-main \
         web-install web-dev web-lint web-test web-build web-check
 
 ## help: list the available targets
@@ -47,6 +47,7 @@ help:
 	@echo "  route        cd engine && go run ./cmd/route (toy graph; flag passthrough)"
 	@echo "  bench        cd engine && go run ./cmd/benchmark (six-router demand sweep; refreshes docs/benchmarks.md)"
 	@echo "  replay       cd engine && go run ./cmd/replay (stub today)"
+	@echo "  data-porto   fetch Porto OSM -> osm2pgrouting -> data/out/edge_attributes.geojson"
 	@echo "  lint         cd engine && gofmt check + go vet ./... + golangci-lint (required)"
 	@echo "  vuln         cd engine && govulncheck ./... (pinned scanner; matches CI)"
 	@echo "  web-dev      cd web && npm run dev (Vite dev server; proxies the engine)"
@@ -103,6 +104,15 @@ bench:
 ## replay: run the replay binary (scaffold stub today)
 replay:
 	cd engine && go run ./cmd/replay
+
+## data-porto: build a real, multi-hundred-edge Porto edge_attributes.geojson.
+## Fetches a bounded Porto OSM extract, loads it into PostGIS/pgRouting via
+## osm2pgrouting under the `data` compose profile, and exports a §2-conformant
+## GeoJSON to data/out/edge_attributes.geojson (both the extract and the export
+## are git-ignored data blobs — this target regenerates them). See
+## data/scripts/README.md. Re-runnable; pass PORTO_BBOX / SKIP_FETCH to tune.
+data-porto:
+	sh data/scripts/run_pipeline.sh
 
 # Pinned golangci-lint version — keep in sync with .github/workflows/ci.yml
 # (the CI gate installs this exact version) and engine/.golangci.yml's header.
