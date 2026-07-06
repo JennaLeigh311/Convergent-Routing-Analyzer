@@ -18,16 +18,22 @@ Division of labour:
     defaulting, which uses a different (mapconfig) default table.
 
 segment_id = "{osm_way_id}:{seq}:{dir}" (§1). seq is the 0-based ordinal of the
-sub-segment within its way (ordered by pgRouting gid); dir is F (along the way's
-node ordering) or R (against it). A two-way way emits F and R; a one-way way emits
-only its permitted direction.
+sub-segment among its way's EMITTED sub-segments (gid order); dir is F (along the
+way's node ordering) or R (against it). A two-way way emits F and R; a one-way way
+emits only its permitted direction.
 
 length_m is computed as the sum of haversine distances over the EMITTED (rounded)
 coordinates, using the identical earth radius the Go loader uses
 (engine/internal/graph/geo.go, 6_371_000 m). Because a polyline of great-circle
 arcs is never shorter than the direct arc between its ends (triangle inequality on
-the sphere), this GUARANTEES length_m >= the endpoint chord the loader checks —
-the §2 invariant — with no reliance on the loader's float tolerance.
+the sphere), length_m >= the endpoint chord the loader checks — the §2 invariant.
+Multi-point edges clear the chord with wide margin; a straight 2-point edge matches
+the chord to within a few ULPs (Python and Go group the haversine terms slightly
+differently), comfortably inside the loader's 1e-9 relative tolerance.
+
+psycopg2 is imported lazily inside main(), not at module top, so the pure §2
+derivation logic here (build_features + the helpers) can be imported and
+unit-tested without the DB driver installed — see test_export.py.
 """
 
 import argparse
@@ -35,8 +41,6 @@ import json
 import math
 import sys
 import xml.etree.ElementTree as ET
-
-import psycopg2
 
 # --- §2 derivation tables (frozen — reproduce EXACTLY) -----------------------
 
@@ -180,12 +184,15 @@ def lanes_effective(tags, direction, is_oneway, hclass):
     return LANES_DEFAULT[hclass]
 
 
-def maxspeed_kmh(tags, direction, hclass):
-    """§2 maxspeed: dir-specific tag > bare maxspeed > class default."""
-    dir_key = "maxspeed:forward" if direction == "F" else "maxspeed:backward"
-    ms = parse_maxspeed_kmh(tags.get(dir_key))
-    if ms is None:
-        ms = parse_maxspeed_kmh(tags.get("maxspeed"))
+def maxspeed_kmh(tags, hclass):
+    """§2 maxspeed: bare OSM `maxspeed` if tagged, else the class default.
+
+    §2's maxspeed rule is exactly two branches (tagged `maxspeed`, else the class
+    default) — unlike `lanes_effective` it has NO direction-specific tier, so we
+    deliberately do NOT consult `maxspeed:forward`/`maxspeed:backward`. maxspeed is
+    therefore direction-independent: the F and R rows of a two-way street share it.
+    """
+    ms = parse_maxspeed_kmh(tags.get("maxspeed"))
     if ms is None:
         ms = SPEED_DEFAULT[hclass]
     return ms
@@ -226,9 +233,6 @@ def build_features(ways_rows, tags_by_way):
     stats = {"skipped_class": 0, "skipped_degenerate": 0, "class_hist": {}}
 
     for osm_id, source, target, coords in ways_rows:
-        seq = seq_counter.get(osm_id, 0)
-        seq_counter[osm_id] = seq + 1
-
         tags = tags_by_way.get(osm_id, {})
         hclass = base_highway_class(tags.get("highway"))
         if hclass is None:
@@ -244,20 +248,31 @@ def build_features(ways_rows, tags_by_way):
             stats["skipped_degenerate"] += 1
             continue
 
+        # Assign seq only to sub-segments we actually EMIT, so seq stays a
+        # contiguous 0-based ordinal among a way's emitted sub-segments (§1). A
+        # skipped self-loop/degenerate sub-segment must NOT punch a hole in the
+        # numbering, or another system re-deriving segment_id would disagree.
+        seq = seq_counter.get(osm_id, 0)
+        seq_counter[osm_id] = seq + 1
+
         fwd_ok, bwd_ok = directions(tags, hclass)
         is_oneway = not (fwd_ok and bwd_ok)
         cf = CLASS_FACTOR[hclass]
+        # maxspeed is direction-independent under §2 (no forward/backward tier),
+        # so resolve it once for both the F and R rows.
+        speed = maxspeed_kmh(tags, hclass)
 
         emit = []
         if fwd_ok:
             emit.append(("F", source, target, coords, length_fwd))
         if bwd_ok:
-            rcoords = list(reversed(coords))
-            emit.append(("R", target, source, rcoords, polyline_len_m(rcoords)))
+            # Haversine is symmetric: the reversed polyline has the identical
+            # geodesic length, so reuse length_fwd (no re-summation, and no
+            # few-ULP F/R length drift).
+            emit.append(("R", target, source, list(reversed(coords)), length_fwd))
 
         for direction, src, dst, geom_coords, length_m in emit:
             lanes = lanes_effective(tags, direction, is_oneway, hclass)
-            speed = maxspeed_kmh(tags, direction, hclass)
             capacity = lanes * SATURATION_FLOW * cf * CAPACITY_SCALE
             freeflow = length_m / (speed / 3.6)
             seg = f"{osm_id}:{seq}:{direction}"
@@ -274,9 +289,10 @@ def build_features(ways_rows, tags_by_way):
                     "lanes_effective": lanes,
                     # length_m is emitted UNROUNDED on purpose. It is the sum of
                     # haversine arcs over the emitted (rounded) coords, so for a
-                    # straight 2-point edge it equals the loader's endpoint chord
-                    # exactly. Rounding it (even to 6 dp) can push it a fraction of
-                    # a micrometer BELOW that chord and trip the §2 length_m >= chord
+                    # straight 2-point edge it matches the loader's endpoint chord
+                    # to within a few ULPs (inside the loader's 1e-9 tolerance).
+                    # Rounding it (even to 6 dp) can push it a fraction of a
+                    # micrometer BELOW that chord and trip the §2 length_m >= chord
                     # guard, so we keep full precision — the value stays consistent
                     # with the coordinate precision it is derived from.
                     "length_m": length_m,
@@ -305,6 +321,10 @@ def main():
     print(f"export: parsing raw tags from {args.osm} ...", file=sys.stderr)
     tags_by_way = parse_osm_tags(args.osm)
     print(f"export: {len(tags_by_way)} ways in extract", file=sys.stderr)
+
+    # Lazy import (see module docstring): keeps the derivation logic importable
+    # for test_export.py without psycopg2 present.
+    import psycopg2
 
     conn = psycopg2.connect(
         host=args.pg_host, port=args.pg_port, dbname=args.pg_db,

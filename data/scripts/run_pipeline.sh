@@ -63,8 +63,10 @@ if [ "$status" != "healthy" ]; then
 fi
 
 # Resolve the compose network the postgis container is attached to, so the
-# ephemeral data-tools client can reach it by service name.
-NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$PG_CID")
+# ephemeral data-tools client can reach it by service name. Emit one network per
+# line and take the first, so a container on more than one network yields a single
+# valid name (not the concatenation of all of them).
+NET=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' "$PG_CID" | head -1)
 echo "run_pipeline: postgis healthy on network $NET" >&2
 
 # Ensure the routing DB has the extensions osm2pgrouting needs.
@@ -78,7 +80,12 @@ docker build -t "$TOOLS_IMAGE" "$SCRIPT_DIR" >&2
 
 # --- 4. osm2pgrouting load ----------------------------------------------------
 echo "run_pipeline: loading $OSM_OUT into PostGIS via osm2pgrouting ..." >&2
-docker run --rm --network "$NET" -v "$REPO_ROOT/data:/data" "$TOOLS_IMAGE" sh -c '
+# DB creds are passed as container env vars and referenced from INSIDE the
+# single-quoted body, so no host value is spliced into the script text — a
+# password containing a space, $, ` or ; can't word-split or inject here.
+docker run --rm --network "$NET" -v "$REPO_ROOT/data:/data" \
+  -e PG_DB="$PG_DB" -e PG_USER="$PG_USER" -e PG_PASSWORD="$PG_PASSWORD" \
+  "$TOOLS_IMAGE" sh -c '
   set -eu
   CONF=$(ls /usr/share/osm2pgrouting/mapconfig.xml 2>/dev/null \
         || find /usr -name mapconfig.xml 2>/dev/null | head -1)
@@ -86,9 +93,9 @@ docker run --rm --network "$NET" -v "$REPO_ROOT/data:/data" "$TOOLS_IMAGE" sh -c
   osm2pgrouting \
     --f /data/osm/porto.osm \
     --conf "$CONF" \
-    --dbname '"$PG_DB"' \
-    --username '"$PG_USER"' \
-    --password '"$PG_PASSWORD"' \
+    --dbname "$PG_DB" \
+    --username "$PG_USER" \
+    --password "$PG_PASSWORD" \
     --host postgis \
     --port 5432 \
     --clean

@@ -49,8 +49,11 @@ curl -sS --fail -m 300 \
   --data-urlencode "data=$QUERY" \
   -o "$OSM_OUT"
 
-WAYS=$(grep -c "<way " "$OSM_OUT" 2>/dev/null || echo 0)
-NODES=$(grep -c "<node " "$OSM_OUT" 2>/dev/null || echo 0)
+# grep -c already prints the count (0 on no matches) and exits 1 when it finds
+# none; use `|| true` to swallow that exit WITHOUT appending a second "0" (which
+# would make WAYS the two-line "0\n0" and defeat the zero-ways guard below).
+WAYS=$(grep -c "<way " "$OSM_OUT" 2>/dev/null || true)
+NODES=$(grep -c "<node " "$OSM_OUT" 2>/dev/null || true)
 BYTES=$(wc -c < "$OSM_OUT" | tr -d ' ')
 echo "fetch_porto_osm: wrote $OSM_OUT ($BYTES bytes, $WAYS ways, $NODES nodes)" >&2
 

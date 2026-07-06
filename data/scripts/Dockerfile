@@ -1,5 +1,6 @@
-# cra/data-tools — the osm2pgrouting loader + the Python edge_attributes exporter
-# for the Phase 8 Porto pipeline (issue #120). It is NOT a long-running service:
+# cra/data-tools:phase8 — the osm2pgrouting loader + the Python edge_attributes
+# exporter for the Phase 8 Porto pipeline (issue #120). run_pipeline.sh builds and
+# runs it under this exact tag. It is NOT a long-running service:
 # it is an ephemeral client run on the compose `data` network, connecting to the
 # `postgis` service to load the OSM extract and export the GeoJSON.
 FROM debian:bookworm-slim
