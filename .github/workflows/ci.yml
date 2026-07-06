@@ -108,6 +108,16 @@ jobs:
         # edge_attributes (§2) golden-fixture tests, so a drifted fixture fails CI.
         run: go test -race ./...
 
+      - name: python exporter conformance (§2 edge_attributes producer vs golden fixture)
+        # The data/scripts exporter is the PRODUCER half of the §2 edge_attributes
+        # contract; this runs its stdlib unittest against the golden fixture
+        # (docs/fixtures/edge_attributes/example_export.json) with no Postgres/Docker/
+        # Overpass — psycopg2 is imported lazily — so a future edit that drifts a
+        # derivation default or the segment_id/lanes split rule from docs/contracts.md
+        # §2 FAILS the merge gate, mirroring the Go frozen-fixture gate above.
+        working-directory: data/scripts
+        run: python3 -m unittest test_export
+
       - name: route CLI smoke (asserts the canonical toy-graph route + cost)
         # Run the real route binary on the toy fixture with its default flags and
         # assert its output EXACTLY matches the golden — the single source of truth
