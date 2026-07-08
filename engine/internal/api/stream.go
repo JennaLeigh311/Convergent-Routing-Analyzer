@@ -339,80 +339,203 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// runStream drives one WebSocket connection: it launches the parallel six-algorithm
-// simulation (buffering ticks off the socket's hot path), then replays the buffered
-// per-algo ticks to the client at the fixed server-tick cadence, pacing the
-// SIMULATED clock against wall clock by the replay speed. It returns when the run is
-// fully replayed, the client disconnects, or ctx is cancelled.
+// runStream drives one WebSocket connection with the §R6 BOUNDED-BUFFER STREAMING path
+// (issue #121): it launches the parallel six-algorithm simulation in the BACKGROUND,
+// streaming each algorithm's ticks into per-algo buffers AS they are produced, and the
+// replay loop drains those buffers to the client at the fixed server-tick cadence — pacing
+// the SIMULATED clock against wall clock by the replay speed. The first frame is emitted
+// once the FIRST tick of each algo has landed (one sim step), NOT after the whole run, so
+// time-to-first-frame is a small fraction of the total sim wall-time on a city-scale graph
+// (3.7k Porto edges) — the property the former collect-to-completion path could not meet.
+// It returns when the run is fully replayed, the client disconnects, or ctx is cancelled.
 func (s *Server) runStream(ctx context.Context, conn *websocket.Conn, params streamParams) error {
 	// CloseRead starts a background reader that drains (and rejects) any client message,
 	// responds to pings, and — the reason it is here — cancels the returned context the
-	// moment the peer closes or the connection errors. Without it a client that vanishes
-	// during the buffering phase below (when nothing reads or writes the socket) would
-	// go undetected until the first replay write; with it, a disconnect cancels ctx and
-	// aborts collectParallel promptly. This is a read-only stream, so we never expect a
+	// moment the peer closes or the connection errors. A disconnect during the initial
+	// wait-for-first-ticks phase (when nothing writes the socket) therefore cancels ctx and
+	// aborts the background sim promptly, and the same ctx cancels RunParallel so no sim
+	// goroutine leaks past the connection. This is a read-only stream, so we never expect a
 	// client message.
 	ctx = conn.CloseRead(ctx)
 
-	// Run the whole parallel simulation up front into per-algo ordered buffers. The
-	// orchestrator's emit only appends (no I/O), so a slow client cannot stall a sim;
-	// the run is bounded and deterministic, so buffering it is cheap on the toy graph.
-	// Note this means time-to-first-frame equals the full simulation wall-time: nothing
-	// is delivered until the run completes. (At city scale this becomes a streaming
-	// bounded buffer that emits as it goes; the buffer boundary here is the seam where
-	// that swap lands.) The sim runs under the connection ctx so a disconnect mid-build
-	// cancels it promptly.
-	buffers, err := s.collectParallel(ctx, params)
-	if err != nil {
-		_ = conn.Close(websocket.StatusInternalError, "simulation failed")
-		return err
-	}
-
-	return s.replay(ctx, conn, params, buffers)
-}
-
-// collectParallel runs benchmark.RunParallel to completion, collecting each
-// algorithm's AlgoTicks into an ordered per-algo slice keyed by algo name. The emit
-// callback appends under a mutex (the six sims run concurrently); it does NO I/O, so
-// it never blocks a sim on the network — the §R6 decoupling requirement.
-func (s *Server) collectParallel(ctx context.Context, params streamParams) (map[string][]benchmark.AlgoTick, error) {
-	buffers := make(map[string][]benchmark.AlgoTick, len(benchmark.RouterOrder))
-	for _, name := range benchmark.RouterOrder {
-		buffers[name] = nil
-	}
-	var mu sync.Mutex
-
-	emit := func(tick benchmark.AlgoTick) {
-		mu.Lock()
-		buffers[tick.Algo] = append(buffers[tick.Algo], tick)
-		mu.Unlock()
-	}
-
+	// Launch the six-algorithm sim in the background, feeding its ticks into the bounded
+	// per-algo buffers AS they are produced. emit only APPENDS (no socket I/O — the §R6
+	// decoupling), so a slow client can never stall a sim; the replay loop below drains the
+	// buffers off the sim's hot path. The sim runs under the connection ctx so a disconnect
+	// or a cancelled request aborts it promptly.
+	lb := newLiveBuffers()
 	cfg := benchmark.ParallelConfig{
 		StartTime:     params.StartTime,
 		Seed:          params.Seed,
 		Count:         params.Count,
 		CapacityScale: params.CapacityScale,
 	}
-	if err := benchmark.RunParallel(ctx, s.graph, cfg, emit); err != nil {
-		return nil, err
+	go func() {
+		lb.finish(benchmark.RunParallel(ctx, s.graph, cfg, lb.emit))
+	}()
+
+	// Wait ONLY for the first tick of every algo (so a full snapshot can be built for each)
+	// — not the whole run. This is the streaming boundary: on a city-scale graph the first
+	// ticks land after a single sim step while the full run is still going, so the client
+	// sees frame 1 almost immediately. A client disconnect during this wait cancels ctx.
+	if err := lb.waitFirstTicks(ctx); err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "simulation cancelled")
+		return err
 	}
-	return buffers, nil
+	// A producer that failed before emitting a usable stream (e.g. the pre-sim staticPoARef
+	// step) is surfaced BEFORE any frame is sent — a failed run is a clean error close with
+	// no partial stream, matching the old collect-then-replay behavior.
+	if err := lb.terminalErr(); err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "simulation failed")
+		return err
+	}
+
+	// Build the replay state over the LIVE buffers (under the lock, since the producer is
+	// still appending) and stream. rs.mu/producerActive wire the replay's advance/done onto
+	// the growing buffers so it drains ticks as they arrive and only completes once the
+	// producer has finished AND every produced tick has been replayed.
+	lb.mu.Lock()
+	rs, snapshots := s.newReplayState(lb.ticks, params)
+	lb.mu.Unlock()
+	rs.mu = &lb.mu
+	rs.producerActive = lb.producerActive
+
+	if err := s.replay(ctx, conn, rs, snapshots); err != nil {
+		return err
+	}
+	// The stream drained cleanly; surface any producer error that arose mid-run so a late
+	// sim failure closes the connection as an error rather than a clean finish.
+	if err := lb.runErr(); err != nil {
+		_ = conn.Close(websocket.StatusInternalError, "simulation failed")
+		return err
+	}
+	return nil
 }
 
-// replay streams the collected per-algo ticks to the client: one snapshot per
-// algorithm first (the full bucketed state at tick 1), then bucketed deltas at the
-// fixed server-tick cadence. It advances a SIMULATED clock by (speed / tickHz)
-// simulated seconds each server tick and, for each algorithm, emits the latest tick
-// whose simulated time has been reached — so a higher speed jumps further per frame
-// while the frame rate stays fixed (the §R6 decoupling).
-//
-// The per-server-tick stepping and the snapshot construction live in replayState
-// (below) so they can be unit-tested without a real wall-clock ticker; replay itself
-// is just the I/O loop that drives that state machine and writes frames.
-func (s *Server) replay(ctx context.Context, conn *websocket.Conn, params streamParams, buffers map[string][]benchmark.AlgoTick) error {
-	rs, snapshots := s.newReplayState(buffers, params)
+// liveBuffers is the bounded, append-only per-algo tick store the streaming path fills AS
+// the six sims produce ticks (issue #121): the producer goroutine appends each AlgoTick
+// under mu, and the replay loop drains the buffers at the server-tick cadence. It is what
+// makes /stream genuinely live — the first frame is emitted after the FIRST tick of each
+// algo (one sim step), not after the entire run — replacing the former
+// collect-to-completion-then-replay path whose first frame waited on the whole sim.
+type liveBuffers struct {
+	mu    sync.Mutex
+	ticks map[string][]benchmark.AlgoTick
+	// finished is set true (under mu) when the producer (RunParallel) returns; no more
+	// ticks arrive after it, and replayState.done() gates completion on it.
+	finished bool
+	// err is the producer's terminal error, retained so a failed run is surfaced as an
+	// error close (before any frame for a pre-sim failure, after draining for a mid-run one).
+	err error
+	// notify carries a coalesced wakeup to the first-ticks waiter; the wall-clock-paced
+	// replay loop does not read it. Buffered size 1 so a signal never blocks the producer
+	// and is never lost.
+	notify chan struct{}
+}
 
+// newLiveBuffers builds an empty store with every RouterOrder key present (nil slice) so
+// the waiter and the replay state can range RouterOrder without a missing-key branch.
+func newLiveBuffers() *liveBuffers {
+	ticks := make(map[string][]benchmark.AlgoTick, len(benchmark.RouterOrder))
+	for _, name := range benchmark.RouterOrder {
+		ticks[name] = nil
+	}
+	return &liveBuffers{ticks: ticks, notify: make(chan struct{}, 1)}
+}
+
+// signal delivers a coalesced, non-blocking wakeup to the first-ticks waiter.
+func (b *liveBuffers) signal() {
+	select {
+	case b.notify <- struct{}{}:
+	default:
+	}
+}
+
+// emit is the RunParallel callback: it appends a produced tick to its algo's buffer and
+// wakes the first-ticks waiter. It does NO socket I/O (the §R6 decoupling), so a slow
+// client can never stall a sim — the replay loop drains the buffer off the sim's hot path.
+func (b *liveBuffers) emit(tick benchmark.AlgoTick) {
+	b.mu.Lock()
+	b.ticks[tick.Algo] = append(b.ticks[tick.Algo], tick)
+	b.mu.Unlock()
+	b.signal()
+}
+
+// finish records the producer's terminal state (err) and wakes any waiter.
+func (b *liveBuffers) finish(err error) {
+	b.mu.Lock()
+	b.finished = true
+	b.err = err
+	b.mu.Unlock()
+	b.signal()
+}
+
+// waitFirstTicks blocks until every algo has produced its first tick (so a full snapshot
+// can be built for each), the producer has finished, or ctx is cancelled. It returns
+// ctx.Err() only on cancellation; a finished producer returns nil (even the defensive
+// zero-tick case), so the caller can build snapshots and surface any producer error
+// explicitly via terminalErr.
+func (b *liveBuffers) waitFirstTicks(ctx context.Context) error {
+	for {
+		b.mu.Lock()
+		haveAll := true
+		for _, name := range benchmark.RouterOrder {
+			if len(b.ticks[name]) == 0 {
+				haveAll = false
+				break
+			}
+		}
+		finished := b.finished
+		b.mu.Unlock()
+		if haveAll || finished {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-b.notify:
+		}
+	}
+}
+
+// terminalErr reports the producer's error if it has ALREADY finished, else nil. It lets
+// the caller surface a pre-sim failure (e.g. staticPoARef) before any frame is sent,
+// matching the old path's "nothing streamed on failure" guarantee.
+func (b *liveBuffers) terminalErr() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.finished {
+		return b.err
+	}
+	return nil
+}
+
+// producerActive reports whether the producer is still running. It reads b.finished
+// WITHOUT taking b.mu because its sole caller — replayState.done — already holds it (mu is
+// wired as replayState.mu), so the read is race-free under that lock discipline.
+func (b *liveBuffers) producerActive() bool {
+	return !b.finished
+}
+
+// runErr returns the producer's terminal error once the run is fully drained.
+func (b *liveBuffers) runErr() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.err
+}
+
+// replay streams a prebuilt replay state to the client: one snapshot per algorithm first
+// (the full bucketed state at tick 1), then bucketed deltas at the fixed server-tick
+// cadence. It advances a SIMULATED clock by (speed / tickHz) simulated seconds each server
+// tick and, for each algorithm, emits the latest tick whose simulated time has been reached
+// — so a higher speed jumps further per frame while the frame rate stays fixed (the §R6
+// decoupling). It drains the LIVE buffers as they grow and completes only when the producer
+// has finished and every produced tick has been replayed (rs.done()).
+//
+// The per-server-tick stepping and the snapshot construction live in replayState (below)
+// so they can be unit-tested without a real wall-clock ticker; replay itself is just the
+// I/O loop that drives that state machine and writes frames.
+func (s *Server) replay(ctx context.Context, conn *websocket.Conn, rs *replayState, snapshots []frameSnapshot) error {
 	// Send the initial snapshot for each algorithm (in RouterOrder).
 	for _, frame := range snapshots {
 		if err := s.writeFrame(ctx, conn, frame); err != nil {
@@ -449,6 +572,17 @@ func (s *Server) replay(ctx context.Context, conn *websocket.Conn, params stream
 // (see stream_test.go) rather than only through a wall-clock end-to-end dial.
 type replayState struct {
 	buffers map[string][]benchmark.AlgoTick
+	// mu guards concurrent reads of buffers while the producer is still APPENDING to it
+	// (the live streaming path, issue #121). It is nil on the static test path
+	// (newReplayState alone, over a completed buffer), where advance/done read buffers
+	// without locking exactly as before. When non-nil it is the SAME mutex the producer
+	// appends under (liveBuffers.mu), so a buffer read and a concurrent append never race.
+	mu *sync.Mutex
+	// producerActive reports whether more ticks may still arrive (the producer has not
+	// finished). It is nil on the static path (buffers are complete). When set it is
+	// called by done() WITH mu held, so it may read the producer's finished flag without
+	// re-locking — see liveBuffers.producerActive.
+	producerActive func() bool
 	// lastBuckets[algo][segment_id] is the last bucket emitted for a segment, the diff
 	// base for the next delta. cursor[algo] is the index of the next unsent tick.
 	lastBuckets  map[string]map[string]int
@@ -459,6 +593,19 @@ type replayState struct {
 	simSecondsPerServerTick float64
 	// elapsedSimSeconds is the simulated time reached so far past tick 1's instant.
 	elapsedSimSeconds float64
+}
+
+// ticksFor returns the current tick slice for an algo, copying the slice HEADER under mu
+// when the producer is still appending (the live path) so the read never races an append.
+// The backing array below the returned length is never mutated after append, so indexing
+// the returned slice off-lock is safe. On the static path (mu == nil) it is a bare read.
+func (rs *replayState) ticksFor(name string) []benchmark.AlgoTick {
+	if rs.mu == nil {
+		return rs.buffers[name]
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.buffers[name]
 }
 
 // newReplayState builds the replay state from the collected buffers and returns it
@@ -505,7 +652,7 @@ func (rs *replayState) advance(s *Server) []frameDelta {
 
 	frames := make([]frameDelta, 0, len(benchmark.RouterOrder))
 	for _, name := range benchmark.RouterOrder {
-		ticks := rs.buffers[name]
+		ticks := rs.ticksFor(name)
 		latestIdx := -1
 		for rs.cursor[name] < len(ticks) {
 			// A tick's simulated position is its SimTime relative to the run's
@@ -526,8 +673,20 @@ func (rs *replayState) advance(s *Server) []frameDelta {
 	return frames
 }
 
-// done reports whether every algorithm's buffer has been fully replayed.
+// done reports whether the run is fully replayed: on the live path (issue #121) that means
+// the producer has FINISHED and every produced tick has been sent — a momentary catch-up to
+// a still-growing buffer is NOT done, or the loop would stop before the run completes. On
+// the static test path (mu/producerActive nil) it is the original condition: every algo's
+// buffer fully drained. It locks mu (when live) so the buffer-length reads never race the
+// producer's appends, and reads producerActive under that same lock.
 func (rs *replayState) done() bool {
+	if rs.mu != nil {
+		rs.mu.Lock()
+		defer rs.mu.Unlock()
+	}
+	if rs.producerActive != nil && rs.producerActive() {
+		return false
+	}
 	for _, name := range benchmark.RouterOrder {
 		if rs.cursor[name] < len(rs.buffers[name]) {
 			return false

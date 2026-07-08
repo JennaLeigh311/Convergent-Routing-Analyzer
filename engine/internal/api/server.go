@@ -115,6 +115,28 @@ func NewDefaultServer(reg *prometheus.Registry, logger *slog.Logger) (*Server, e
 	return NewServer(roadGraph, geom, reg, logger)
 }
 
+// NewFileServer builds a Server over a real edge_attributes GeoJSON graph loaded from
+// path on the filesystem, instead of the embedded toy network. It is the Phase-8 seam
+// (issue #121) that lets routing-server serve the real Porto export
+// (data/out/edge_attributes.geojson, ~3.7k directed edges) WITHOUT embedding its ~1.7 MB
+// blob into the binary: the file is read from disk ONLY when the operator points the
+// -graph-file flag at it, so the distroless container's default boot (NewDefaultServer,
+// embedded toy) keeps its no-filesystem-dependency guarantee for tests/CI.
+//
+// It loads through the SAME graph.LoadEdgeAttributesGeoJSON §2 contract loader
+// NewDefaultServer uses, so every export invariant is enforced identically — a malformed
+// or missing file is a clean construction error (never a half-built server), and the
+// binary exits non-zero rather than serving a broken surface. WithConnectivityWarn is
+// enabled so a fragmented real-city extract logs a non-fatal diagnostic on boot (it never
+// rejects the load); the embedded toy path stays byte-identical (no such option).
+func NewFileServer(path string, reg *prometheus.Registry, logger *slog.Logger) (*Server, error) {
+	roadGraph, geom, err := graph.LoadEdgeAttributesGeoJSONFile(path, graph.WithConnectivityWarn())
+	if err != nil {
+		return nil, fmt.Errorf("api: load graph file %q: %w", path, err)
+	}
+	return NewServer(roadGraph, geom, reg, logger)
+}
+
 // NewServer builds a Server over an already-loaded graph + geometry, registering
 // its routing counters against reg and logging via logger. It is the testable
 // seam (the handler tests build a Server from a graph loaded out of testdata),
