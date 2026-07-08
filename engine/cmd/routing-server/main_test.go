@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -118,6 +120,47 @@ func TestNewMuxRoutes(test1 *testing.T) {
 			if resp.StatusCode == http.StatusNotFound {
 				test5.Errorf("%s %s: got 404, want the endpoint mounted", tc.method, tc.path)
 			}
+		}
+	})
+}
+
+// TestLoadServer pins the graph-source seam loadServer (issue #121): the empty-path branch
+// loads the embedded toy network, and a set-but-bad -graph-file is a CLEAN construction error
+// (nil server, non-nil error) rather than a half-built server — the invariant the loadServer /
+// NewFileServer doc comments guarantee and main relies on to exit non-zero. It exercises the
+// selection without binding a listener, as the doc comment claims.
+func TestLoadServer(t *testing.T) {
+	t.Run("empty path loads the embedded toy network", func(t *testing.T) {
+		srv, err := loadServer("", metrics.NewRegistry(), nil)
+		if err != nil {
+			t.Fatalf(`loadServer(""): unexpected error: %v`, err)
+		}
+		if srv == nil {
+			t.Fatal(`loadServer(""): got nil server, want the embedded-graph server`)
+		}
+	})
+
+	t.Run("nonexistent file is a clean error, not a half-built server", func(t *testing.T) {
+		srv, err := loadServer(filepath.Join(t.TempDir(), "does-not-exist.geojson"), metrics.NewRegistry(), nil)
+		if err == nil {
+			t.Fatal("loadServer(nonexistent): got nil error, want a load failure")
+		}
+		if srv != nil {
+			t.Errorf("loadServer(nonexistent): got non-nil server on error, want nil")
+		}
+	})
+
+	t.Run("malformed GeoJSON is a clean error", func(t *testing.T) {
+		bad := filepath.Join(t.TempDir(), "bad.geojson")
+		if err := os.WriteFile(bad, []byte("{ this is not valid geojson"), 0o600); err != nil {
+			t.Fatalf("write temp file: %v", err)
+		}
+		srv, err := loadServer(bad, metrics.NewRegistry(), nil)
+		if err == nil {
+			t.Fatal("loadServer(malformed): got nil error, want a load failure")
+		}
+		if srv != nil {
+			t.Errorf("loadServer(malformed): got non-nil server on error, want nil")
 		}
 	})
 }

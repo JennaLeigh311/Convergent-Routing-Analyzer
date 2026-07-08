@@ -65,9 +65,14 @@ func main() {
 	// distroless image needs no testdata on disk. Set it and the ~1.7 MB real export is
 	// loaded from the filesystem instead; it is never embedded. The env-backed default
 	// makes it settable in a container without editing the command line.
-	graphFile := flag.String("graph-file", os.Getenv("GRAPH_FILE"),
+	// Parse into a LOCAL FlagSet rather than the global flag.CommandLine, mirroring
+	// cmd/route/main.go — so the binary's flags stay isolated from any ambient global state
+	// (and remain testable via a run function later). flag.ExitOnError exits non-zero on a bad
+	// flag, matching the previous flag.Parse() behavior.
+	fs := flag.NewFlagSet("routing-server", flag.ExitOnError)
+	graphFile := fs.String("graph-file", os.Getenv("GRAPH_FILE"),
 		"path to a real edge_attributes GeoJSON to serve; empty = embedded toy network (default)")
-	flag.Parse()
+	_ = fs.Parse(os.Args[1:])
 
 	addr := serveraddr.Resolve()
 

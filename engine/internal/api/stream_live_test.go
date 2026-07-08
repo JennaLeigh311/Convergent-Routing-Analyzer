@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 	"time"
 
@@ -63,14 +64,13 @@ func TestLiveBuffersStreamAsProduced(t *testing.T) {
 		lb.emit(full[name][0])
 	}
 
-	// Build the replay state over the LIVE buffers, wiring mu/producerActive exactly as
-	// runStream does. At high speed so a single advance coalesces all due ticks.
+	// Build the replay state over the LIVE buffers, wiring rs.lb exactly as runStream does.
+	// At high speed so a single advance coalesces all due ticks.
 	params := streamParams{Speed: 100000, ServerTickHz: 2}
 	lb.mu.Lock()
 	rs, snapshots := srv.newReplayState(lb.ticks, params)
 	lb.mu.Unlock()
-	rs.mu = &lb.mu
-	rs.producerActive = lb.producerActive
+	rs.lb = lb
 
 	recon := reconstructFromSnapshots(snapshots)
 
@@ -146,16 +146,19 @@ func TestWaitFirstTicks(t *testing.T) {
 	}
 }
 
-// TestStreamFirstFramePortoSlice is the issue-#121 real-network first-frame demonstration:
-// over a live WebSocket to a server backed by REAL Porto geometry, the first frame (a
-// snapshot) arrives well before the full run's paced replay completes — the property the
-// former collect-to-completion path could not offer, since it emitted nothing until the
-// entire sim had run. The streaming path sends every algo's snapshot as soon as its first
-// tick lands (one sim step), THEN paces the deltas at the server tick, so time-to-first-
-// frame is a small fraction of the total connection time. The margin here is generous (the
-// first frame must land in under half the total run) so the assertion demonstrates the
-// property without depending on a brittle absolute-nanosecond threshold; the deterministic
-// TestLiveBuffersStreamAsProduced pins the underlying mechanism exactly.
+// TestStreamFirstFramePortoSlice is a real-network INTEGRATION SMOKE TEST (issue #121): over
+// a live WebSocket to a server backed by REAL Porto geometry, every algo announces itself
+// (snapshot), the run progresses (deltas), and the first frame precedes run completion. It
+// exercises the full upgrade→stream→drain path end-to-end on real exporter geometry.
+//
+// It is NOT the proof of the streaming property. On a 75-edge slice the six-algo sim is a few
+// ms while `total` is dominated by the fixed 500 ms server-tick ticker, so a first frame ≪
+// total holds even for a collect-to-completion implementation — the slice is too small to
+// distinguish the two. The streaming mechanism (advance reads a still-growing buffer; done()
+// gates on the producer, not a momentary drain) is pinned deterministically and under the
+// race detector by TestLiveBuffersStreamAsProduced and TestLiveBuffersConcurrentProducer;
+// this test deliberately makes no wall-clock ratio assertion, which would only flake on a
+// loaded runner without adding real coverage.
 func TestStreamFirstFramePortoSlice(t *testing.T) {
 	srv := newPortoSliceServer(t)
 	httpSrv := httptest.NewServer(srv.Routes())
@@ -209,16 +212,15 @@ func TestStreamFirstFramePortoSlice(t *testing.T) {
 		t.Errorf("expected at least one delta frame on the Porto slice, got 0")
 	}
 
-	// The demonstration: the first frame is a small fraction of the total run. The generous
-	// 2× margin keeps it robust to CI timing while still failing a precompute-then-replay
-	// regression (which would push the first frame out to the full sim wall-time).
+	// The first frame must precede run completion (a live stream, not a post-run dump). We log
+	// the observed ratio for insight but deliberately do NOT assert on it: on this small slice
+	// `total` is dominated by the 500 ms ticker, so a tighter wall-clock bound would flake on a
+	// loaded runner without distinguishing streaming from collect-to-completion (see the doc
+	// comment; the deterministic tests carry that burden).
 	t.Logf("Porto-slice /stream: first-frame=%v total=%v (%.1f%% of total)",
 		firstFrame, total, 100*float64(firstFrame)/float64(total))
 	if firstFrame >= total {
 		t.Errorf("first frame (%v) did not precede run completion (%v) — stream is not live", firstFrame, total)
-	}
-	if total > 100*time.Millisecond && firstFrame*2 >= total {
-		t.Errorf("first-frame latency %v is not a small fraction of the %v total run", firstFrame, total)
 	}
 }
 
@@ -238,7 +240,70 @@ func TestLiveBuffersTerminalErr(t *testing.T) {
 	if err := lbErr.terminalErr(); err != sentinel {
 		t.Errorf("terminalErr after finish(err) = %v, want %v", err, sentinel)
 	}
-	if err := lbErr.runErr(); err != sentinel {
-		t.Errorf("runErr after finish(err) = %v, want %v", err, sentinel)
+	if err := lbErr.finalErr(); err != sentinel {
+		t.Errorf("finalErr after finish(err) = %v, want %v", err, sentinel)
+	}
+}
+
+// TestLiveBuffersConcurrentProducer exercises the live path with a REAL concurrent producer,
+// so the race detector (CI runs `go test -race ./...`) actually sees advance/done reading the
+// buffers while a separate goroutine appends to them — the interleaving TestLiveBuffersStream-
+// AsProduced cannot cover because it drives emit/advance/finish on one goroutine. It pins the
+// same two properties under contention: done() never reports true until finish() lands, and
+// the live-streamed reconstruction still equals ground truth at each algo's final tick.
+func TestLiveBuffersConcurrentProducer(t *testing.T) {
+	srv := newTestServer(t)
+	full := collectStreamTicks(t, srv, streamTestConfig())
+
+	lb := newLiveBuffers()
+	// Seed each algo's first tick (what waitFirstTicks gates on) before the replay state and
+	// the producer goroutine start, so snapshots can be built for every algo.
+	for _, name := range benchmark.RouterOrder {
+		if len(full[name]) == 0 {
+			t.Fatalf("algo %q produced no ticks", name)
+		}
+		lb.emit(full[name][0])
+	}
+
+	params := streamParams{Speed: 100000, ServerTickHz: 2}
+	lb.mu.Lock()
+	rs, snapshots := srv.newReplayState(lb.ticks, params)
+	lb.mu.Unlock()
+	rs.lb = lb
+	recon := reconstructFromSnapshots(snapshots)
+
+	// The producer appends every remaining tick FROM ANOTHER GOROUTINE while the replay loop
+	// below drains, then finishes — the concurrent append vs. read the lock discipline guards.
+	go func() {
+		for _, name := range benchmark.RouterOrder {
+			for i := 1; i < len(full[name]); i++ {
+				lb.emit(full[name][i])
+			}
+		}
+		lb.finish(nil)
+	}()
+
+	// Drain as the producer grows the buffers. done() must not report true until finish() has
+	// landed AND every tick is replayed; the loop is bounded so a premature-done regression (or
+	// a never-done hang) fails as a bounded-iteration timeout rather than spinning forever.
+	const maxSteps = 1_000_000
+	steps := 0
+	for !rs.done() {
+		for _, d := range rs.advance(srv) {
+			for _, ch := range d.Changed {
+				recon[d.Algo][ch.SegmentID] = ch.Bucket
+			}
+		}
+		if steps++; steps > maxSteps {
+			t.Fatalf("replay did not complete after %d steps — done() may never gate off the producer", maxSteps)
+		}
+		runtime.Gosched()
+	}
+
+	for _, name := range benchmark.RouterOrder {
+		ticks := full[name]
+		if !equalBuckets(recon[name], srv.fullBuckets(ticks[len(ticks)-1])) {
+			t.Errorf("%q: concurrent live-streamed reconstruction != final ground truth", name)
+		}
 	}
 }
