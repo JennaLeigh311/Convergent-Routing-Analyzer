@@ -1,13 +1,13 @@
 # syntax=docker/dockerfile:1
 #
 # routing-server image (docker-compose `core` profile, issue #6).
-# Multi-stage: build the Go binaries on golang:1.26.4, ship a distroless final
+# Multi-stage: build the Go binaries on golang:1.26.5, ship a distroless final
 # image running routing-server. Distroless has no shell, so the healthcheck is
 # performed by a tiny statically-linked `healthcheck` binary built alongside the
 # server (it GETs /healthz on $ROUTING_SERVER_ADDR and exits 0 on HTTP 200).
 
 # ---- build stage ----
-FROM golang:1.26.4 AS build
+FROM golang:1.26.5 AS build
 WORKDIR /src
 
 # go.mod + go.sum first for layer caching. go.sum now exists (the engine has
