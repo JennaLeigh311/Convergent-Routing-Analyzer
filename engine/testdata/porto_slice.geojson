@@ -1,0 +1,2737 @@
+{
+  "type": "FeatureCollection",
+  "schema_version": 1,
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6240719,
+            41.1529176
+          ],
+          [
+            -8.6242229,
+            41.1530172
+          ],
+          [
+            -8.6244855,
+            41.1531718
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "8367074:0:F",
+        "edge_id": 0,
+        "source_node": 32,
+        "target_node": 577,
+        "osm_way_id": 8367074,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 44.71631620704362,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 5.365957944845234,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.626206,
+            41.1526457
+          ],
+          [
+            -8.6264157,
+            41.1526808
+          ],
+          [
+            -8.6264869,
+            41.1526609
+          ],
+          [
+            -8.6271113,
+            41.1524865
+          ],
+          [
+            -8.6271726,
+            41.1523893
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "13800389:0:F",
+        "edge_id": 1,
+        "source_node": 502,
+        "target_node": 102,
+        "osm_way_id": 13800389,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 92.06823847088972,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 16.572282924760152,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6255507,
+            41.1524815
+          ],
+          [
+            -8.6245574,
+            41.15278
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "13800986:0:F",
+        "edge_id": 2,
+        "source_node": 1693,
+        "target_node": 105,
+        "osm_way_id": 13800986,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 89.54321038126892,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 10.74518524575227,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6261136,
+            41.1523141
+          ],
+          [
+            -8.6259664,
+            41.1523579
+          ],
+          [
+            -8.6255507,
+            41.1524815
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "13800986:1:F",
+        "edge_id": 3,
+        "source_node": 104,
+        "target_node": 1693,
+        "osm_way_id": 13800986,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 50.67183645585596,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 6.080620374702715,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6277443,
+            41.1518287
+          ],
+          [
+            -8.6271712,
+            41.1519972
+          ],
+          [
+            -8.6270301,
+            41.1520358
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "27149319:0:F",
+        "edge_id": 4,
+        "source_node": 231,
+        "target_node": 230,
+        "osm_way_id": 27149319,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 64.08106129107497,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 7.689727354928996,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.629007,
+            41.1514812
+          ],
+          [
+            -8.6289136,
+            41.1514801
+          ],
+          [
+            -8.6288248,
+            41.1514971
+          ],
+          [
+            -8.6277443,
+            41.1518287
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "27149319:1:F",
+        "edge_id": 5,
+        "source_node": 222,
+        "target_node": 231,
+        "osm_way_id": 27149319,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 113.18458620361362,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 13.582150344433634,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6240719,
+            41.1529176
+          ],
+          [
+            -8.6230243,
+            41.1528133
+          ],
+          [
+            -8.6229114,
+            41.152802
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "30405423:0:F",
+        "edge_id": 6,
+        "source_node": 32,
+        "target_node": 404,
+        "osm_way_id": 30405423,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 98.00938932066228,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 11.761126718479472,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.628743,
+            41.1524782
+          ],
+          [
+            -8.6287339,
+            41.152615
+          ],
+          [
+            -8.6287061,
+            41.1530325
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "30405557:1:F",
+        "edge_id": 7,
+        "source_node": 103,
+        "target_node": 1266,
+        "osm_way_id": 30405557,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 61.712728358804625,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 7.4055274030565545,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6257937,
+            41.1501385
+          ],
+          [
+            -8.6259137,
+            41.1506581
+          ],
+          [
+            -8.6259458,
+            41.1507759
+          ],
+          [
+            -8.6259494,
+            41.1507966
+          ],
+          [
+            -8.6259526,
+            41.150815
+          ],
+          [
+            -8.6259533,
+            41.1508542
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "36748084:0:F",
+        "edge_id": 8,
+        "source_node": 1052,
+        "target_node": 108,
+        "osm_way_id": 36748084,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 80.7597231420498,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 5.814700066227585,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6259533,
+            41.1508542
+          ],
+          [
+            -8.6259526,
+            41.150815
+          ],
+          [
+            -8.6259494,
+            41.1507966
+          ],
+          [
+            -8.6259458,
+            41.1507759
+          ],
+          [
+            -8.6259137,
+            41.1506581
+          ],
+          [
+            -8.6257937,
+            41.1501385
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "36748084:0:R",
+        "edge_id": 9,
+        "source_node": 108,
+        "target_node": 1052,
+        "osm_way_id": 36748084,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 80.7597231420498,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 5.814700066227585,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6257871,
+            41.1501093
+          ],
+          [
+            -8.6257937,
+            41.1501385
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "36748084:2:F",
+        "edge_id": 10,
+        "source_node": 1051,
+        "target_node": 1052,
+        "osm_way_id": 36748084,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 3.293581950313975,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 0.2371379004226062,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6257937,
+            41.1501385
+          ],
+          [
+            -8.6257871,
+            41.1501093
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "36748084:2:R",
+        "edge_id": 11,
+        "source_node": 1052,
+        "target_node": 1051,
+        "osm_way_id": 36748084,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 3.293581950313975,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 0.2371379004226062,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.629007,
+            41.1514812
+          ],
+          [
+            -8.6289754,
+            41.1515616
+          ],
+          [
+            -8.6289617,
+            41.1515965
+          ],
+          [
+            -8.6287392,
+            41.1523368
+          ],
+          [
+            -8.6287399,
+            41.1523633
+          ],
+          [
+            -8.628743,
+            41.1524782
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "36748085:0:F",
+        "edge_id": 12,
+        "source_node": 222,
+        "target_node": 103,
+        "osm_way_id": 36748085,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 113.49544073744592,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 8.171671733096106,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.628743,
+            41.1524782
+          ],
+          [
+            -8.6287399,
+            41.1523633
+          ],
+          [
+            -8.6287392,
+            41.1523368
+          ],
+          [
+            -8.6289617,
+            41.1515965
+          ],
+          [
+            -8.6289754,
+            41.1515616
+          ],
+          [
+            -8.629007,
+            41.1514812
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "36748085:0:R",
+        "edge_id": 13,
+        "source_node": 103,
+        "target_node": 222,
+        "osm_way_id": 36748085,
+        "highway_class": "secondary",
+        "lanes_effective": 1,
+        "length_m": 113.49544073744592,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 8.171671733096106,
+        "capacity_vph": 1260.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6259533,
+            41.1508542
+          ],
+          [
+            -8.6260501,
+            41.1508659
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "39865747:0:F",
+        "edge_id": 14,
+        "source_node": 108,
+        "target_node": 464,
+        "osm_way_id": 39865747,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 8.20857485299855,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 0.9850289823598259,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6260501,
+            41.1508659
+          ],
+          [
+            -8.6259533,
+            41.1508542
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "39865747:0:R",
+        "edge_id": 15,
+        "source_node": 464,
+        "target_node": 108,
+        "osm_way_id": 39865747,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 8.20857485299855,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 0.9850289823598259,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6276575,
+            41.151654
+          ],
+          [
+            -8.6276364,
+            41.1516914
+          ],
+          [
+            -8.6276096,
+            41.1517258
+          ],
+          [
+            -8.6275854,
+            41.151754
+          ],
+          [
+            -8.6275506,
+            41.1517803
+          ],
+          [
+            -8.6274996,
+            41.1518005
+          ],
+          [
+            -8.6274325,
+            41.1518187
+          ],
+          [
+            -8.6273414,
+            41.1518429
+          ],
+          [
+            -8.6272697,
+            41.1518606
+          ],
+          [
+            -8.627193,
+            41.1518745
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "39865748:0:F",
+        "edge_id": 16,
+        "source_node": 1066,
+        "target_node": 465,
+        "osm_way_id": 39865748,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 48.62173902011991,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 8.751913023621585,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.627193,
+            41.1518745
+          ],
+          [
+            -8.6270946,
+            41.1518772
+          ],
+          [
+            -8.6269978,
+            41.1518732
+          ],
+          [
+            -8.6269366,
+            41.1518616
+          ],
+          [
+            -8.6268768,
+            41.1518348
+          ],
+          [
+            -8.6268289,
+            41.1517689
+          ],
+          [
+            -8.6267472,
+            41.1516726
+          ],
+          [
+            -8.6267211,
+            41.1516298
+          ],
+          [
+            -8.6267016,
+            41.1515564
+          ],
+          [
+            -8.6265604,
+            41.1513181
+          ],
+          [
+            -8.6265241,
+            41.151289
+          ],
+          [
+            -8.6264966,
+            41.1512612
+          ],
+          [
+            -8.6264644,
+            41.1512289
+          ],
+          [
+            -8.6264429,
+            41.1512006
+          ],
+          [
+            -8.6264161,
+            41.1511529
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "39865748:1:F",
+        "edge_id": 17,
+        "source_node": 465,
+        "target_node": 1059,
+        "osm_way_id": 39865748,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 113.2762310787388,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 20.389721594172986,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6296995,
+            41.1515471
+          ],
+          [
+            -8.6291428,
+            41.1514913
+          ],
+          [
+            -8.6290909,
+            41.1514874
+          ],
+          [
+            -8.629007,
+            41.1514812
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "39895285:0:F",
+        "edge_id": 18,
+        "source_node": 1742,
+        "target_node": 222,
+        "osm_way_id": 39895285,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 58.447216425123266,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 7.013665971014792,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6267428,
+            41.1544927
+          ],
+          [
+            -8.62676,
+            41.1545469
+          ],
+          [
+            -8.6268237,
+            41.1545861
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "167487372:0:F",
+        "edge_id": 19,
+        "source_node": 642,
+        "target_node": 264,
+        "osm_way_id": 167487372,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 13.084224585222639,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 0.9420641701360299,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6267103,
+            41.154224
+          ],
+          [
+            -8.6266775,
+            41.1542882
+          ],
+          [
+            -8.6266896,
+            41.1543301
+          ],
+          [
+            -8.6266978,
+            41.1543615
+          ],
+          [
+            -8.6267428,
+            41.1544927
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "167487372:1:F",
+        "edge_id": 20,
+        "source_node": 641,
+        "target_node": 642,
+        "osm_way_id": 167487372,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 31.04239872067463,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 2.235052707888573,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6244855,
+            41.1531718
+          ],
+          [
+            -8.6245296,
+            41.1531261
+          ],
+          [
+            -8.6245822,
+            41.1528297
+          ],
+          [
+            -8.6245574,
+            41.15278
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "167487428:0:F",
+        "edge_id": 21,
+        "source_node": 577,
+        "target_node": 105,
+        "osm_way_id": 167487428,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 45.436049407145774,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 5.452325928857492,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6267246,
+            41.1524928
+          ],
+          [
+            -8.627035,
+            41.1524076
+          ],
+          [
+            -8.6271726,
+            41.1523893
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "200072875:0:F",
+        "edge_id": 22,
+        "source_node": 1499,
+        "target_node": 102,
+        "osm_way_id": 200072875,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 39.360294572495604,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 2.8339412092196836,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6271726,
+            41.1523893
+          ],
+          [
+            -8.627035,
+            41.1524076
+          ],
+          [
+            -8.6267246,
+            41.1524928
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "200072875:0:R",
+        "edge_id": 23,
+        "source_node": 102,
+        "target_node": 1499,
+        "osm_way_id": 200072875,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 39.360294572495604,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 2.8339412092196836,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.626206,
+            41.1526457
+          ],
+          [
+            -8.6262287,
+            41.1527172
+          ],
+          [
+            -8.6262477,
+            41.1527769
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "207634492:0:F",
+        "edge_id": 24,
+        "source_node": 502,
+        "target_node": 1497,
+        "osm_way_id": 207634492,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 15.000726613719687,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 1.0800523161878175,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6262477,
+            41.1527769
+          ],
+          [
+            -8.6262287,
+            41.1527172
+          ],
+          [
+            -8.626206,
+            41.1526457
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "207634492:0:R",
+        "edge_id": 25,
+        "source_node": 1497,
+        "target_node": 502,
+        "osm_way_id": 207634492,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 15.000726613719687,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 1.0800523161878175,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6282056,
+            41.1524482
+          ],
+          [
+            -8.6285185,
+            41.1524656
+          ],
+          [
+            -8.6285788,
+            41.1524689
+          ],
+          [
+            -8.628743,
+            41.1524782
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "207634523:0:F",
+        "edge_id": 26,
+        "source_node": 1697,
+        "target_node": 103,
+        "osm_way_id": 207634523,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 45.117566309039105,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 3.2484647742508157,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.628743,
+            41.1524782
+          ],
+          [
+            -8.6285788,
+            41.1524689
+          ],
+          [
+            -8.6285185,
+            41.1524656
+          ],
+          [
+            -8.6282056,
+            41.1524482
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "207634523:0:R",
+        "edge_id": 27,
+        "source_node": 103,
+        "target_node": 1697,
+        "osm_way_id": 207634523,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 45.117566309039105,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 3.2484647742508157,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6274654,
+            41.1524074
+          ],
+          [
+            -8.6282056,
+            41.1524482
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "207634523:1:F",
+        "edge_id": 28,
+        "source_node": 1951,
+        "target_node": 1697,
+        "osm_way_id": 207634523,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 62.139452289948984,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 4.474040564876327,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6282056,
+            41.1524482
+          ],
+          [
+            -8.6274654,
+            41.1524074
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "207634523:1:R",
+        "edge_id": 29,
+        "source_node": 1697,
+        "target_node": 1951,
+        "osm_way_id": 207634523,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 62.139452289948984,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 4.474040564876327,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6261136,
+            41.1523141
+          ],
+          [
+            -8.6261331,
+            41.152384
+          ],
+          [
+            -8.626206,
+            41.1526457
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "212706762:0:F",
+        "edge_id": 30,
+        "source_node": 104,
+        "target_node": 502,
+        "osm_way_id": 212706762,
+        "highway_class": "secondary",
+        "lanes_effective": 3,
+        "length_m": 37.67507390643438,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 2.712605321263275,
+        "capacity_vph": 3780.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.626206,
+            41.1526457
+          ],
+          [
+            -8.6261331,
+            41.152384
+          ],
+          [
+            -8.6261136,
+            41.1523141
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "212706762:0:R",
+        "edge_id": 31,
+        "source_node": 502,
+        "target_node": 104,
+        "osm_way_id": 212706762,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 37.67507390643438,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 2.712605321263275,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6270301,
+            41.1520358
+          ],
+          [
+            -8.6269146,
+            41.1520684
+          ],
+          [
+            -8.6262834,
+            41.152264
+          ],
+          [
+            -8.6261136,
+            41.1523141
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "212706766:0:F",
+        "edge_id": 32,
+        "source_node": 230,
+        "target_node": 104,
+        "osm_way_id": 212706766,
+        "highway_class": "secondary",
+        "lanes_effective": 3,
+        "length_m": 82.74494769115648,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 5.9576362337632665,
+        "capacity_vph": 3780.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6245574,
+            41.15278
+          ],
+          [
+            -8.6242422,
+            41.1528689
+          ],
+          [
+            -8.6240719,
+            41.1529176
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "252519111:0:F",
+        "edge_id": 33,
+        "source_node": 105,
+        "target_node": 32,
+        "osm_way_id": 252519111,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 43.432822843629474,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 5.211938741235537,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6244855,
+            41.1531718
+          ],
+          [
+            -8.6254273,
+            41.1537346
+          ],
+          [
+            -8.6256639,
+            41.1538709
+          ],
+          [
+            -8.6265399,
+            41.1543758
+          ],
+          [
+            -8.6265664,
+            41.1543911
+          ],
+          [
+            -8.6266032,
+            41.1544123
+          ],
+          [
+            -8.6267428,
+            41.1544927
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "252519112:0:F",
+        "edge_id": 34,
+        "source_node": 577,
+        "target_node": 642,
+        "osm_way_id": 252519112,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 239.36232385516803,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 28.723478862620162,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.626399,
+            41.1501482
+          ],
+          [
+            -8.6263863,
+            41.1500954
+          ],
+          [
+            -8.6263721,
+            41.1500814
+          ],
+          [
+            -8.6263476,
+            41.1500733
+          ],
+          [
+            -8.6263215,
+            41.1500723
+          ],
+          [
+            -8.6259995,
+            41.1501127
+          ],
+          [
+            -8.6258649,
+            41.1501295
+          ],
+          [
+            -8.6257937,
+            41.1501385
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262580848:0:F",
+        "edge_id": 35,
+        "source_node": 1053,
+        "target_node": 1052,
+        "osm_way_id": 262580848,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 57.15472057930316,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 10.287849704274569,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6257937,
+            41.1501385
+          ],
+          [
+            -8.6258649,
+            41.1501295
+          ],
+          [
+            -8.6259995,
+            41.1501127
+          ],
+          [
+            -8.6263215,
+            41.1500723
+          ],
+          [
+            -8.6263476,
+            41.1500733
+          ],
+          [
+            -8.6263721,
+            41.1500814
+          ],
+          [
+            -8.6263863,
+            41.1500954
+          ],
+          [
+            -8.626399,
+            41.1501482
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262580848:0:R",
+        "edge_id": 36,
+        "source_node": 1052,
+        "target_node": 1053,
+        "osm_way_id": 262580848,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 57.15472057930316,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 10.287849704274569,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6260501,
+            41.1508659
+          ],
+          [
+            -8.6260956,
+            41.1508239
+          ],
+          [
+            -8.6262587,
+            41.1506733
+          ],
+          [
+            -8.6264845,
+            41.150465
+          ],
+          [
+            -8.6265649,
+            41.1503908
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262616020:0:F",
+        "edge_id": 37,
+        "source_node": 464,
+        "target_node": 466,
+        "osm_way_id": 262616020,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 68.18172513387523,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 8.181807016065028,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6264161,
+            41.1511529
+          ],
+          [
+            -8.6264114,
+            41.1510729
+          ],
+          [
+            -8.6264182,
+            41.1509537
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262616021:0:F",
+        "edge_id": 38,
+        "source_node": 1059,
+        "target_node": 1060,
+        "osm_way_id": 262616021,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 22.170951748534392,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 3.990771314736191,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6264182,
+            41.1509537
+          ],
+          [
+            -8.6264429,
+            41.1508714
+          ],
+          [
+            -8.6265488,
+            41.1504837
+          ],
+          [
+            -8.6265649,
+            41.1503908
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262616022:0:F",
+        "edge_id": 39,
+        "source_node": 1060,
+        "target_node": 466,
+        "osm_way_id": 262616022,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 63.81237313332568,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 11.486227163998622,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6275611,
+            41.1514747
+          ],
+          [
+            -8.6274885,
+            41.151597
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262623002:0:F",
+        "edge_id": 40,
+        "source_node": 468,
+        "target_node": 1065,
+        "osm_way_id": 262623002,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 14.895818837148703,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 1.7874982604578442,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.627193,
+            41.1518745
+          ],
+          [
+            -8.6270826,
+            41.151957
+          ],
+          [
+            -8.6270301,
+            41.1520358
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262623003:0:F",
+        "edge_id": 41,
+        "source_node": 465,
+        "target_node": 230,
+        "osm_way_id": 262623003,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 22.825746350862687,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 2.7390895621035223,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6274885,
+            41.151597
+          ],
+          [
+            -8.6274063,
+            41.1516962
+          ],
+          [
+            -8.6272587,
+            41.1518225
+          ],
+          [
+            -8.627193,
+            41.1518745
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262623003:1:F",
+        "edge_id": 42,
+        "source_node": 1065,
+        "target_node": 465,
+        "osm_way_id": 262623003,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 39.6892385635253,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 4.762708627623036,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6277443,
+            41.1518287
+          ],
+          [
+            -8.6277575,
+            41.1518564
+          ],
+          [
+            -8.6277623,
+            41.1518658
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262801392:0:F",
+        "edge_id": 43,
+        "source_node": 231,
+        "target_node": 1073,
+        "osm_way_id": 262801392,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 4.392208431304294,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 0.7905975176347729,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6277623,
+            41.1518658
+          ],
+          [
+            -8.6277575,
+            41.1518564
+          ],
+          [
+            -8.6277443,
+            41.1518287
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "262801392:0:R",
+        "edge_id": 44,
+        "source_node": 1073,
+        "target_node": 231,
+        "osm_way_id": 262801392,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 4.392208431304294,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 0.7905975176347729,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6290837,
+            41.1513364
+          ],
+          [
+            -8.629007,
+            41.1514812
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "304688472:0:F",
+        "edge_id": 45,
+        "source_node": 320,
+        "target_node": 222,
+        "osm_way_id": 304688472,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 17.334449072384825,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 1.2480803332117074,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.629007,
+            41.1514812
+          ],
+          [
+            -8.6290837,
+            41.1513364
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "304688472:0:R",
+        "edge_id": 46,
+        "source_node": 222,
+        "target_node": 320,
+        "osm_way_id": 304688472,
+        "highway_class": "secondary",
+        "lanes_effective": 1,
+        "length_m": 17.334449072384825,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 1.2480803332117074,
+        "capacity_vph": 1260.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.628743,
+            41.1524782
+          ],
+          [
+            -8.6289655,
+            41.1524906
+          ],
+          [
+            -8.629459,
+            41.1525195
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482261339:0:F",
+        "edge_id": 47,
+        "source_node": 103,
+        "target_node": 1939,
+        "osm_way_id": 482261339,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 60.12313084703723,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 4.328865420986681,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.629459,
+            41.1525195
+          ],
+          [
+            -8.6289655,
+            41.1524906
+          ],
+          [
+            -8.628743,
+            41.1524782
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482261339:0:R",
+        "edge_id": 48,
+        "source_node": 1939,
+        "target_node": 103,
+        "osm_way_id": 482261339,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 60.12313084703723,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 4.328865420986681,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6264536,
+            41.1534234
+          ],
+          [
+            -8.6267103,
+            41.154224
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482291294:0:F",
+        "edge_id": 49,
+        "source_node": 1730,
+        "target_node": 641,
+        "osm_way_id": 482291294,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 91.58020838176787,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 6.593775003487287,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6267103,
+            41.154224
+          ],
+          [
+            -8.6264536,
+            41.1534234
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482291294:0:R",
+        "edge_id": 50,
+        "source_node": 641,
+        "target_node": 1730,
+        "osm_way_id": 482291294,
+        "highway_class": "secondary",
+        "lanes_effective": 1,
+        "length_m": 91.58020838176787,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 6.593775003487287,
+        "capacity_vph": 1260.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6262477,
+            41.1527769
+          ],
+          [
+            -8.6264536,
+            41.1534234
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482291295:0:F",
+        "edge_id": 51,
+        "source_node": 1497,
+        "target_node": 1730,
+        "osm_way_id": 482291295,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 73.92560703358768,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 5.3226437064183125,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6264536,
+            41.1534234
+          ],
+          [
+            -8.6262477,
+            41.1527769
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482291295:0:R",
+        "edge_id": 52,
+        "source_node": 1730,
+        "target_node": 1497,
+        "osm_way_id": 482291295,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 73.92560703358768,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 5.3226437064183125,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6259086,
+            41.1517102
+          ],
+          [
+            -8.6260638,
+            41.1521804
+          ],
+          [
+            -8.6261136,
+            41.1523141
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482296560:0:F",
+        "edge_id": 53,
+        "source_node": 1498,
+        "target_node": 104,
+        "osm_way_id": 482296560,
+        "highway_class": "secondary",
+        "lanes_effective": 3,
+        "length_m": 69.31481108978684,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 4.990666398464652,
+        "capacity_vph": 3780.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6261136,
+            41.1523141
+          ],
+          [
+            -8.6260638,
+            41.1521804
+          ],
+          [
+            -8.6259086,
+            41.1517102
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482296560:0:R",
+        "edge_id": 54,
+        "source_node": 104,
+        "target_node": 1498,
+        "osm_way_id": 482296560,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 69.31481108978684,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 4.990666398464652,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6259533,
+            41.1508542
+          ],
+          [
+            -8.6258194,
+            41.1513064
+          ],
+          [
+            -8.6258116,
+            41.1513869
+          ],
+          [
+            -8.6258238,
+            41.1514534
+          ],
+          [
+            -8.6259086,
+            41.1517102
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482296561:0:F",
+        "edge_id": 55,
+        "source_node": 108,
+        "target_node": 1498,
+        "osm_way_id": 482296561,
+        "highway_class": "secondary",
+        "lanes_effective": 3,
+        "length_m": 97.38098808035745,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 7.011431141785737,
+        "capacity_vph": 3780.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6259086,
+            41.1517102
+          ],
+          [
+            -8.6258238,
+            41.1514534
+          ],
+          [
+            -8.6258116,
+            41.1513869
+          ],
+          [
+            -8.6258194,
+            41.1513064
+          ],
+          [
+            -8.6259533,
+            41.1508542
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482296561:0:R",
+        "edge_id": 56,
+        "source_node": 1498,
+        "target_node": 108,
+        "osm_way_id": 482296561,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 97.38098808035745,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 7.011431141785737,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6271726,
+            41.1523893
+          ],
+          [
+            -8.6271365,
+            41.1522994
+          ],
+          [
+            -8.6270301,
+            41.1520358
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482296562:0:F",
+        "edge_id": 57,
+        "source_node": 102,
+        "target_node": 230,
+        "osm_way_id": 482296562,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 41.07821577991113,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 2.9576315361536016,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.626206,
+            41.1526457
+          ],
+          [
+            -8.6262541,
+            41.1526317
+          ],
+          [
+            -8.626292,
+            41.1526208
+          ],
+          [
+            -8.6264362,
+            41.1525794
+          ],
+          [
+            -8.6267246,
+            41.1524928
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482296563:0:F",
+        "edge_id": 58,
+        "source_node": 502,
+        "target_node": 1499,
+        "osm_way_id": 482296563,
+        "highway_class": "secondary",
+        "lanes_effective": 1,
+        "length_m": 46.631111984877066,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 3.3574400629111487,
+        "capacity_vph": 1260.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6267246,
+            41.1524928
+          ],
+          [
+            -8.6264362,
+            41.1525794
+          ],
+          [
+            -8.626292,
+            41.1526208
+          ],
+          [
+            -8.6262541,
+            41.1526317
+          ],
+          [
+            -8.626206,
+            41.1526457
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "482296563:0:R",
+        "edge_id": 59,
+        "source_node": 1499,
+        "target_node": 502,
+        "osm_way_id": 482296563,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 46.631111984877066,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 3.3574400629111487,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6255507,
+            41.1524815
+          ],
+          [
+            -8.6255128,
+            41.1523519
+          ],
+          [
+            -8.6255182,
+            41.1522848
+          ],
+          [
+            -8.625439,
+            41.151997
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "769975741:0:F",
+        "edge_id": 60,
+        "source_node": 1693,
+        "target_node": 1692,
+        "osm_way_id": 769975741,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 54.91264467618623,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 9.884276041713521,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.625439,
+            41.151997
+          ],
+          [
+            -8.6255182,
+            41.1522848
+          ],
+          [
+            -8.6255128,
+            41.1523519
+          ],
+          [
+            -8.6255507,
+            41.1524815
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "769975741:0:R",
+        "edge_id": 61,
+        "source_node": 1692,
+        "target_node": 1693,
+        "osm_way_id": 769975741,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 54.91264467618623,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 9.884276041713521,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6281656,
+            41.1525762
+          ],
+          [
+            -8.6279717,
+            41.1525761
+          ],
+          [
+            -8.6279127,
+            41.1527599
+          ],
+          [
+            -8.6275426,
+            41.1527407
+          ],
+          [
+            -8.6274715,
+            41.1527791
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "769985994:0:F",
+        "edge_id": 62,
+        "source_node": 1695,
+        "target_node": 1694,
+        "osm_way_id": 769985994,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 75.64645960660812,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 13.616362729189461,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6274715,
+            41.1527791
+          ],
+          [
+            -8.6275426,
+            41.1527407
+          ],
+          [
+            -8.6279127,
+            41.1527599
+          ],
+          [
+            -8.6279717,
+            41.1525761
+          ],
+          [
+            -8.6281656,
+            41.1525762
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "769985994:0:R",
+        "edge_id": 63,
+        "source_node": 1694,
+        "target_node": 1695,
+        "osm_way_id": 769985994,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 75.64645960660812,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 13.616362729189461,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6282056,
+            41.1524482
+          ],
+          [
+            -8.6281804,
+            41.1525296
+          ],
+          [
+            -8.6281656,
+            41.1525762
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "769985995:0:F",
+        "edge_id": 64,
+        "source_node": 1697,
+        "target_node": 1695,
+        "osm_way_id": 769985995,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 14.62171015418357,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 2.6319078277530426,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6281656,
+            41.1525762
+          ],
+          [
+            -8.6281804,
+            41.1525296
+          ],
+          [
+            -8.6282056,
+            41.1524482
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "769985995:0:R",
+        "edge_id": 65,
+        "source_node": 1695,
+        "target_node": 1697,
+        "osm_way_id": 769985995,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 14.62171015418357,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 2.6319078277530426,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6281656,
+            41.1525762
+          ],
+          [
+            -8.6281461,
+            41.1526387
+          ],
+          [
+            -8.6279103,
+            41.1528848
+          ],
+          [
+            -8.6277836,
+            41.1530363
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "769985995:1:F",
+        "edge_id": 66,
+        "source_node": 1695,
+        "target_node": 1696,
+        "osm_way_id": 769985995,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 60.78986679584399,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 10.94217602325192,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6277836,
+            41.1530363
+          ],
+          [
+            -8.6279103,
+            41.1528848
+          ],
+          [
+            -8.6281461,
+            41.1526387
+          ],
+          [
+            -8.6281656,
+            41.1525762
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "769985995:1:R",
+        "edge_id": 67,
+        "source_node": 1696,
+        "target_node": 1695,
+        "osm_way_id": 769985995,
+        "highway_class": "service",
+        "lanes_effective": 1,
+        "length_m": 60.78986679584399,
+        "maxspeed_kmh": 20.0,
+        "freeflow_time_s": 10.94217602325192,
+        "capacity_vph": 720.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.626827,
+            41.1544518
+          ],
+          [
+            -8.6268821,
+            41.1543875
+          ],
+          [
+            -8.6269111,
+            41.1543537
+          ],
+          [
+            -8.6269887,
+            41.1542533
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "1165291404:0:F",
+        "edge_id": 68,
+        "source_node": 270,
+        "target_node": 1904,
+        "osm_way_id": 1165291404,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 25.90012997857818,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 3.108015597429381,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6269887,
+            41.1542533
+          ],
+          [
+            -8.6269411,
+            41.154272
+          ],
+          [
+            -8.6269192,
+            41.1542751
+          ],
+          [
+            -8.6268669,
+            41.1542825
+          ],
+          [
+            -8.6267768,
+            41.1542771
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "1165291405:0:F",
+        "edge_id": 69,
+        "source_node": 1904,
+        "target_node": 1903,
+        "osm_way_id": 1165291405,
+        "highway_class": "residential",
+        "lanes_effective": 1,
+        "length_m": 18.383407992513767,
+        "maxspeed_kmh": 30.0,
+        "freeflow_time_s": 2.206008959101652,
+        "capacity_vph": 900.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6267768,
+            41.1542771
+          ],
+          [
+            -8.6267103,
+            41.154224
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "1165291406:0:F",
+        "edge_id": 70,
+        "source_node": 1903,
+        "target_node": 641,
+        "osm_way_id": 1165291406,
+        "highway_class": "secondary",
+        "lanes_effective": 1,
+        "length_m": 8.115454970409074,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 0.5843127578694532,
+        "capacity_vph": 1260.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.626827,
+            41.1544518
+          ],
+          [
+            -8.6268104,
+            41.154388
+          ],
+          [
+            -8.6267993,
+            41.1543453
+          ],
+          [
+            -8.6267768,
+            41.1542771
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "1165291406:1:F",
+        "edge_id": 71,
+        "source_node": 270,
+        "target_node": 1903,
+        "osm_way_id": 1165291406,
+        "highway_class": "secondary",
+        "lanes_effective": 1,
+        "length_m": 19.881166076935827,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 1.4314439575393796,
+        "capacity_vph": 1260.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6268237,
+            41.1545861
+          ],
+          [
+            -8.6268512,
+            41.1545265
+          ],
+          [
+            -8.626827,
+            41.1544518
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "1165291407:0:F",
+        "edge_id": 72,
+        "source_node": 264,
+        "target_node": 270,
+        "osm_way_id": 1165291407,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 15.565561406897032,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 1.1207204212965862,
+        "capacity_vph": 2520.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6271726,
+            41.1523893
+          ],
+          [
+            -8.6273368,
+            41.1524001
+          ],
+          [
+            -8.6274654,
+            41.1524074
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "1174689832:0:F",
+        "edge_id": 73,
+        "source_node": 102,
+        "target_node": 1951,
+        "osm_way_id": 1174689832,
+        "highway_class": "secondary",
+        "lanes_effective": 1,
+        "length_m": 24.597744512453176,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 1.7710376048966285,
+        "capacity_vph": 1260.0
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -8.6274654,
+            41.1524074
+          ],
+          [
+            -8.6273368,
+            41.1524001
+          ],
+          [
+            -8.6271726,
+            41.1523893
+          ]
+        ]
+      },
+      "properties": {
+        "segment_id": "1174689832:0:R",
+        "edge_id": 74,
+        "source_node": 1951,
+        "target_node": 102,
+        "osm_way_id": 1174689832,
+        "highway_class": "secondary",
+        "lanes_effective": 2,
+        "length_m": 24.597744512453176,
+        "maxspeed_kmh": 50.0,
+        "freeflow_time_s": 1.7710376048966285,
+        "capacity_vph": 2520.0
+      }
+    }
+  ]
+}

@@ -13,7 +13,7 @@
 # TODO (Phase 7, when the real Spark job lands): assert a kafka-level fact too
 # (e.g. kafka-broker-api-versions / topic create+list) so this is a true e2e.
 #
-# Versions are pinned in the images/go.mod, not here: Go 1.26.4 (engine go.mod),
+# Versions are pinned in the images/go.mod, not here: Go 1.26.5 (engine go.mod),
 # PySpark 3.5.1 (pipeline/Dockerfile). Node is deferred to Phase 10 (no web
 # build step yet — see Lane B).
 name: Lane C

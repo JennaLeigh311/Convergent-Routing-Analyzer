@@ -308,23 +308,61 @@ func TestLivePoAMatchesStaticBenchmark(t *testing.T) {
 	}
 }
 
-// TestLivePoASOLessEqualUE is the #112 SO ≤ UE invariant for the live reference: every
-// algo's static-equilibrium PoA is ≥ 1 (systemoptimal minimizes the total network time,
-// so SO ≤ every other assignment's total), and systemoptimal against itself is exactly 1.
+// TestLivePoASOLessEqualUE is the #112 SO ≤ UE invariant for the live reference, now
+// exercised across MULTIPLE (start, seed, cap_scale) configurations (#121): for every
+// config, every algo's static-equilibrium PoA is ≥ 1 (the PoA-≥-1-by-definition floor the
+// #121 clamp enforces on an under-converged systemoptimal), and systemoptimal against
+// itself is exactly 1. Testing a spread of start times (rush peak / off-peak / midday),
+// seeds, and capacity scales (saturated and over-capacity) is what makes the floor a
+// tested guard rather than a one-config accident: an under-convergence that produced a
+// sub-unity raw ratio on SOME tuple would be masked by the clamp, but the systemoptimal ==
+// 1 assertion and the finiteness checks still pin the reference's shape everywhere.
 func TestLivePoASOLessEqualUE(t *testing.T) {
-	out := collectAll(t, baseConfig())
-	poa := perAlgoStaticPoA(t, out)
-
-	if poa["systemoptimal"] != 1.0 {
-		t.Errorf("systemoptimal StaticPoA = %v, want exactly 1 (its own reference)", poa["systemoptimal"])
+	configs := []struct {
+		name string
+		cfg  benchmark.ParallelConfig
+	}{
+		{"base-rush-0.84", baseConfig()},
+		{"offpeak-seed1-1.0", benchmark.ParallelConfig{
+			StartTime:     time.Date(2026, 6, 22, 2, 0, 0, 0, time.UTC), // dead-of-night trough
+			TickSeconds:   30,
+			Seed:          1,
+			Count:         120,
+			CapacityScale: 1.0, // the saturated reference scale
+		}},
+		{"midday-seed99-0.7", benchmark.ParallelConfig{
+			StartTime:     time.Date(2026, 6, 22, 12, 30, 0, 0, time.UTC), // midday shoulder
+			TickSeconds:   30,
+			Seed:          99,
+			Count:         180,
+			CapacityScale: 0.7, // deeply over-capacity so v/c climbs well past 1
+		}},
+		{"evening-seed20260707-0.9", benchmark.ParallelConfig{
+			StartTime:     time.Date(2026, 7, 7, 17, 30, 0, 0, time.UTC), // PM rush peak
+			TickSeconds:   30,
+			Seed:          20260707,
+			Count:         200,
+			CapacityScale: 0.9,
+		}},
 	}
-	for _, name := range benchmark.RouterOrder {
-		if poa[name] < 1-1e-9 {
-			t.Errorf("%q StaticPoA = %v, want >= 1 (SO minimizes total ⇒ SO <= UE)", name, poa[name])
-		}
-		if math.IsNaN(poa[name]) || math.IsInf(poa[name], 0) {
-			t.Errorf("%q StaticPoA non-finite: %v", name, poa[name])
-		}
+
+	for _, tc := range configs {
+		t.Run(tc.name, func(t *testing.T) {
+			out := collectAll(t, tc.cfg)
+			poa := perAlgoStaticPoA(t, out)
+
+			if poa["systemoptimal"] != 1.0 {
+				t.Errorf("systemoptimal StaticPoA = %v, want exactly 1 (its own reference)", poa["systemoptimal"])
+			}
+			for _, name := range benchmark.RouterOrder {
+				if poa[name] < 1.0 {
+					t.Errorf("%q StaticPoA = %v, want >= 1 (SO minimizes total ⇒ SO <= UE; the #121 floor guarantees it)", name, poa[name])
+				}
+				if math.IsNaN(poa[name]) || math.IsInf(poa[name], 0) {
+					t.Errorf("%q StaticPoA non-finite: %v", name, poa[name])
+				}
+			}
+		})
 	}
 }
 

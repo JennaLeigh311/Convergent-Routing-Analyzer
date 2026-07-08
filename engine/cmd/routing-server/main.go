@@ -1,9 +1,11 @@
 // Command routing-server is the REST API in front of the routing engine.
 //
-// It loads the immutable toy edge_attributes graph ONCE at startup (embedded in
-// the binary so the distroless container needs no testdata on disk), composes the
-// engine — cost functions, the six routers, the simulator congestion adapter — behind
-// the internal/api handlers, and serves the §R6 REST surface:
+// It loads an immutable edge_attributes graph ONCE at startup — by default the toy
+// network EMBEDDED in the binary (so the distroless container needs no testdata on disk),
+// or, when -graph-file (env GRAPH_FILE) points at one, the real edge_attributes GeoJSON
+// export from disk (e.g. Porto's data/out/edge_attributes.geojson, issue #121; never
+// embedded). It then composes the engine — cost functions, the six routers, the simulator
+// congestion adapter — behind the internal/api handlers, and serves the §R6 REST surface:
 //
 //	GET  /route       single A→B route (segment_id list + cost)
 //	GET  /compare     naive vs congestion-aware on the same OD pair
@@ -36,6 +38,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -54,19 +58,44 @@ func main() {
 	logger := logging.Setup()
 	logger = logger.With("service", "routing-server")
 
+	// -graph-file (or the GRAPH_FILE env, its default) points the server at a real
+	// edge_attributes GeoJSON on disk (e.g. the Porto export at
+	// data/out/edge_attributes.geojson, issue #121). Left empty — the CI/container
+	// default — the server boots the toy network EMBEDDED in the binary, so the
+	// distroless image needs no testdata on disk. Set it and the ~1.7 MB real export is
+	// loaded from the filesystem instead; it is never embedded. The env-backed default
+	// makes it settable in a container without editing the command line.
+	// Parse into a LOCAL FlagSet rather than the global flag.CommandLine, mirroring
+	// cmd/route/main.go — so the binary's flags stay isolated from any ambient global state
+	// (and remain testable via a run function later). flag.ExitOnError exits non-zero on a bad
+	// flag, matching the previous flag.Parse() behavior.
+	fs := flag.NewFlagSet("routing-server", flag.ExitOnError)
+	graphFile := fs.String("graph-file", os.Getenv("GRAPH_FILE"),
+		"path to a real edge_attributes GeoJSON to serve; empty = embedded toy network (default)")
+	_ = fs.Parse(os.Args[1:])
+
 	addr := serveraddr.Resolve()
 
 	// One registry serves both the runtime/process collectors and the routing
-	// request counters api.NewDefaultServer registers, so a single /metrics scrape
+	// request counters the api server registers, so a single /metrics scrape
 	// reports both.
 	reg := metrics.NewRegistry()
 
-	apiServer, err := api.NewDefaultServer(reg, logger)
+	// Choose the graph source: the embedded toy network by default (no filesystem
+	// dependency, the CI/container path), or the real on-disk export when -graph-file is
+	// set (issue #121). Both build the identical Server surface behind the same §2
+	// contract loader.
+	apiServer, err := loadServer(*graphFile, reg, logger)
 	if err != nil {
 		// A graph that won't load is fatal: the server has nothing to route over,
 		// so exit non-zero rather than serve a broken surface.
-		logger.Error("load routing engine failed", "err", err)
+		logger.Error("load routing engine failed", "err", err, "graph_file", *graphFile)
 		os.Exit(1)
+	}
+	if *graphFile != "" {
+		logger.Info("serving real network from file", "graph_file", *graphFile)
+	} else {
+		logger.Info("serving embedded toy network")
 	}
 
 	// Resolve the auth + rate-limit policy from the environment once, and build the
@@ -119,6 +148,20 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "err", err)
 	}
+}
+
+// loadServer builds the api.Server over the chosen graph source: the embedded toy
+// network when graphFile is empty (the CI/container default — no filesystem dependency),
+// or the real edge_attributes export at graphFile when set (issue #121). It is the single
+// graph-source seam so main's lifecycle code stays agnostic to which network is served,
+// and it is extracted from main so the selection is unit-testable without binding a
+// listener (see main_test.go). Both branches enforce the same §2 contract and return a
+// clean error rather than a half-built server.
+func loadServer(graphFile string, reg *prometheus.Registry, logger *slog.Logger) (*api.Server, error) {
+	if graphFile != "" {
+		return api.NewFileServer(graphFile, reg, logger)
+	}
+	return api.NewDefaultServer(reg, logger)
 }
 
 // newMux builds the routing-server's full HTTP route table: the api.Server's REST

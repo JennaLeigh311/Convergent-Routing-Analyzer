@@ -44,8 +44,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Pinned to the engine's go.mod toolchain (go 1.26.4).
-          go-version: "1.26.4"
+          # Pinned to the engine's go.mod toolchain (go 1.26.5).
+          go-version: "1.26.5"
           # Cache keys off go.sum so the module cache invalidates when a
           # dependency version (not just go.mod) changes.
           cache-dependency-path: engine/go.sum
@@ -73,7 +73,7 @@ jobs:
         # step pins the BINARY. Keep `version:` in sync with that file's header
         # and the repo Makefile's GOLANGCI_LINT_VERSION.
         #
-        # v2.12.2 is built with go1.26.2, so it parses the engine's go-1.26.4
+        # v2.12.2 is built with go1.26.2, so it parses the engine's go-1.26.5
         # source tree. The official action reuses the Go set up above
         # (actions/setup-go is a hard prerequisite for v4.0.0+) and caches the
         # linter + analysis results. NOTE: this is a `uses:` step, so the job's
